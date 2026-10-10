@@ -1,0 +1,104 @@
+--- a/dlls/winex11.drv/event.c
++++ b/dlls/winex11.drv/event.c
+@@ -955,6 +955,40 @@
+ }
+ 
+ /**********************************************************************
++ *              focus_is_steam
++ *
++ * Proton PB-OS: whether X focus is on one of Steam's own windows (Quick
++ * Access, the Steam menu, the keyboard; WM_CLASS "steam"/"Steam"), not a
++ * game's (steam_app_*).
++ */
++static BOOL focus_is_steam( Display *display )
++{
++    Window focus, root, parent, *children;
++    unsigned int count;
++    int revert, depth;
++    XClassHint hint;
++    BOOL ret = FALSE;
++
++    XGetInputFocus( display, &focus, &revert );
++    for (depth = 0; depth < 8 && focus != None && focus != PointerRoot; depth++)
++    {
++        hint.res_name = hint.res_class = NULL;
++        if (XGetClassHint( display, focus, &hint ))
++        {
++            ret = hint.res_class && (!strcmp( hint.res_class, "steam" ) || !strcmp( hint.res_class, "Steam" ));
++            if (hint.res_name) XFree( hint.res_name );
++            if (hint.res_class) XFree( hint.res_class );
++            break;
++        }
++        if (!XQueryTree( display, focus, &root, &parent, &children, &count )) break;
++        if (children) XFree( children );
++        if (parent == root) break;
++        focus = parent;
++    }
++    return ret;
++}
++
++/**********************************************************************
+  *              focus_out
+  */
+ static void focus_out( Display *display , HWND hwnd )
+@@ -966,6 +1000,18 @@
+ 
+     if (is_virtual_desktop()) return;
+     if (hwnd != NtUserGetForegroundWindow()) return;
++
++    /* Proton PB-OS: in gamescope, Steam's Quick Access and Steam menu take X
++     * focus. Steam's overlay never takes focus from the game on Windows, and
++     * Proton already blocks the game's input while it shows; dropping the
++     * game to the desktop made exclusive-fullscreen games leave fullscreen
++     * and minimize, so they came back shrunk into a corner. */
++    if (X11DRV_HasWindowManager( "steamcompmgr" ) && focus_is_steam( display ))
++    {
++        TRACE( "focus moved to Steam, keeping %p in the foreground\n", hwnd );
++        return;
++    }
++
+     if (!(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE))
+         send_message( hwnd, WM_CANCELMODE, 0, 0 );
+ 
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -390,6 +390,24 @@
+ }
+ 
+ /* returns the HWND for the X11 window, or the desktop window if it isn't a Wine window */
++/* Proton PB-OS: whether an X window is one of Steam's own (Quick Access, the
++ * Steam menu, the keyboard; WM_CLASS "steam"/"Steam"), see focus_out(). */
++static BOOL window_is_steam( Display *display, Window window )
++{
++    XClassHint hint;
++    BOOL ret = FALSE;
++
++    if (!window || window == root_window) return FALSE;
++    hint.res_name = hint.res_class = NULL;
++    if (XGetClassHint( display, window, &hint ))
++    {
++        ret = hint.res_class && (!strcmp( hint.res_class, "steam" ) || !strcmp( hint.res_class, "Steam" ));
++        if (hint.res_name) XFree( hint.res_name );
++        if (hint.res_class) XFree( hint.res_class );
++    }
++    return ret;
++}
++
+ static HWND hwnd_from_window( Display *display, Window window )
+ {
+     HWND hwnd, desktop = NtUserGetDesktopWindow();
+@@ -2082,6 +2100,14 @@
+         !thread_data->net_active_window_serial)
+     {
+         *foreground = hwnd_from_window( thread_data->display, thread_data->current_state.net_active_window );
++        /* Proton PB-OS: gamescope makes Steam's window active for Quick Access
++         * and the Steam menu; keep the game in the foreground, see focus_out(). */
++        if (*foreground == NtUserGetDesktopWindow() && X11DRV_HasWindowManager( "steamcompmgr" ) &&
++            window_is_steam( thread_data->display, thread_data->current_state.net_active_window ))
++        {
++            TRACE( "Steam is active, keeping %p in the foreground\n", old_foreground );
++            *foreground = 0;
++        }
+         if (*foreground == old_foreground) *foreground = 0;
+ 
+         /* Don't change foreground if the host active window is still minimized on the Win32 side, either it's a
