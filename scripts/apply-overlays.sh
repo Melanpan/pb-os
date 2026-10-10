@@ -165,6 +165,9 @@ chmod -R u=rwX,go=rX "$R/usr/share/pb-os/proton-pbos"
 install_file "$OVL/usr/lib/steamos/pbos-proton" "$R/usr/lib/steamos/pbos-proton" 0755
 install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbos-proton-launcher" 0644
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+# alpha-v0.5.2.7 ran it from a 5-minute timer; release layers are reused.
+rm -f "$R/usr/lib/systemd/user/pbos-proton.timer" \
+  "$R/usr/lib/systemd/user/default.target.wants/pbos-proton.timer"
 for u in pbos-proton.service pbos-proton.path; do
   install_file "$OVL/usr/lib/systemd/user/$u" "$R/usr/lib/systemd/user/$u" 0644
   ln -sfn "../$u" "$R/usr/lib/systemd/user/default.target.wants/$u"
