@@ -155,6 +155,20 @@ install_file "$OVL/usr/lib/steamos/gamescope-onready" \
   "$R/usr/lib/steamos/gamescope-onready" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-steam-focus" \
   "$R/usr/lib/steamos/sm8550-steam-focus" 0755
+# Proton PB-OS (ARM64): the patched Wine X11 driver per Valve Proton version;
+# pbos-proton builds the Steam tool from the installed Valve Proton (see
+# external-and-mods/proton-pbos/README.md).
+rm -rf "$R/usr/share/pb-os/proton-pbos"
+mkdir -p "$R/usr/share/pb-os/proton-pbos"
+cp -r "$MOD/proton-pbos/dist/." "$R/usr/share/pb-os/proton-pbos/"
+chmod -R u=rwX,go=rX "$R/usr/share/pb-os/proton-pbos"
+install_file "$OVL/usr/lib/steamos/pbos-proton" "$R/usr/lib/steamos/pbos-proton" 0755
+install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbos-proton-launcher" 0644
+mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+for u in pbos-proton.service pbos-proton.timer; do
+  install_file "$OVL/usr/lib/systemd/user/$u" "$R/usr/lib/systemd/user/$u" 0644
+  ln -sfn "../$u" "$R/usr/lib/systemd/user/default.target.wants/$u"
+done
 install_file "$OVL/usr/lib/steamos/odin-bin/steamvr" \
   "$R/usr/lib/steamos/odin-bin/steamvr" 0755
 backup "$R/usr/bin/steamos-select-branch" "$STOCK/usr/bin/steamos-select-branch"

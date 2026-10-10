@@ -1,9 +1,14 @@
-# Proton PB-OS (ARM64)
+# Proton PB-OS (ARM)
 
-Valve's **Proton 11.0 (ARM64)** with one file rebuilt: Wine's X11 driver
-(`files/lib/wine/aarch64-unix/winex11.so`), built from Valve's own source
-(`ValveSoftware/Proton` tag `proton-11.0-2e`, its `wine` submodule) in Valve's
-arm64 Proton SDK image, with the patch here.
+PB-OS twins of Valve's Proton tools for ARM64, each with one file rebuilt:
+Wine's X11 driver (`files/lib/wine/aarch64-unix/winex11.so`), built from
+Valve's own source (`ValveSoftware/Proton` at the tool's tag, its `wine`
+submodule) in Valve's arm64 Proton SDK image, with the patch here.
+
+| Steam tool | Valve tool (app) | Built from |
+|---|---|---|
+| Proton 11.0-2 PB-OS (ARM) | Proton 11.0 (ARM64) (4628740) | `proton-11.0-2e` |
+| Proton Experimental PB-OS (ARM) | Proton Experimental (ARM64) (4427310) | `experimental-11.0-20261001` |
 
 ## What the patch fixes
 
@@ -21,11 +26,34 @@ foreground, like Steam's overlay on Windows, which never takes focus from the
 game. Proton already blocks the game's input while the overlay shows. Every
 other focus change behaves as before.
 
+## On the device
+
+The image ships only the patched drivers, `dist/<Valve version>/winex11.so`,
+with the hash of Valve's own file they replace, in `/usr/share/pb-os/proton-pbos/`.
+`/usr/lib/steamos/pbos-proton` (`pbos-proton.service` at login, `.timer` every
+5 minutes) builds each twin for the desktop user: a hard-linked copy of the
+installed Valve tool next to it (almost no space) with the driver swapped, and
+the Steam tool (manifests and a launcher) in
+`~/.local/share/Steam/compatibilitytools.d/`. Only Valve's exact file gets
+replaced. The launcher runs the patched copy only while Valve's installed tool
+is still that version; after a Valve update it runs Valve's own, unpatched,
+until PB-OS ships a patch for the new version.
+
+PB-OS Utils sets the twin for every installed game that runs on Valve's
+Proton without a user pick. Valve's per-game pick (priority 85) outranks
+Steam's global default (75), so it's set per game, like a user's pick (250);
+games the user set themselves stay as they are.
+
 ## Build
 
-`build.sh` on the arm64 build VM (Docker), see its header. The unpatched build
-has the same exports, imports and libraries as Valve's shipped `winex11.so`;
-the patch adds one import (`XGetClassHint`, libX11).
+    external-and-mods/proton-pbos/build.sh TAG        (TAG e.g. proton-11.0-2e)
 
-The driver only fits the Proton version it was built from (`PROTON_TAG`). When
-Valve updates Proton 11.0 (ARM64), rebuild from the new tag.
+on the arm64 build VM (Docker), with `VALVE_WINEX11=` Valve's own `winex11.so`
+of that version for the hash; see its header. The unpatched build has the same
+exports, imports and libraries as Valve's shipped `winex11.so`; the patch adds
+one import (`XGetClassHint`, libX11).
+
+A driver only fits the Valve version it was built from. Before every PB-OS
+release, Valve's newest stable and Experimental Proton (ARM64) get checked:
+when Valve has fixed this upstream, Proton PB-OS goes; until then, the patch is
+rebuilt for each new Valve version.

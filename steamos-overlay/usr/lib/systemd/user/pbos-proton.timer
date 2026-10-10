@@ -1,0 +1,10 @@
+[Unit]
+Description=Proton PB-OS (ARM): follow Valve's Proton installs and updates
+ConditionUser=!root
+
+[Timer]
+OnActiveSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=default.target

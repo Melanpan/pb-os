@@ -48,6 +48,9 @@ const setMcu = callable("set_mcu");
 const getCharging = callable("get_charging");
 const setCharging = callable("set_charging");
 const previewCharging = callable("preview_charging");
+// PB-OS twins of Valve's Proton: set per game (pbos-proton builds them).
+const getProton = callable("get_proton");
+const protonGamesSet = callable("proton_games_set");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -977,7 +980,41 @@ function onMode(profile) {
     toaster.toast({ title: t.title, body: t.body, duration: 2000, playSound: false, critical: true });
 }
 
+// Every installed game on Valve's Proton gets its PB-OS twin (Proton 11.0 ->
+// Proton 11.0-2 PB-OS (ARM), Experimental -> Proton Experimental PB-OS (ARM)).
+// Valve's per-game Proton pick (priority 85) outranks Steam's global default
+// (75), so it's set per game like a user's pick (250); games the user set
+// themselves and games without Proton (native) stay as they are. Checked at
+// start and every few minutes, for new installs.
+const USER_PICK = 250;
+const PROTON_CHECK_MS = 5 * 60 * 1000;
+function appDetails(appid) {
+    return new Promise((resolve) => {
+        let reg = null;
+        const done = (d) => { clearTimeout(timer); if (reg && reg.unregister) reg.unregister(); resolve(d); };
+        const timer = setTimeout(() => done(null), 5000);
+        reg = SteamClient.Apps.RegisterForAppDetails(appid, (d) => done(d));
+    });
+}
+async function protonForGames() {
+    const twins = (await getProton()).tools || {};
+    if (!Object.keys(twins).length) return;
+    const local = window.collectionStore && window.collectionStore.localGamesCollection;
+    const set = [];
+    for (const app of (local && local.allApps) || []) {
+        const d = await appDetails(app.appid);
+        const twin = d && twins[d.strCompatToolName];
+        if (!twin || d.nCompatToolPriority >= USER_PICK) continue;
+        SteamClient.Apps.SpecifyCompatTool(app.appid, twin);
+        set.push(app.appid + "->" + twin);
+    }
+    if (set.length) await protonGamesSet(set);
+}
+let protonTimer = null;
+
 var index = definePlugin(() => {
+    protonForGames().catch(() => {});
+    protonTimer = setInterval(() => protonForGames().catch(() => {}), PROTON_CHECK_MS);
     api.addEventListener("pbos_update_available", onAvailable);
     api.addEventListener("pbos_mode", onMode);
     api.addEventListener("pbos_local_available", onLocal);
@@ -990,6 +1027,7 @@ var index = definePlugin(() => {
             children: jsx("path", { d: "M21.7 6.3a6 6 0 0 1-7.9 7.2l-7.4 7.4a2.1 2.1 0 0 1-3-3l7.4-7.4a6 6 0 0 1 7.2-7.9l-3.6 3.6.6 2.9 2.9.6z" }) }),
         alwaysRender: false,
         onDismount() {
+            clearInterval(protonTimer);
             api.removeEventListener("pbos_update_available", onAvailable);
             api.removeEventListener("pbos_local_available", onLocal);
             api.removeEventListener("pbos_move_done", onMoveDone);

@@ -40,6 +40,12 @@ Power    the charging indicator (SM8550: Retroid Pocket 6 / Nova, AYN Thor):
          of kernel sleep), the stick lights pulse until it's charged, then
          stay lit. Its settings and ranges live in sm8550-charge-rest
          (`settings`, `save`); Preview shows it once.
+
+Proton   the PB-OS twin (Proton 11.0-2 PB-OS (ARM), Proton Experimental
+         PB-OS (ARM)) for every installed Windows game that runs on Valve's
+         Proton without a pick by the user. Valve's per-game pick outranks
+         Steam's global default, so it's set per game, like a user's pick;
+         /usr/lib/steamos/pbos-proton builds the tools.
 """
 from __future__ import annotations
 
@@ -439,6 +445,30 @@ def charge_preview() -> bool:
     return r.returncode == 0
 
 
+# --------------------------------------------------------------- proton --
+# PB-OS twins of Valve's Proton tools, built by /usr/lib/steamos/pbos-proton.
+# Valve's per-game Proton pick outranks Steam's global default, so the
+# frontend sets them per game (the user's own picks stay); this says which
+# twin stands for which Valve tool and whether it's ready.
+PBOS_PROTON = "/usr/lib/steamos/pbos-proton"
+
+
+def proton_state() -> dict[str, Any]:
+    if not os.access(PBOS_PROTON, os.X_OK):
+        return {"tools": {}}
+    user = getattr(decky, "DECKY_USER", "steamos")
+    home = getattr(decky, "DECKY_USER_HOME", f"/home/{user}")
+    r = subprocess.run(["runuser", "-u", user, "--", "/usr/bin/python3", PBOS_PROTON, "status", "--json"],
+                       capture_output=True, text=True, env={**CLEAN_ENV, "HOME": home}, timeout=30)
+    try:
+        st = json.loads(r.stdout)
+    except ValueError:
+        return {"tools": {}}
+    # Valve tool name -> PB-OS twin, for twins that are built and patched.
+    return {"tools": {s["valve_name"]: name for name, s in st.items()
+                      if isinstance(s, dict) and s.get("tool") and s.get("patched") and s.get("valve_name")}}
+
+
 class Plugin:
     async def _main(self) -> None:
         self.last: dict[str, Any] = {}
@@ -817,3 +847,11 @@ class Plugin:
         if self.lights == "pbosd":
             await asyncio.to_thread(set_mcu_link, bool(enabled))
         return await self.get_control()
+
+    # -------------------------------------------------------------- proton --
+    async def get_proton(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(proton_state)
+
+    async def proton_games_set(self, apps: list[Any] | None = None, **_: Any) -> bool:
+        decky.logger.info(f"Proton PB-OS set for games {apps}")
+        return True

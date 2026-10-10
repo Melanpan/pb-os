@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Proton PB-OS (ARM) launcher: Steam runs this as the tool's /proton.
+
+pbos-proton (sync) copies it into each PB-OS tool in ~/.local/share/Steam/
+compatibilitytools.d/ with state.json. It runs inside Steam's runtime container,
+so it only reads files under HOME. It starts the patched copy of Valve's
+Proton while Valve's installed Proton is still the version the copy was made
+from; otherwise Valve's own Proton, unpatched (a newer Valve Proton needs a
+new PB-OS patch, and an old driver with a new Proton could crash).
+"""
+import json
+import os
+import sys
+
+here = os.path.dirname(os.path.realpath(__file__))
+
+
+def version(d):
+    try:
+        with open(os.path.join(d, "version"), encoding="utf-8") as f:
+            parts = f.read().split()
+        return parts[1] if len(parts) > 1 else ""
+    except OSError:
+        return ""
+
+
+try:
+    with open(os.path.join(here, "state.json"), encoding="utf-8") as f:
+        state = json.load(f)
+except (OSError, ValueError):
+    state = {}
+valve, copy, ver = state.get("valve", ""), state.get("copy", ""), state.get("version", "")
+
+target = os.path.join(valve, "proton") if valve else ""
+if (copy and ver and os.path.exists(os.path.join(copy, ".pbos-ready"))
+        and version(valve) == ver and version(copy) == ver):
+    target = os.path.join(copy, "proton")
+elif valve:
+    print(f"Proton PB-OS: Valve's tool is {version(valve) or 'unknown'}, no PB-OS patch for it; "
+          "running Valve's Proton unpatched", file=sys.stderr)
+
+if not target or not os.path.isfile(target):
+    print("Proton PB-OS: the Valve Proton this tool is built on is not installed; "
+          "pick it in a game's Compatibility settings once so Steam installs it", file=sys.stderr)
+    sys.exit(1)
+os.execv(sys.executable, [sys.executable, target] + sys.argv[1:])

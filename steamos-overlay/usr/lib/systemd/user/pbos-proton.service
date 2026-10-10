@@ -1,0 +1,14 @@
+[Unit]
+Description=Proton PB-OS (ARM): Valve's Proton with PB-OS's Wine fixes
+ConditionUser=!root
+# The tool must exist before Steam starts, or Steam doesn't list it.
+Before=gamescope-session.service steam.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos/pbos-proton sync
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""pbos-proton — Valve's Proton (ARM64) with PB-OS's Wine fixes, as Steam tools.
+
+In Game Mode, Quick Access and the Steam menu take X focus; Valve's Wine then
+drops the game to the desktop, and a game in exclusive fullscreen minimizes
+and comes back shrunk into a corner (external-and-mods/proton-pbos/README.md).
+PB-OS ships a rebuilt Wine X11 driver (winex11.so) for each Valve Proton
+version it was built from:
+
+    /usr/share/pb-os/proton-pbos/<version>/winex11.so
+    /usr/share/pb-os/proton-pbos/<version>/valve-winex11.so.sha256
+
+For each Valve tool below this builds a PB-OS twin for the desktop user:
+
+    Valve "Proton 11.0 (ARM64)"         -> "Proton 11.0-2 PB-OS (ARM)" (its version)
+    Valve "Proton Experimental (ARM64)" -> "Proton Experimental PB-OS (ARM)"
+
+Each is a hard-linked copy of the installed Valve tool (next to it, so it costs
+almost no space) with that one file swapped, in
+
+    <library>/steamapps/common/.<tool>/<version>/
+
+and the Steam tool itself (manifests and a launcher) in
+~/.local/share/Steam/compatibilitytools.d/<tool>/. The launcher runs the copy
+only while Valve's installed tool is still that version; otherwise (Valve
+updated it, no patch for the new version yet) it runs Valve's own, unpatched.
+Steam installs Valve's tools itself, the first time a game needs one.
+
+    pbos-proton sync            build/refresh the tools (pbos-proton.service/.timer)
+    pbos-proton status [--json]
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import sys
+
+HOME = os.path.expanduser("~")
+STEAM = os.path.join(HOME, ".local/share/Steam")
+# Overridable for testing on a device without installing.
+PATCHES = os.environ.get("PBOS_PROTON_PATCHES", "/usr/share/pb-os/proton-pbos")
+LAUNCHER = os.environ.get("PBOS_PROTON_LAUNCHER", "/usr/lib/steamos/pbos-proton-launcher")
+DRIVER = "files/lib/wine/aarch64-unix/winex11.so"
+
+
+def stable_name(ver: str) -> str:
+    """'Proton 11.0-2 PB-OS (ARM)' for proton-11.0-2e-arm64 (Valve's own name
+    drops the hotfix letter too: 'Proton 11.0-2 (ARM64)')."""
+    m = re.match(r"proton-(\d+\.\d+-\d+)[a-z]*-arm64$", ver)
+    return f"Proton {m.group(1)} PB-OS (ARM)" if m else "Proton PB-OS (ARM)"
+
+
+# name = Steam's internal tool name (games point at it; never change it),
+# dir = folder in compatibilitytools.d and for the copies, appid = Valve's tool.
+TOOLS = [
+    {"name": "proton_pbos_arm64", "dir": "proton-pbos-arm64", "appid": "4628740",
+     "valve": "proton_11-arm64", "display": stable_name},
+    {"name": "proton_experimental_pbos_arm64", "dir": "proton-experimental-pbos-arm64", "appid": "4427310",
+     "valve": "proton-experimental-arm64", "display": lambda ver: "Proton Experimental PB-OS (ARM)"},
+]
+
+COMPATIBILITYTOOL_VDF = """"compatibilitytools"
+{
+  "compat_tools"
+  {
+    "{name}"
+    {
+      "install_path" "."
+      "display_name" "{display}"
+      "from_oslist"  "windows"
+      "to_oslist"    "linux"
+    }
+  }
+}
+"""
+# Valve's Proton (ARM64) manifest, with our launcher as /proton.
+TOOLMANIFEST_VDF = """"manifest"
+{
+  "version" "2"
+  "commandline" "/proton %verb%"
+  "require_tool_appid" "4185400"
+  "use_sessions" "1"
+  "compatmanager_layer_name" "proton"
+}
+"""
+
+
+def libraries() -> list[str]:
+    libs = [STEAM]
+    for vdf in ("steamapps/libraryfolders.vdf", "config/libraryfolders.vdf"):
+        try:
+            with open(os.path.join(STEAM, vdf), encoding="utf-8", errors="replace") as f:
+                libs += [m.group(1) for m in re.finditer(r'"path"\s+"([^"]+)"', f.read())]
+        except OSError:
+            pass
+    out = []
+    for lib in libs:
+        real = os.path.realpath(lib)
+        if real not in out and os.path.isdir(os.path.join(real, "steamapps")):
+            out.append(real)
+    return out
+
+
+def valve_tool(appid: str) -> str | None:
+    """Folder of the installed Valve tool, or None."""
+    for lib in libraries():
+        try:
+            with open(os.path.join(lib, f"steamapps/appmanifest_{appid}.acf"), encoding="utf-8") as f:
+                m = re.search(r'"installdir"\s+"([^"]+)"', f.read())
+        except OSError:
+            continue
+        if m:
+            d = os.path.join(lib, "steamapps/common", m.group(1))
+            if os.path.isfile(os.path.join(d, "proton")):
+                return d
+    return None
+
+
+def version(proton_dir: str) -> str:
+    """Valve's version name, e.g. proton-11.0-2e-arm64 (second field of 'version')."""
+    try:
+        with open(os.path.join(proton_dir, "version"), encoding="utf-8") as f:
+            parts = f.read().split()
+        return parts[1] if len(parts) > 1 else ""
+    except OSError:
+        return ""
+
+
+def sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def link_tree(src: str, dst: str) -> None:
+    """cp -al: same folders, files hard-linked (symlinks copied as links)."""
+    for root, dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        out = os.path.join(dst, rel) if rel != "." else dst
+        os.makedirs(out, mode=0o755, exist_ok=True)  # Valve's folders can be read-only
+        for name in dirs + files:
+            s, d = os.path.join(root, name), os.path.join(out, name)
+            if os.path.islink(s):
+                os.symlink(os.readlink(s), d)
+            elif name in files:
+                os.link(s, d)
+
+
+def write(path: str, text: str, mode: int = 0o644) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def build_copy(tool: dict, valve: str, ver: str) -> str:
+    """The patched copy for this Valve version ("" if there is no patch for it)."""
+    patch = os.path.join(PATCHES, ver)
+    if not os.path.isfile(os.path.join(patch, "winex11.so")):
+        return ""
+    with open(os.path.join(patch, "valve-winex11.so.sha256"), encoding="utf-8") as f:
+        want = f.read().split()[0]
+    # Only the exact file the patch was built against.
+    if sha256(os.path.join(valve, DRIVER)) != want:
+        print(f"pbos-proton: {ver}: Valve's winex11.so differs from the one the patch was built for",
+              file=sys.stderr)
+        return ""
+    base = os.path.join(os.path.dirname(valve), "." + tool["dir"])
+    copy = os.path.join(base, ver)
+    if not os.path.exists(os.path.join(copy, ".pbos-ready")):
+        tmp = copy + ".building"
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(copy, ignore_errors=True)
+        link_tree(valve, tmp)
+        drv = os.path.join(tmp, DRIVER)
+        os.chmod(os.path.dirname(drv), 0o755)
+        os.remove(drv)  # a link to Valve's file: replace, never write through it
+        shutil.copyfile(os.path.join(patch, "winex11.so"), drv)
+        os.chmod(drv, 0o555)
+        open(os.path.join(tmp, ".pbos-ready"), "w").close()
+        os.rename(tmp, copy)
+        print(f"pbos-proton: built {copy}")
+    # Copies for older Valve versions are of no use any more.
+    for old in os.listdir(base):
+        if old != ver:
+            shutil.rmtree(os.path.join(base, old), ignore_errors=True)
+    return copy
+
+
+def sync_tool(tool: dict) -> dict:
+    tdir = os.path.join(STEAM, "compatibilitytools.d", tool["dir"])
+    os.makedirs(tdir, exist_ok=True)
+    valve = valve_tool(tool["appid"])
+    ver = version(valve) if valve else ""
+    # Steam reads the name when it starts.
+    write(os.path.join(tdir, "compatibilitytool.vdf"),
+          COMPATIBILITYTOOL_VDF.replace("{name}", tool["name"]).replace("{display}", tool["display"](ver)))
+    write(os.path.join(tdir, "toolmanifest.vdf"), TOOLMANIFEST_VDF)
+    with open(LAUNCHER, encoding="utf-8") as f:
+        write(os.path.join(tdir, "proton"), f.read(), 0o755)
+    copy = build_copy(tool, valve, ver) if valve and ver else ""
+    state = {"valve": valve or "", "version": ver, "copy": copy}
+    write(os.path.join(tdir, "state.json"), json.dumps(state, indent=1) + "\n")
+    return state
+
+
+def status_tool(tool: dict) -> dict:
+    tdir = os.path.join(STEAM, "compatibilitytools.d", tool["dir"])
+    try:
+        with open(os.path.join(tdir, "state.json"), encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {"valve": "", "version": "", "copy": ""}
+    valve = valve_tool(tool["appid"])
+    current = version(valve) if valve else ""
+    state["installed_version"] = current
+    state["patched"] = bool(state.get("copy")) and current == state.get("version")
+    state["tool"] = os.path.isfile(os.path.join(tdir, "compatibilitytool.vdf"))
+    state["valve_name"] = tool["valve"]
+    return state
+
+
+def main(argv: list[str]) -> int:
+    cmd = argv[1] if len(argv) > 1 else "status"
+    if cmd == "sync":
+        for tool in TOOLS:
+            st = sync_tool(tool)
+            how = ("patched" if st["copy"] else "unpatched (no patch for this version)" if st["version"]
+                   else "waiting for Steam to install it")
+            print(f"pbos-proton: {tool['name']}: Valve {st['version'] or 'not installed'}, {how}")
+    elif cmd == "status":
+        st = {tool["name"]: status_tool(tool) for tool in TOOLS}
+        if "--json" in argv:
+            print(json.dumps(st))
+        else:
+            for name, s in st.items():
+                print(f"{name}: tool {'yes' if s['tool'] else 'no'}, "
+                      f"Valve {s['installed_version'] or 'not installed'}, patched {'yes' if s['patched'] else 'no'}")
+    else:
+        print("usage: pbos-proton sync|status [--json]", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
