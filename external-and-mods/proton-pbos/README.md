@@ -30,8 +30,9 @@ other focus change behaves as before.
 
 The image ships only the patched drivers, `dist/<Valve version>/winex11.so`,
 with the hash of Valve's own file they replace, in `/usr/share/pb-os/proton-pbos/`.
-`/usr/lib/steamos/pbos-proton` (`pbos-proton.service` at login, `.timer` every
-5 minutes) builds each twin for the desktop user: a hard-linked copy of the
+`/usr/lib/steamos/pbos-proton` (`pbos-proton.service` at login, and from
+`pbos-proton.path` whenever Steam installs or updates something in
+`steamapps`) builds each twin for the desktop user: a hard-linked copy of the
 installed Valve tool next to it (almost no space) with the driver swapped, and
 the Steam tool (manifests and a launcher) in
 `~/.local/share/Steam/compatibilitytools.d/`. Only Valve's exact file gets
@@ -39,10 +40,17 @@ replaced. The launcher runs the patched copy only while Valve's installed tool
 is still that version; after a Valve update it runs Valve's own, unpatched,
 until PB-OS ships a patch for the new version.
 
-PB-OS Utils sets the twin for every installed game that runs on Valve's
-Proton without a user pick. Valve's per-game pick (priority 85) outranks
-Steam's global default (75), so it's set per game, like a user's pick (250);
-games the user set themselves stay as they are.
+PB-OS Utils follows Valve's Proton pick for each game: Valve's Proton 11.0
+(ARM64) becomes Proton 11.0-2 PB-OS (ARM), Valve's Proton Experimental (ARM64)
+becomes Proton Experimental PB-OS (ARM). Steam ranks the picks by number:
+the global default 75, Valve's per-game pick 85, a pick in the game's
+Compatibility settings 250, highest wins. So the twin is set per game, like a
+user's pick. Linux ports (Valve picks the Steam Linux Runtime), games the user
+set, and games whose Valve pick is just "the default" stay as they are; a game
+the user changes after PB-OS switched it is left alone from then on
+(`~/.config/pb-os/proton-games.json`). The global default becomes Proton
+11.0-2 PB-OS (ARM) while it is still Valve's own (`proton-stable`). All of it
+is event-driven: Steam start, Steam's app changes (installs, updates), Play.
 
 ## Build
 

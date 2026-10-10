@@ -1,0 +1,12 @@
+[Unit]
+Description=Proton PB-OS (ARM): follow Valve's Proton installs and updates
+ConditionUser=!root
+
+[Path]
+# Steam rewrites appmanifest_*.acf here when it installs or updates anything,
+# Valve's Proton included.
+PathChanged=%h/.local/share/Steam/steamapps
+Unit=pbos-proton.service
+
+[Install]
+WantedBy=default.target

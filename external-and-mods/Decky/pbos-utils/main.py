@@ -41,11 +41,14 @@ Power    the charging indicator (SM8550: Retroid Pocket 6 / Nova, AYN Thor):
          stay lit. Its settings and ranges live in sm8550-charge-rest
          (`settings`, `save`); Preview shows it once.
 
-Proton   the PB-OS twin (Proton 11.0-2 PB-OS (ARM), Proton Experimental
-         PB-OS (ARM)) for every installed Windows game that runs on Valve's
-         Proton without a pick by the user. Valve's per-game pick outranks
-         Steam's global default, so it's set per game, like a user's pick;
-         /usr/lib/steamos/pbos-proton builds the tools.
+Proton   follows Valve's Proton pick per game: Valve's Proton 11.0 (ARM64)
+         -> Proton 11.0-2 PB-OS (ARM), Proton Experimental (ARM64) ->
+         Proton Experimental PB-OS (ARM); set per game like a user's pick,
+         since Valve's pick outranks Steam's global default. Games on the
+         Steam Linux Runtime (Linux ports) and games the user set stay as they
+         are. The global default becomes Proton 11.0-2 PB-OS (ARM) while it
+         is still Valve's. Event-driven, from the frontend: Steam start, game
+         installs/updates, Play. /usr/lib/steamos/pbos-proton builds the tools.
 """
 from __future__ import annotations
 
@@ -469,6 +472,25 @@ def proton_state() -> dict[str, Any]:
                       if isinstance(s, dict) and s.get("tool") and s.get("patched") and s.get("valve_name")}}
 
 
+# Games PB-OS switched to a twin ({appid: {"twin", "valve"}}), and games it
+# keeps its hands off because the user changed them since ("hands_off").
+def proton_games_path() -> str:
+    return os.path.join(getattr(decky, "DECKY_USER_HOME", "/home/steamos"), ".config/pb-os/proton-games.json")
+
+
+def proton_games_read() -> dict[str, Any]:
+    st = read_json(proton_games_path())
+    return {"switched": st.get("switched", {}), "hands_off": st.get("hands_off", [])}
+
+
+def proton_games_write(st: dict[str, Any]) -> None:
+    path = proton_games_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_json(path, st)
+    user = getattr(decky, "DECKY_USER", "steamos")
+    subprocess.run(["chown", "-R", f"{user}:{user}", os.path.dirname(path)], capture_output=True)
+
+
 class Plugin:
     async def _main(self) -> None:
         self.last: dict[str, Any] = {}
@@ -852,6 +874,13 @@ class Plugin:
     async def get_proton(self, **_: Any) -> dict[str, Any]:
         return await asyncio.to_thread(proton_state)
 
-    async def proton_games_set(self, apps: list[Any] | None = None, **_: Any) -> bool:
-        decky.logger.info(f"Proton PB-OS set for games {apps}")
+    async def get_proton_games(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(proton_games_read)
+
+    async def set_proton_games(self, state: dict[str, Any] | None = None, note: str = "", **_: Any) -> bool:
+        if isinstance(state, dict):
+            await asyncio.to_thread(proton_games_write, {"switched": state.get("switched", {}),
+                                                         "hands_off": state.get("hands_off", [])})
+        if note:
+            decky.logger.info(f"Proton PB-OS: {note}")
         return True

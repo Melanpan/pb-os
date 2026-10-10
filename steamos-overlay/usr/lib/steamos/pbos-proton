@@ -26,7 +26,8 @@ only while Valve's installed tool is still that version; otherwise (Valve
 updated it, no patch for the new version yet) it runs Valve's own, unpatched.
 Steam installs Valve's tools itself, the first time a game needs one.
 
-    pbos-proton sync            build/refresh the tools (pbos-proton.service/.timer)
+    pbos-proton sync            build/refresh the tools (pbos-proton.service, at login
+                                and from pbos-proton.path on Steam installs/updates)
     pbos-proton status [--json]
 """
 from __future__ import annotations

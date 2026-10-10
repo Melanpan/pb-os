@@ -50,7 +50,8 @@ const setCharging = callable("set_charging");
 const previewCharging = callable("preview_charging");
 // PB-OS twins of Valve's Proton: set per game (pbos-proton builds them).
 const getProton = callable("get_proton");
-const protonGamesSet = callable("proton_games_set");
+const getProtonGames = callable("get_proton_games");
+const setProtonGames = callable("set_proton_games");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -980,14 +981,20 @@ function onMode(profile) {
     toaster.toast({ title: t.title, body: t.body, duration: 2000, playSound: false, critical: true });
 }
 
-// Every installed game on Valve's Proton gets its PB-OS twin (Proton 11.0 ->
-// Proton 11.0-2 PB-OS (ARM), Experimental -> Proton Experimental PB-OS (ARM)).
-// Valve's per-game Proton pick (priority 85) outranks Steam's global default
-// (75), so it's set per game like a user's pick (250); games the user set
-// themselves and games without Proton (native) stay as they are. Checked at
-// start and every few minutes, for new installs.
+// Proton PB-OS follows Valve's Proton pick, per game:
+//   Valve's Proton 11.0 (ARM64)      -> Proton 11.0-2 PB-OS (ARM)
+//   Valve's Proton Experimental (ARM64) -> Proton Experimental PB-OS (ARM)
+// Valve's pick (priority 85) outranks Steam's global default (75), so the twin
+// is set per game like a user's pick (250). Anything else stays: Linux ports
+// (Steam Linux Runtime), games the user set themselves, and games whose Valve
+// pick is just "the default" (they get the global default, below). A game the
+// user changes after PB-OS switched it is left alone from then on.
+// The global default becomes Proton 11.0-2 PB-OS (ARM) while it is still
+// Valve's own (proton-stable); a default the user picks stays.
+// Event-driven: at Steam start, when Steam's app overviews change (installs,
+// updates), and when a game's Play is pressed.
 const USER_PICK = 250;
-const PROTON_CHECK_MS = 5 * 60 * 1000;
+const VALVE_DEFAULT = ["", "proton-stable"];
 function appDetails(appid) {
     return new Promise((resolve) => {
         let reg = null;
@@ -996,25 +1003,72 @@ function appDetails(appid) {
         reg = SteamClient.Apps.RegisterForAppDetails(appid, (d) => done(d));
     });
 }
-async function protonForGames() {
+async function protonCheck(appids) {
     const twins = (await getProton()).tools || {};
     if (!Object.keys(twins).length) return;
-    const local = window.collectionStore && window.collectionStore.localGamesCollection;
-    const set = [];
-    for (const app of (local && local.allApps) || []) {
-        const d = await appDetails(app.appid);
-        const twin = d && twins[d.strCompatToolName];
-        if (!twin || d.nCompatToolPriority >= USER_PICK) continue;
-        SteamClient.Apps.SpecifyCompatTool(app.appid, twin);
-        set.push(app.appid + "->" + twin);
+    const settings = window.settingsStore && window.settingsStore.m_Settings;
+    const stable = twins["proton_11-arm64"];
+    if (stable && settings && VALVE_DEFAULT.includes(settings.strCompatTool || "")) {
+        SteamClient.Settings.SpecifyGlobalCompatTool(stable);
+        await setProtonGames(null, `global default -> ${stable}`);
     }
-    if (set.length) await protonGamesSet(set);
+    const state = await getProtonGames();
+    const ours = new Set(Object.values(twins));
+    const notes = [];
+    let changed = false;
+    if (!appids) {
+        const local = window.collectionStore && window.collectionStore.localGamesCollection;
+        appids = ((local && local.allApps) || []).map((app) => app.appid);
+    }
+    for (const appid of appids) {
+        const key = String(appid);
+        if (state.hands_off.includes(key)) continue;
+        const d = await appDetails(Number(appid));
+        if (!d) continue;
+        const tool = d.strCompatToolName || "";
+        const mine = state.switched[key];
+        if (mine) {
+            // Still ours, or changed by the user since: then never again.
+            if (tool !== mine.twin) {
+                delete state.switched[key];
+                state.hands_off.push(key);
+                notes.push(`${key}: user picked ${tool || "default"}, hands off`);
+                changed = true;
+            }
+            continue;
+        }
+        const twin = twins[tool];
+        if (!twin || d.nCompatToolPriority >= USER_PICK || ours.has(tool)) continue;
+        SteamClient.Apps.SpecifyCompatTool(Number(appid), twin);
+        state.switched[key] = { twin, valve: tool };
+        notes.push(`${key}: ${tool} -> ${twin}`);
+        changed = true;
+    }
+    if (changed) await setProtonGames(state, notes.join("; "));
 }
-let protonTimer = null;
+// One check at a time; a burst of events becomes one more check.
+let protonBusy = Promise.resolve();
+let protonQueued = null;
+function protonSoon(appids) {
+    if (protonQueued) {
+        protonQueued.appids = protonQueued.appids && appids ? [...new Set([...protonQueued.appids, ...appids])] : null;
+        return;
+    }
+    protonQueued = { appids };
+    protonBusy = protonBusy.then(() => new Promise((r) => setTimeout(r, 1500))).then(() => {
+        const q = protonQueued;
+        protonQueued = null;
+        return protonCheck(q.appids);
+    }).catch(() => {});
+}
+let protonEvents = [];
 
 var index = definePlugin(() => {
-    protonForGames().catch(() => {});
-    protonTimer = setInterval(() => protonForGames().catch(() => {}), PROTON_CHECK_MS);
+    protonSoon(null);
+    protonEvents = [
+        SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
+        SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),
+    ];
     api.addEventListener("pbos_update_available", onAvailable);
     api.addEventListener("pbos_mode", onMode);
     api.addEventListener("pbos_local_available", onLocal);
@@ -1027,7 +1081,7 @@ var index = definePlugin(() => {
             children: jsx("path", { d: "M21.7 6.3a6 6 0 0 1-7.9 7.2l-7.4 7.4a2.1 2.1 0 0 1-3-3l7.4-7.4a6 6 0 0 1 7.2-7.9l-3.6 3.6.6 2.9 2.9.6z" }) }),
         alwaysRender: false,
         onDismount() {
-            clearInterval(protonTimer);
+            for (const e of protonEvents) if (e && e.unregister) e.unregister();
             api.removeEventListener("pbos_update_available", onAvailable);
             api.removeEventListener("pbos_local_available", onLocal);
             api.removeEventListener("pbos_move_done", onMoveDone);

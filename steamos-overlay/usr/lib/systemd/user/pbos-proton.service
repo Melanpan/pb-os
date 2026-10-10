@@ -3,6 +3,8 @@ Description=Proton PB-OS (ARM): Valve's Proton with PB-OS's Wine fixes
 ConditionUser=!root
 # The tool must exist before Steam starts, or Steam doesn't list it.
 Before=gamescope-session.service steam.service
+# pbos-proton.path starts it on every change in steamapps; never rate-limit it.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
