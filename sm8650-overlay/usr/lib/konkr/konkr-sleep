@@ -113,6 +113,19 @@ streams_open() {
   return 1
 }
 
+# The LPASS macros (rx/tx/wsa/va) hold their audio votes until they runtime
+# suspend, 3 s (autosuspend) after the last use, and system sleep does not
+# suspend them: entered sooner, the SoC never fully sleeps (2026-10-11,
+# with the streams parked the sleep came ~2.5 s after the PCMs closed).
+macros_active() {
+  local d
+  for d in /sys/bus/platform/drivers/{rx,tx,wsa,va}_macro/*.codec; do
+    [[ -e $d/power/runtime_status ]] || continue
+    [[ $(<"$d/power/runtime_status") == suspended ]] || return 0
+  done
+  return 1
+}
+
 usb_off() {  # the Renesas xHCI (built-in gamepad) loses its power and firmware
   local d       # in deep sleep; a clean probe after wake is the reliable way back
   : >"$XHCI_MARK"
@@ -190,8 +203,15 @@ pre() {
   fi
   # Any PCM still open (normally none after the park)
   while streams_open && ((i < 30)); do sleep 0.5; i=$((i + 1)); done
+  # On the charger sm8550-charge-rest rests first (no kernel suspend):
+  # the macros are long suspended by any deep sleep after it.
+  local m=0
+  if ! [[ -x /usr/lib/steamos-sm8550/sm8550-charge-rest \
+          && $(cat /sys/class/power_supply/qcom-battmgr-usb/online 2>/dev/null) == 1 ]]; then
+    while macros_active && ((m < 24)); do sleep 0.25; m=$((m + 1)); done
+  fi
   sync
-  log "pre: audio parked (waited $((i / 2)) s), touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
+  log "pre: audio parked (waited $((i / 2)) s, macros $((m / 4)).$((m % 4 * 25)) s), touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
 }
 
 touch_devices() {  # chipone panels on any I2C bus, bound or not
