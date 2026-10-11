@@ -110,7 +110,10 @@ Nova, AYN Thor) a Power tab sets the charging indicator: sleeping on the
 charger is a rest instead of kernel deep sleep, which charges at only about a
 quarter of the speed (`sm8550-charge-rest`: screens off, session frozen,
 clocks capped; pulling the charger goes on into deep sleep), and the stick
-lights pulse dimly until the battery is full, then stay dimly lit. On the
+lights pulse dimly until the battery is full, then stay dimly lit. A charger
+plugged in during deep sleep wakes it (kernel patch 0505: the ADSP's
+doorbell wakes the system once it is down), and it goes on into the same
+rest, screens still off, with the pulsing indicator. On the
 Retroid Pocket 6 and Nova the Power tab also has battery charging modes,
 using Retroid's own battery firmware (kernel patch 0545,
 `sm8550-charge-control`): Normal, Stop at 80 % (the firmware's limit), Hold at

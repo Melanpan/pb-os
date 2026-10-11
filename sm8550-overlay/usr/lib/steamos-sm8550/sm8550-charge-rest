@@ -4,9 +4,8 @@ Pocket 6 / Nova, AYN Thor), and the stick lights' charging indicator.
 
 Kernel deep sleep (full SoC sleep) charges at about a quarter of the awake
 rate: the charger firmware slows down while the SoC is collapsed (AYN Thor,
-2026-10-08: 1.0-1.1 A asleep vs 4.7 A awake; s2idle 4.8 A). Its doorbell is
-also masked in deep sleep (patch 0504), so a charger change waits for the
-next wake. So on the charger there is no kernel suspend: Steam's Sleep goes
+2026-10-08: 1.0-1.1 A asleep vs 4.7 A awake; s2idle 4.8 A). So on the
+charger there is no kernel suspend: Steam's Sleep goes
 through logind -> systemd-suspend.service, which runs this (`suspend`)
 instead of systemd-sleep. With the charger connected it:
 
@@ -19,14 +18,22 @@ instead of systemd-sleep. With the charger connected it:
   - shows the charging indicator on the stick lights (CHARGING_STATE):
     a dim pulse while charging, a dim steady light once full,
   - until the power button is pressed, the lid opens (AYN Thor) or the
-    charger is pulled. Pulled: kernel deep sleep from there (systemd-sleep),
-    until the next wake. Then everything comes back: CPUs, apps, screens.
+    charger is pulled. Pulled: kernel sleep from there (below), until the
+    next wake. Then everything comes back: CPUs, apps, screens.
 
-Without a charger it is plain systemd-sleep. sm8550-sleep (the unit's
-ExecStartPre/ExecStopPost) runs around both: Bluetooth off, audio parked,
-the stick lights faded out before and in after.
+Without a charger it is deep sleep, watched: a charger plugged in meanwhile
+wakes it (kernel patch 0505: the ADSP's doorbell, which deep sleep used to
+mask, wakes the system once it is down; each such wake is counted on the
+"ipcc-wake" wakeup source), and it goes on into the rest above (screens
+still off, session still frozen), as if it had been put to sleep on the
+charger. A doorbell wake without a charger goes straight back to deep
+sleep. Any other wake (power button, lid, ...) wakes the device as before.
+A kernel without 0505 (no "ipcc-wake"): plain systemd-sleep, and a charger
+plugged in during it charges slowly until the next wake. sm8550-sleep (the unit's
+ExecStartPre/ExecStopPost) runs around all of it: Bluetooth off, audio
+parked, the stick lights faded out before and in after.
 
-While resting, FLAG (holding this process's PID, so a leftover from a crash
+While resting or watching the kernel sleep, FLAG (holding this process's PID, so a leftover from a crash
 counts for nothing) tells sm8550-powerbuttond (the wake press must not also
 ask Steam to sleep again) and sm8550-thor-backlightd (it must not power the
 bottom screen back up) to stand aside; INDICATOR tells PB-OS Utils' light
@@ -92,6 +99,13 @@ ON_RANGE, OFF_RANGE = (1.0, 10.0), (0.0, 30.0)
 FPS = 50
 GAMMA = 2.2
 UNPLUG_S = 2.0             # charger gone this long: really unplugged
+MEM_SLEEP = "/sys/power/mem_sleep"
+IPCC = "/sys/module/qcom_ipcc/parameters"   # deep_wake, idle_wake (0505)
+IPCC_WAKE = "ipcc-wake"    # wakeup source: wakes by an ADSP doorbell (0505)
+USER_WAKE_S = 0.3          # a wake press / lid open shows up within this
+CHARGER_SETTLE_S = 3.0     # after a doorbell wake: the charger may still come up
+DOORBELL_LIMIT = 3         # this many doorbell wakes without a charger
+DOORBELL_WINDOW_S = 120.0  # within this: doorbell wakes off until the next wake
 EV = struct.Struct("llHHi")
 EV_KEY, EV_SW, KEY_POWER, SW_LID = 1, 5, 116, 0
 
@@ -413,6 +427,62 @@ def drain(fd: int | None) -> None:
         pass
 
 
+def user_woke(key: int | None, lid: int | None, timeout: float) -> bool:
+    """The power key went down or up, or the lid opened, within timeout."""
+    fds = [f for f in (key, lid) if f is not None]
+    end = time.monotonic() + timeout
+    while fds:
+        r, _, _ = select.select(fds, [], [], max(0.0, end - time.monotonic()))
+        if not r:
+            return False
+        for fd in r:
+            try:
+                data = os.read(fd, EV.size * 64)
+            except (BlockingIOError, OSError):
+                continue
+            for off in range(0, len(data) - EV.size + 1, EV.size):
+                _s, _u, t, code, val = EV.unpack_from(data, off)
+                if fd == key and t == EV_KEY and code == KEY_POWER:
+                    return True
+                if fd == lid and t == EV_SW and code == SW_LID and val == 0:
+                    return True
+    return False
+
+
+def mem_sleep() -> str:
+    """The kernel's sleep for "mem" now ("s2idle [deep]" -> "deep")."""
+    for w in rd(MEM_SLEEP).split():
+        if w.startswith("["):
+            return w.strip("[]")
+    return ""
+
+
+def ipcc_wakes() -> int | None:
+    """How often an ADSP doorbell woke the system (0505), None without 0505."""
+    for w in glob.glob("/sys/class/wakeup/wakeup*"):
+        if rd(f"{w}/name") == IPCC_WAKE:
+            v = rd(f"{w}/event_count")
+            return int(v) if v.isdigit() else None
+    return None
+
+
+def can_watch() -> bool:
+    """Deep sleep is in use (s2idle charges at full speed anyway) and the
+    kernel lets a charger plugged in wake it (0505)."""
+    return mem_sleep() == "deep" and ipcc_wakes() is not None and rd(f"{IPCC}/deep_wake") == "Y"
+
+
+def charger_after_doorbell() -> bool:
+    """The charger after a doorbell wake: the doorbell can come before the
+    charger firmware reports it online, so it is waited for a moment."""
+    end = time.monotonic() + CHARGER_SETTLE_S
+    while not charger_online():
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.25)
+    return True
+
+
 WAKE_R, WAKE_W = os.pipe()
 
 
@@ -427,7 +497,9 @@ class Rest:
         self.lights: Lights | None = None
 
     # --- going down
-    def enter(self) -> None:
+    def enter(self, clocks: bool = True) -> None:
+        """clocks: also the big cores offline and the clocks capped (resting;
+        kernel sleep wants them as they are, to go down and come back fast)."""
         claim(FLAG)
         for pid in game_pids():
             try:
@@ -448,7 +520,8 @@ class Rest:
                 self.inhibited.append(p)
         time.sleep(0.3)
         self.frozen = set_frozen(freeze_targets(), True)
-        self.limit_clocks()
+        if clocks:
+            self.limit_clocks()
         log(f"resting: {len(self.paused)} game processes paused, {len(self.frozen)} cgroups frozen, "
             f"cpus {self.offlined} offline, {len(self.backlights)} screens off")
 
@@ -518,6 +591,63 @@ class Rest:
                 os.kill(pid, signal.SIGCONT)
             except OSError:
                 pass
+
+    # --- kernel sleep
+    def deep_sleep(self) -> str:
+        """Deep sleep, watched, until a wake that is not a stray doorbell:
+        "plugged" (a charger plugged in woke it, 0505) or "wake"."""
+        key = input_dev("pmic_pwrkey")
+        lid = input_dev("gpio-keys-lid")
+        drain(key)
+        drain(lid)
+        claim(INDICATOR)         # PB-OS Utils' light engine leaves the lights dark
+        switched_off = False
+        doorbells: list[float] = []
+        try:
+            while True:
+                before = ipcc_wakes()
+                log("deep sleep")
+                run(SYSTEMD_SLEEP, "suspend")
+                if user_woke(key, lid, USER_WAKE_S):
+                    return "wake"
+                after = ipcc_wakes()
+                if before is None or after is None or after <= before:
+                    return "wake"         # not a doorbell: a normal wake
+                self.dark_again()
+                if charger_after_doorbell():
+                    log("charger plugged in")
+                    return "plugged"
+                # Another ADSP doorbell. Too many of them: deep sleep no
+                # longer wakes on doorbells (0504's behaviour) this time.
+                t = time.monotonic()
+                doorbells = [d for d in doorbells if t - d < DOORBELL_WINDOW_S] + [t]
+                log(f"doorbell wake, no charger ({len(doorbells)})")
+                if len(doorbells) >= DOORBELL_LIMIT and not switched_off \
+                        and wr(f"{IPCC}/deep_wake", "N"):
+                    switched_off = True
+                    log("deep_wake off until the device wakes: too many doorbell wakes")
+                # A press while it was awake for the doorbell wakes it.
+                if user_woke(key, lid, 0):
+                    return "wake"
+        finally:
+            for f in (key, lid):
+                if f is not None:
+                    os.close(f)
+            if switched_off:
+                wr(f"{IPCC}/deep_wake", "Y")
+            rm(INDICATOR)
+
+    def dark_again(self) -> None:
+        """After a doorbell wake: the display came back with the kernel
+        (screens on, last frame) and systemd-sleep thawed the session."""
+        for bl, _power, br in self.backlights:
+            if br is not None:
+                wr(f"{bl}/brightness", 0)
+            wr(f"{bl}/bl_power", 4)
+        for p in touchscreens():
+            if rd(p) == "0" and wr(p, 1) and p not in self.inhibited:
+                self.inhibited.append(p)
+        self.frozen = sorted(set(self.frozen) | set(set_frozen(freeze_targets(), True)))
 
     # --- while resting
     def wait(self) -> str:
@@ -596,23 +726,33 @@ def suspend() -> int:
     if not sm8550():
         os.execv(KONKR_SUSPEND, [KONKR_SUSPEND]) if os.access(KONKR_SUSPEND, os.X_OK) \
             else os.execv(SYSTEMD_SLEEP, [SYSTEMD_SLEEP, "suspend"])
-    if not charger_online():
+    plugged = charger_online()
+    if not plugged and not can_watch():
         os.execv(SYSTEMD_SLEEP, [SYSTEMD_SLEEP, "suspend"])
     # Stopped (shutdown while resting): unwind through leave().
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     rest = Rest()
     try:
-        rest.enter()
-        why = rest.wait()
-        if why == "unplugged":
-            # The lights go back to their owner (dark: sm8550-sleep fades
-            # them in after) and the clocks too, then real sleep.
-            if rest.lights:
-                rest.lights.give_back()
-                rest.lights = None
-            rest.restore_clocks()
-            log("deep sleep")
-            deep_sleep()
+        rest.enter(clocks=False)
+        while True:
+            if plugged:
+                rest.limit_clocks()
+                log("resting on the charger")
+                if rest.wait() != "unplugged":
+                    break
+                # The lights go back to their owner (dark: sm8550-sleep fades
+                # them in after) and the clocks too, then real sleep.
+                if rest.lights:
+                    rest.lights.give_back()
+                    rest.lights = None
+                rest.restore_clocks()
+            if not can_watch():
+                log("deep sleep")
+                deep_sleep()
+                break
+            if rest.deep_sleep() != "plugged":
+                break
+            plugged = True
         log("waking")
     finally:
         rest.leave()
