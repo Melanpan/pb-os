@@ -48,6 +48,9 @@ const setMcu = callable("set_mcu");
 const getCharging = callable("get_charging");
 const setCharging = callable("set_charging");
 const previewCharging = callable("preview_charging");
+// Charge limit and bypass charging (Retroid Pocket 6 / Nova, sm8550-charge-control).
+const getChargeControl = callable("get_charge_control");
+const setChargeControl = callable("set_charge_control");
 // PB-OS twins of Valve's Proton: set per game (pbos-proton builds them).
 const getProton = callable("get_proton");
 const getProtonGames = callable("get_proton_games");
@@ -834,6 +837,57 @@ function HardwareTab() {
 // at a quarter of the LEDs' current, so the lowest are very dim.
 const secs = (v) => `${Number(v).toFixed(1).replace(/\.0$/, "")} s`;
 
+// Battery charging on Retroid handhelds: Retroid's firmware can stop at 80 %
+// or run the device from USB power without charging (charge separation).
+const CHARGE_MODES = [
+    { data: "normal", label: "Normal", desc: "Charges to 100 %." },
+    { data: "limit80", label: "Stop at 80 %", desc: "The battery firmware stops charging at 80 %. Easier on the battery when the device lives on the charger." },
+    { data: "hold", label: "Hold at a level", desc: "Charges to the level below, then runs from USB power and leaves the battery alone." },
+    { data: "bypass", label: "Run from USB", desc: "Runs from USB power and doesn't charge (charge separation). Below 15 % it still charges a little." },
+];
+
+function ChargeControl() {
+    const [cc, setCc] = useState(null);
+    const movedAt = useRef(0);
+    const send = useThrottled(useCallback((changes) => {
+        setChargeControl(changes).then((r) => { if (Date.now() - movedAt.current >= 2000) setCc(r); }).catch(() => {});
+    }, []));
+    useEffect(() => {
+        const load = () => { if (Date.now() - movedAt.current >= 2000) getChargeControl().then(setCc).catch(() => {}); };
+        load();
+        const t = setInterval(load, 5000);
+        return () => clearInterval(t);
+    }, []);
+    if (!cc || !cc.supported) return null;
+    const s = cc.settings;
+    const change = (patch) => {
+        movedAt.current = Date.now();
+        const next = { ...s, ...patch };
+        setCc({ ...cc, settings: next });
+        send(next);
+    };
+    const mode = CHARGE_MODES.find((m) => m.data === s.mode) || CHARGE_MODES[0];
+    const live = cc.state || {};
+    const status = !live.plugged ? "Not on a charger."
+        : live.held ? `On the charger, holding at ${live.capacity} %.`
+        : `On the charger, ${String(live.status || "").toLowerCase() || "charging"} at ${live.capacity} %.`;
+    return jsx(DFL.PanelSection, { title: "Battery", children: [
+        row(jsx(DFL.DropdownItem, {
+            label: "Charging",
+            description: mode.desc,
+            rgOptions: CHARGE_MODES.map((m) => ({ data: m.data, label: m.label })),
+            selectedOption: s.mode,
+            onChange: (o) => change({ mode: o.data }),
+        })),
+        s.mode === "hold" ? row(jsx(DFL.SliderField, {
+            label: `Hold at ${s.hold_at} %`,
+            value: s.hold_at, min: cc.limits.hold_at[0], max: cc.limits.hold_at[1], step: 5,
+            onChange: (v) => change({ hold_at: v }),
+        })) : null,
+        note(status),
+    ] });
+}
+
 function PowerTab() {
     const [st, setSt] = useState(null);
     const [previewing, setPreviewing] = useState(false);
@@ -846,7 +900,7 @@ function PowerTab() {
     useEffect(() => { refresh(); }, [refresh]);
 
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.supported) return jsx(DFL.PanelSection, { title: "Power", children: note("This device has no charging indicator pb-os can show.") });
+    if (!st.supported) return jsx(ChargeControl, {});
     const s = st.settings;
     const lim = st.limits;
     // Every change goes out whole, so a throttled send never drops one.
@@ -909,7 +963,7 @@ function PowerTab() {
                 + "(the lowest settings are the defaults); at the dimmest levels a mixed color can show as its strongest part."),
         );
     }
-    return jsx(DFL.PanelSection, { title: "Power", children: items });
+    return jsxs(SP_REACT.Fragment, { children: [jsx(ChargeControl, {}), jsx(DFL.PanelSection, { title: "Power", children: items })] });
 }
 
 // ---------------------------------------------------------------- panel ---
@@ -920,7 +974,8 @@ function Content() {
     const pick = (id) => { lastTab = id; setTab(id); };
     useEffect(() => {
         getLights().then((s) => setLightsKind(s.kind || "")).catch(() => setLightsKind(""));
-        getCharging().then((s) => setPower(!!s.supported)).catch(() => setPower(false));
+        Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))])
+            .then(([rest, cc]) => setPower(!!rest.supported || !!cc.supported));
     }, []);
     // Until it's known whether there are lights: Lighting comes first where
     // there are, and the panel shouldn't open on Update and then jump.

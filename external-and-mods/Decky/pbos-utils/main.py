@@ -448,6 +448,23 @@ def charge_preview() -> bool:
     return r.returncode == 0
 
 
+# Charge limit and bypass charging (Power tab, Retroid Pocket 6 / Nova):
+# sm8550-charge-control owns its settings and applies them.
+CHARGE_CONTROL = "/usr/lib/steamos-sm8550/sm8550-charge-control"
+
+
+def charge_control(*args: str) -> dict[str, Any]:
+    if not os.access(CHARGE_CONTROL, os.X_OK):
+        return {"supported": False}
+    r = subprocess.run(["/usr/bin/python3", CHARGE_CONTROL, *args], capture_output=True, text=True,
+                       env=CLEAN_ENV, timeout=20)
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        decky.logger.info(f"charge control {args[:1]}: {r.stderr.strip()}")
+        return {"supported": False}
+
+
 # --------------------------------------------------------------- proton --
 # PB-OS twins of Valve's Proton tools, built by /usr/lib/steamos/pbos-proton.
 # Valve's per-game Proton pick outranks Steam's global default, so the
@@ -795,6 +812,14 @@ class Plugin:
         if not isinstance(changes, dict):
             return await self.get_charging()
         return await asyncio.to_thread(charge_rest, "save", json.dumps(changes))
+
+    async def get_charge_control(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(charge_control, "settings")
+
+    async def set_charge_control(self, changes: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
+        if not isinstance(changes, dict):
+            return await self.get_charge_control()
+        return await asyncio.to_thread(charge_control, "save", json.dumps(changes))
 
     async def preview_charging(self, **_: Any) -> bool:
         return await asyncio.to_thread(charge_preview)

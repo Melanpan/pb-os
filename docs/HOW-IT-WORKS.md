@@ -110,7 +110,12 @@ Nova, AYN Thor) a Power tab sets the charging indicator: sleeping on the
 charger is a rest instead of kernel deep sleep, which charges at only about a
 quarter of the speed (`sm8550-charge-rest`: screens off, session frozen,
 clocks capped; pulling the charger goes on into deep sleep), and the stick
-lights pulse dimly until the battery is full, then stay dimly lit.
+lights pulse dimly until the battery is full, then stay dimly lit. On the
+Retroid Pocket 6 and Nova the Power tab also has battery charging modes,
+using Retroid's own battery firmware (kernel patch 0545,
+`sm8550-charge-control`): Normal, Stop at 80 % (the firmware's limit), Hold at
+a level, and Run from USB (charge separation: the device runs from USB power
+and the battery is left alone).
 
 ## Compared with the SM8550 setup, in short
 

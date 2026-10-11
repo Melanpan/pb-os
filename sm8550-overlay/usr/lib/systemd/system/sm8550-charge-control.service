@@ -1,0 +1,15 @@
+[Unit]
+Description=Charge limit and bypass charging (Retroid Pocket 6 and Nova)
+ConditionPathExists=/sys/firmware/devicetree/base/compatible
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qaE "retroidpocket,(rp6|rpnova)" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/steamos-sm8550/sm8550-charge-control
+# Never leave the battery unable to charge if the daemon goes away.
+ExecStopPost=/bin/sh -c 'for d in /sys/bus/auxiliary/devices/pmic_glink.power-supply.*; do [ -e $d/retroid_charge_now ] && echo 1 > $d/retroid_charge_now && echo 0 > $d/retroid_limit_capacity; done; rm -f /run/sm8550-charge-held; true'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

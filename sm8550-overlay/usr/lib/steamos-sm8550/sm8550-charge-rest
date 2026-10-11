@@ -60,6 +60,7 @@ import time
 
 FLAG = "/run/sm8550-charge-rest"
 INDICATOR = "/run/pbos-charge-indicator"
+HELD = "/run/sm8550-charge-held"          # sm8550-charge-control holds the battery
 CHARGING_STATE = "/var/lib/pbos-utils/charging.json"
 SYSTEMD_SLEEP = "/usr/lib/systemd/systemd-sleep"
 KONKR_SUSPEND = "/usr/lib/konkr/konkr-suspend"
@@ -267,7 +268,12 @@ def charger_online() -> bool:
 
 
 def battery_full() -> bool:
-    return rd(f"{BATTERY}/status") == "Full" or rd(f"{BATTERY}/capacity", "0") == "100"
+    """Full, or held below full on purpose by sm8550-charge-control (charge
+    limit or bypass; HELD holds its PID)."""
+    if rd(f"{BATTERY}/status") == "Full" or rd(f"{BATTERY}/capacity", "0") == "100":
+        return True
+    pid = rd(HELD)
+    return pid.isdigit() and os.path.exists(f"/proc/{pid}")
 
 
 # -------------------------------------------------------------- the rest --
