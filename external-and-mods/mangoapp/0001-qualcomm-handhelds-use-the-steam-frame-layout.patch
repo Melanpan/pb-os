@@ -26,7 +26,7 @@ index 6b22b94..67d69ec 100644
           continue;
  
        add_to_options(params, "gpu_voltage", "0");
-@@ -1424,6 +1426,17 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
+@@ -1424,6 +1426,16 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
           add_to_options(params, "fex_stats", "status+apptype+hotthreads+jitload+sigbus+smc+softfloat");
  #endif
        }
@@ -35,11 +35,10 @@ index 6b22b94..67d69ec 100644
 +      if (!file_exists("/run/power-monitor/power/cores_total"))
 +         add_to_options(params, "cpu_power", "0");
 +      if (!gpu->is_steam_frame()) {
-+         // The memory clock is a Frame constant, there is no ddr-thermal
-+         // zone, and SM8550 battmgr power_now is not in watts.
++         // The memory clock is a Frame constant and there is no
++         // ddr-thermal zone.
 +         add_to_options(params, "gpu_mem_clock", "0");
 +         add_to_options(params, "gpu_mem_temp", "0");
-+         add_to_options(params, "battery", "0");
 +      }
        break;
     }

@@ -1,0 +1,106 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] power: supply: qcom_battmgr: SM8350/SM8550 charge and power
+
+Two problems on the per-property (SM8350/SM8550) firmware, seen on the
+Retroid Pocket Nova:
+
+- charge_full and charge_full_design always failed with ENODATA. Only the
+  SC8280XP-style firmware reports its unit; on these variants the unit
+  stayed 0 (mWh), so every charge property was refused. The firmware
+  reports charge in uAh, like Android's charge counter: set the unit to
+  mAh for these variants.
+- There was no charge_now, so userspace could not work out the time left
+  (MangoHud showed "Remaining 00:00"). The charge counter is the
+  remaining charge: report it as charge_now as well.
+- power_now passed BATT_POWER_NOW through, which is not the battery's
+  power: it sat near 47 W while voltage x current was 2 to 11 W. Report
+  voltage x current instead (negative while discharging, like
+  current_now).
+
+Tested on a Nova with its own ADSP (2026-10-10): charge_full_design
+5191000 (stock Android: 5191 mAh), charge_full 5098000, charge_now
+3881107 = charge_counter at 76 %, power_now -1.68 W at idle.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -6,6 +6,7 @@
+  */
+ #include <linux/auxiliary_bus.h>
+ #include <linux/devm-helpers.h>
++#include <linux/math64.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/nvmem-consumer.h>
+@@ -447,6 +448,7 @@
+ 	[POWER_SUPPLY_PROP_CYCLE_COUNT] = BATT_CYCLE_COUNT,
+ 	[POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN] =  BATT_CHG_FULL_DESIGN,
+ 	[POWER_SUPPLY_PROP_CHARGE_FULL] = BATT_CHG_FULL,
++	[POWER_SUPPLY_PROP_CHARGE_NOW] = BATT_CHG_COUNTER,
+ 	[POWER_SUPPLY_PROP_MODEL_NAME] = BATT_MODEL_NAME,
+ 	[POWER_SUPPLY_PROP_TIME_TO_FULL_AVG] = BATT_TTF_AVG,
+ 	[POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG] = BATT_TTE_AVG,
+@@ -469,7 +471,24 @@
+ 	prop = sm8350_bat_prop_map[psp];
+ 
+ 	mutex_lock(&battmgr->lock);
+-	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
++	if (psp == POWER_SUPPLY_PROP_POWER_NOW) {
++		/*
++		 * BATT_POWER_NOW is not the battery's power: on the Retroid
++		 * Nova it stays near 47 W while V x I moves between 2 and 11 W.
++		 * Report V x I instead (negative while discharging, as current).
++		 */
++		ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++						    BATT_VOLT_NOW, 0);
++		if (!ret)
++			ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++							    BATT_CURR_NOW, 0);
++		if (!ret)
++			battmgr->status.power_now =
++				div_s64((s64)battmgr->status.voltage_now *
++					battmgr->status.current_now, 1000000);
++	} else {
++		ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
++	}
+ 	mutex_unlock(&battmgr->lock);
+ 
+ 	return ret;
+@@ -884,6 +903,7 @@
+ 	POWER_SUPPLY_PROP_CYCLE_COUNT,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+ 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+ 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
+@@ -916,6 +936,7 @@
+ 	POWER_SUPPLY_PROP_CYCLE_COUNT,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+ 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+ 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
+@@ -1449,6 +1470,7 @@
+ 			break;
+ 		case BATT_CHG_COUNTER:
+ 			battmgr->info.charge_count = le32_to_cpu(resp->intval.value);
++			battmgr->status.capacity = battmgr->info.charge_count;
+ 			break;
+ 		case BATT_CYCLE_COUNT:
+ 			battmgr->info.cycle_count = le32_to_cpu(resp->intval.value);
+@@ -1746,6 +1768,14 @@
+ 	else
+ 		battmgr->variant = QCOM_BATTMGR_SM8350;
+ 
++	/*
++	 * Only the SC8280XP-style firmware reports its unit; the per-property
++	 * firmware reports charge in uAh, like Android's charge counter.
++	 */
++	if (battmgr->variant == QCOM_BATTMGR_SM8350 ||
++	    battmgr->variant == QCOM_BATTMGR_SM8550)
++		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
++
+ 	ret = qcom_battmgr_charge_control_thresholds_init(battmgr);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret,

@@ -14,8 +14,7 @@ tunes the overlay for the Steam Frame only (SM8650 display controller). With
 it, every Qualcomm GPU gets the Frame's rows (FEX stats on level 4, no network,
 no GPU voltage/fan rows). CPU power is hidden without Valve's power-monitor.
 Devices that are not SM8650 also hide the memory clock (a Frame constant
-upstream), the memory temperature (no `ddr-thermal` zone) and the battery row
-(SM8550 battmgr `power_now` is not in watts).
+upstream) and the memory temperature (no `ddr-thermal` zone).
 
 **Build:** `scripts/apply-overlays.sh` calls
 `scripts/build-mangoapp-in-rootfs.sh`, which builds inside a throwaway overlay
