@@ -3,7 +3,7 @@
 - Generated: 2026-10-02 09:45 ET, from every session in the harness `results/` folder (18 sessions, 33 test rows)
 - Harness: barry-benchmark-tools, `./bench run` from the Mac
 - Each number is the mean of the measured runs; the warm-up run is discarded. "Runs" = measured runs that finished OK.
-- 2026-10-10: Pocket FIT GPU clock and voltage rows added by hand from 5 more sessions (`kpf903-*`, `kpf-gpu-lock-*`).
+- 2026-10-10: Pocket FIT GPU clock and voltage rows added by hand from 5 more sessions (`kpf903-*`, `kpf-gpu-lock-*`). Also one Retroid Pocket Nova row (`nova-thermal`).
 - Dates are converted to US Eastern time. Some session folders use the device clock, which was 3 h behind.
 
 ## Test presets
@@ -15,6 +15,7 @@
 | TR high, 30 fps cap | TR (2013) benchmark, 1080p, VSync off, "high": 2x SSAA + TressFX, capped at 30 fps (DXVK) |
 | TR via GameNative   | TR (2013) built-in benchmark via GameNative; graphics settings come from GameNative's own prefix and were not set or recorded by the harness |
 | vkmark              | vkmark, headless 1920x1080, 6 scenes x 5 s |
+| TR high, 1280x960   | TR (2013) benchmark, the Nova's own 1280x960 (fullscreen, not exclusive), VSync off, "high": 2x SSAA + TressFX; Proton PB-OS (ARM) |
 | vkmark heavy        | vkmark, headless 1920x1080, 4 heavy scenes (shading phong, texture, effect2d, desktop) x 20 s, GPU clock locked |
 
 ## Results
@@ -59,6 +60,7 @@
 | 2026-10-10 21:27 | kpf903-turboL1-acd-repeat | KONKR Pocket FIT (SD card) | SteamOS 0.3.0         | 7.2.8-sm8650-steamos (build #1, 2026-10-08 17:03 UTC) | Battery (76->72 %)             | vkmark heavy        | EAS; CPU schedutil; GPU simple_ondemand locked 903 MHz, 16 ms poll; 903 MHz OPP at TURBO_L1 + ACD | 3/3  |       - |      - |        - |  10309 |  11.3 | A again: TURBO saves about 1 W (-9 %) at the same score. GPU max 78.7 C. |
 | 2026-10-10 22:12 | kpf-gpu-lock-1000   | KONKR Pocket FIT (SD card) | SteamOS 0.3.0         | 7.2.8-sm8650-steamos (build #1, 2026-10-08 17:03 UTC) | Battery (68->66 %)             | vkmark heavy        | EAS; CPU schedutil; GPU simple_ondemand locked 1000 MHz, 16 ms poll; 1000 MHz OPP at TURBO_L1 + ACD | 2/2  |       - |      - |        - |  11519 |  12.6 | 1000 MHz is real: +11.7 % over 903 MHz (clock +10.7 %). GPU max 81.9 C. |
 | 2026-10-10 22:17 | kpf-gpu-lock-1050   | KONKR Pocket FIT (SD card) | SteamOS 0.3.0         | 7.2.8-sm8650-steamos (build #1, 2026-10-08 17:03 UTC) | Battery (65->62 %)             | vkmark heavy        | EAS; CPU schedutil; GPU simple_ondemand locked 1050 MHz, 16 ms poll; 1050 MHz OPP at TURBO_L2 + ACD | 2/2  |       - |      - |        - |  11736 |  14.8 | 1050 MHz: +1.9 % over 1000 for +2.3 W, GPU max 93.3 C. Balanced now stops at 1000 MHz. |
+| 2026-10-10 23:11 | nova-thermal        | Retroid Pocket Nova        | SteamOS 0.3.0         | 7.2.8-sm8550-steamos (build #1, 2026-10-10 21:09 UTC)                     | Battery (81->77 %)             | TR high, 1280x960   | EAS + boostd; CPU schedutil; GPU simple_ondemand 220-680 MHz, 50 ms poll                   | 3/3  |    31.3 |   20.1 |     18.7 |      - |  11.1 | Nova thermal check, Proton PB-OS (ARM). CPU prime 2956 MHz and GPU 680 MHz the whole time; no cooling device ever engaged, though the hottest core sensor reached 95.5 C. |
 | -                | -                   | Armada OS device           | Armada (Fedora-based) | Not recorded                                                              | Not recorded                   | -                   | -                                                                                          | 0/0  |       - |      - |        - |      - |     - | No Armada results yet. Harness support is on the local branch benchmark-armada (b306784), not merged and never run on a device, so there is no session to report. |
 
 ## How to read this
