@@ -23,6 +23,7 @@ set -u
 
 TOUCH_DRV=/sys/bus/i2c/drivers/chipone-tddi
 MCU_DRV=/sys/bus/serial/drivers/konkr_sysbtn
+STICK_LED=/sys/class/leds/konkr:rgb:joysticks
 XHCI_DRV=/sys/bus/pci/drivers/xhci-pci-renesas
 XHCI_MARK=/run/konkr-sleep-xhci
 MCU_MARK=/run/konkr-sleep-mcu
@@ -100,6 +101,14 @@ usb_on() {
   rm -f "$XHCI_MARK"
 }
 
+lights_off() {  # the stick lights go dark with the screen, not when the MCU
+  # is let go (~8 s later, after the audio wait); pbosd puts them back on
+  # SIGHUP in post
+  [[ -e $STICK_LED/effect ]] || return 0
+  echo static >"$STICK_LED/effect" 2>/dev/null
+  echo 0 >"$STICK_LED/brightness" 2>/dev/null
+}
+
 uarts_off() {  # Bluetooth and MCU UARTs hold the XO clock
   local d
   if rfkill list bluetooth 2>/dev/null | grep -q "Soft blocked: no"; then
@@ -137,6 +146,7 @@ touch_off() {
 
 pre() {
   local n i=0
+  lights_off
   audio 1
   wake_sources
   n=$(touch_off)
