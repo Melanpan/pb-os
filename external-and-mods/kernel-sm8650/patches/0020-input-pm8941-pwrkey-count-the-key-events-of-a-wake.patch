@@ -1,0 +1,22 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] Input: pm8941-pwrkey: count the key events of a wake
+
+0018 keeps the wake press (and presses in the 3 s after resume) from
+userspace, so userspace can no longer see that the power key woke the
+system: the pon device's wakeup source never counts anything. The
+KONKR Pocket FIT's charge rest needs to tell a power key wake from a
+charger (ADSP doorbell, "ipcc-wake") wake.
+
+Count each key event that 0018 drops on the pon device's wakeup source.
+---
+--- a/drivers/input/misc/pm8941-pwrkey.c
++++ b/drivers/input/misc/pm8941-pwrkey.c
+@@ -185,6 +185,8 @@
+ 		if (pm8941_pwrkey_sleeping)
+ 			pm8941_pwrkey_ignore_end = ktime_add_ms(ktime_get(),
+ 						PM8941_PWRKEY_WAKE_IGNORE_MS);
++		/* not reported, but counted: userspace can tell the key woke it */
++		pm_wakeup_dev_event(pwrkey->dev, 0, false);
+ 		dev_dbg(pwrkey->dev, "ignoring the wake key event (%u)\n", sts);
+ 		pwrkey->last_status = sts;
+ 		return IRQ_HANDLED;
