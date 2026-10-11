@@ -66,8 +66,11 @@ FAN_CURVES = {
     "balanced": [(50, 35), (60, 60), (70, 100), (80, 160), (90, 255)],
 }
 # clock ceilings (None = the hardware maximum); the GPU floor is always the
-# lowest OPP, big = the CPU clusters other than the Cortex-A520s
-GPU_MAX_MHZ = {"lowpower": 680, "balanced": None}
+# lowest OPP, big = the CPU clusters other than the Cortex-A520s. Balanced
+# stops the GPU at 1000 MHz: ROCKNIX's 1050 MHz step (TURBO_L2) gave about
+# 2 % more vkmark than 1000 MHz for 2.3 W and 11 C more on the Pocket FIT
+# (2026-10-10); 1000 MHz scales with the clock.
+GPU_MAX_MHZ = {"lowpower": 680, "balanced": 1000}
 BIG_CPU_MAX_KHZ = {"lowpower": 2035200, "balanced": None}
 # per-thread uclamp.min for game threads (0..1024)
 GAME_UCLAMP = {"lowpower": 0, "balanced": 256}
