@@ -28,6 +28,8 @@ XHCI_DRV=/sys/bus/pci/drivers/xhci-pci-renesas
 XHCI_MARK=/run/konkr-sleep-xhci
 MCU_MARK=/run/konkr-sleep-mcu
 BT_MARK=/run/konkr-sleep-bt-was-on
+NULL_SINK=konkr-sleep
+NULL_MARK=/run/konkr-sleep-null
 WIFI_MODS=(ath12k_wifi7 ath12k)
 UID_STEAM=1000
 
@@ -48,6 +50,37 @@ audio() {  # audio 1 = suspend, 0 = resume
       as_user pactl "suspend-${kind%s}" "$name" "$1"
     done
   done
+}
+
+# Kernel sleep: Steam's sleep sound keeps its stream playing for ~12 s, and
+# suspending a sink does not stop a playing stream (an open PCM keeps the
+# audio DSP up: no full SoC sleep). As sm8550-sleep: every stream moves to a
+# silent null sink, then the hardware sinks and sources are suspended, so
+# the PCMs close at once. Removing the null sink in post sends the streams
+# back to the default devices.
+audio_park() {
+  local mod i s
+  mod=$(as_user pactl load-module module-null-sink sink_name=$NULL_SINK) && echo "$mod" >"$NULL_MARK"
+  for i in $(as_user pactl list short sink-inputs | cut -f1); do
+    as_user pactl move-sink-input "$i" $NULL_SINK
+  done
+  for i in $(as_user pactl list short source-outputs | cut -f1); do
+    as_user pactl move-source-output "$i" $NULL_SINK.monitor
+  done
+  for s in $(as_user pactl list short sinks | cut -f2); do
+    [[ $s == "$NULL_SINK" ]] || as_user pactl suspend-sink "$s" 1
+  done
+  for s in $(as_user pactl list short sources | cut -f2); do
+    [[ $s == "$NULL_SINK.monitor" ]] || as_user pactl suspend-source "$s" 1
+  done
+}
+
+audio_unpark() {
+  audio 0
+  if [[ -s $NULL_MARK ]]; then
+    as_user pactl unload-module "$(cat "$NULL_MARK")"
+  fi
+  rm -f "$NULL_MARK"
 }
 
 gamescope_screen() {  # 1 = panel off (DPMS, not just backlight), 0 = on
@@ -147,7 +180,7 @@ touch_off() {
 pre() {
   local n i=0
   lights_off
-  audio 1
+  audio_park
   wake_sources
   n=$(touch_off)
   uarts_off
@@ -155,10 +188,10 @@ pre() {
   if [[ -d /sys/module/${WIFI_MODS[0]} ]]; then
     timeout 15 modprobe -r "${WIFI_MODS[@]}" || log "ath12k unload failed"
   fi
-  # Steam's sleep sound keeps its stream open for several seconds
+  # Any PCM still open (normally none after the park)
   while streams_open && ((i < 30)); do sleep 0.5; i=$((i + 1)); done
   sync
-  log "pre: audio suspended (waited $((i / 2)) s), touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
+  log "pre: audio parked (waited $((i / 2)) s), touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
 }
 
 touch_devices() {  # chipone panels on any I2C bus, bound or not
@@ -185,7 +218,7 @@ post() {
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
   fi
-  audio 0
+  audio_unpark
   # pbosd re-applies profile clocks/LEDs on SIGHUP
   systemctl kill -s HUP pbosd.service >/dev/null 2>&1
   log "post: restored"
