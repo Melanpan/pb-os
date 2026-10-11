@@ -923,9 +923,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# MangoHud: keep SteamOS stock binaries. Host Ubuntu mangoapp needs GLIBC_2.43
-# (SteamOS is 2.39) and crash-loops gamescopereaper / the session.
-# Build from external-and-mods/MangoHud against SteamOS glibc before replacing.
+# MangoHud: keep SteamOS stock binaries, except mangoapp (below). Host Ubuntu
+# mangoapp needs GLIBC_2.43 (SteamOS is 2.39) and crash-loops
+# gamescopereaper / the session, so anything replaced is built in the rootfs.
 # ---------------------------------------------------------------------------
 log "== MangoHud (stock SteamOS — host Ubuntu mango needs GLIBC_2.43)"
 for b in mangohud mangoapp mangohudctl; do
@@ -938,6 +938,12 @@ for lib in libMangoHud.so libMangoHud_opengl.so libMangoHud_shim.so libMangoHud-
     install_file "$STOCK/usr/lib/$lib" "$R/usr/lib/$lib" 0755
   fi
 done
+# Stock mangoapp reads GPU load from its own fdinfo (Performance Overlay shows
+# GPU 0 %); upstream reads the game's. See external-and-mods/mangoapp.
+log "== mangoapp (upstream MangoHud + PB-OS patch)"
+MANGOAPP_BUILD="${MANGOAPP_BUILD:-${WORKDIR}/mangoapp-build}"
+"${SCRIPT_DIR}/build-mangoapp-in-rootfs.sh" "$R" "$MANGOAPP_BUILD"
+install_file "$MANGOAPP_BUILD/mangoapp" "$R/usr/bin/mangoapp" 0755
 
 # ---------------------------------------------------------------------------
 # lsfg-vk

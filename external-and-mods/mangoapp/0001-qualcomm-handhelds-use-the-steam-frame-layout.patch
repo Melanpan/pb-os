@@ -1,0 +1,46 @@
+diff --git a/src/gpu.h b/src/gpu.h
+index 155c5a3..3fb759f 100644
+--- a/src/gpu.h
++++ b/src/gpu.h
+@@ -113,6 +113,7 @@ class GPU {
+         std::string gpu_text();
+         std::string vram_text();
+         bool is_steam_frame();
++        bool is_msm() { return driver == "msm_dpu" || driver == "msm_drm"; }
+ 
+     private:
+         std::thread thread;
+diff --git a/src/overlay_params.cpp b/src/overlay_params.cpp
+index 6b22b94..67d69ec 100644
+--- a/src/overlay_params.cpp
++++ b/src/overlay_params.cpp
+@@ -1407,8 +1407,10 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
+    if (!gpus)
+       gpus = std::make_unique<GPUS>(params);
+ 
++   // PB-OS: every Qualcomm (msm) handheld gets the Steam Frame layout, not
++   // only the Frame's own SM8650. Its other rules follow the Frame block.
+    for (const auto& gpu : gpus->available_gpus) {
+-      if (!gpu || !gpu->is_steam_frame())
++      if (!gpu || !gpu->is_msm())
+          continue;
+ 
+       add_to_options(params, "gpu_voltage", "0");
+@@ -1424,6 +1426,17 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
+          add_to_options(params, "fex_stats", "status+apptype+hotthreads+jitload+sigbus+smc+softfloat");
+ #endif
+       }
++      // Without Valve's power-monitor there is no CPU power (and no powercap
++      // either, so trying only fills the log).
++      if (!file_exists("/run/power-monitor/power/cores_total"))
++         add_to_options(params, "cpu_power", "0");
++      if (!gpu->is_steam_frame()) {
++         // The memory clock is a Frame constant, there is no ddr-thermal
++         // zone, and SM8550 battmgr power_now is not in watts.
++         add_to_options(params, "gpu_mem_clock", "0");
++         add_to_options(params, "gpu_mem_temp", "0");
++         add_to_options(params, "battery", "0");
++      }
+       break;
+    }
+ }
