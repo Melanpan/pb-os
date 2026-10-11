@@ -60,6 +60,7 @@ import os
 import pwd
 import select
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -98,7 +99,9 @@ PULSE_MAX_MIN, SOLID_MIN = 20, 1
 ON_RANGE, OFF_RANGE = (1.0, 10.0), (0.0, 30.0)
 FPS = 50
 GAMMA = 2.2
-UNPLUG_S = 2.0             # charger gone this long: really unplugged
+UNPLUG_S = 2.0             # after the unplug event, still gone: really unplugged
+NETLINK_KOBJECT_UEVENT = 15
+UEVENT_SUBSYSTEMS = (b"SUBSYSTEM=power_supply", b"SUBSYSTEM=typec")
 MEM_SLEEP = "/sys/power/mem_sleep"
 IPCC = "/sys/module/qcom_ipcc/parameters"   # deep_wake, idle_wake (0505)
 IPCC_WAKE = "ipcc-wake"    # wakeup source: wakes by an ADSP doorbell (0505)
@@ -483,6 +486,33 @@ def charger_after_doorbell() -> bool:
     return True
 
 
+def uevents() -> socket.socket | None:
+    """The kernel's uevents: a charger plugged in or pulled, the battery
+    charging or full (power_supply, from the charger firmware's
+    notifications) and USB-C partner changes (typec)."""
+    try:
+        sock = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_KOBJECT_UEVENT)
+        sock.bind((0, 1))
+        sock.setblocking(False)
+        return sock
+    except OSError as e:
+        log(f"uevents: {e}")
+        return None
+
+
+def charger_event(sock: socket.socket) -> bool:
+    """Reads what the socket holds: True when a charger/battery/USB-C change
+    is among it."""
+    hit = False
+    while True:
+        try:
+            msg = sock.recv(16384)
+        except (BlockingIOError, OSError):
+            return hit
+        if any(sub in msg.split(b"\0") for sub in UEVENT_SUBSYSTEMS):
+            hit = True
+
+
 WAKE_R, WAKE_W = os.pipe()
 
 
@@ -661,40 +691,48 @@ class Rest:
         drain(key)
         drain(lid)
         signal.signal(signal.SIGUSR1, lambda *_: os.write(WAKE_W, b"x"))
-        fds = [f for f in (key, lid, WAKE_R) if f is not None]
+        ev = uevents()
+        fds = [f for f in (key, lid, WAKE_R, ev) if f is not None]
         pressed = False
         t0 = time.monotonic()
-        checked = 0.0
         full = battery_full()
-        gone_since = None
+        # The charger and the battery are read again on their own events
+        # only (ev). Pulled: still gone UNPLUG_S after that event (a USB PD
+        # renegotiation drops it for a moment) is unplugged.
+        unplugged_at = None if charger_online() else t0 + UNPLUG_S
         try:
             while True:
                 now = time.monotonic()
-                if now - checked >= 1.0:
-                    checked = now
-                    full = battery_full()
-                    if charger_online():
-                        gone_since = None
-                    elif gone_since is None:
-                        gone_since = now
-                    elif now - gone_since >= UNPLUG_S:
+                if unplugged_at is not None and now >= unplugged_at:
+                    if not charger_online():
                         log("charger pulled")
                         return "unplugged"
-                timeout = 1.0
+                    unplugged_at = None
+                timeout = None
                 if self.lights:
                     if full:
                         self.lights.show(s["solid_color"], s["solid_level"])
                     else:
                         self.lights.show(s["pulse_color"], pulse_level(s, now - t0))
                         tc = (now - t0) % (s["on_s"] + s["off_s"])
-                        timeout = 1 / FPS if tc < s["on_s"] else min(1.0, s["on_s"] + s["off_s"] - tc)
+                        timeout = 1 / FPS if tc < s["on_s"] else s["on_s"] + s["off_s"] - tc
+                if unplugged_at is not None:
+                    left = max(0.0, unplugged_at - now)
+                    timeout = left if timeout is None else min(timeout, left)
                 r, _, _ = select.select(fds, [], [], timeout)
                 if WAKE_R in r:
                     os.read(WAKE_R, 64)
                     log("wake requested (SIGUSR1)")
                     return "power"
+                if ev is not None and ev in r and charger_event(ev):
+                    full = battery_full()
+                    if charger_online():
+                        unplugged_at = None
+                    elif unplugged_at is None:
+                        log("charger unplug event")
+                        unplugged_at = time.monotonic() + UNPLUG_S
                 for fd in r:
-                    if fd == WAKE_R:
+                    if fd in (WAKE_R, ev):
                         continue
                     try:
                         data = os.read(fd, EV.size * 64)
@@ -715,6 +753,8 @@ class Rest:
             for f in (key, lid):
                 if f is not None:
                     os.close(f)
+            if ev is not None:
+                ev.close()
 
 
 def deep_sleep() -> int:
