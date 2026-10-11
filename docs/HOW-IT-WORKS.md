@@ -113,7 +113,12 @@ clocks capped; pulling the charger goes on into deep sleep), and the stick
 lights pulse dimly until the battery is full, then stay dimly lit. A charger
 plugged in during deep sleep wakes it (kernel patch 0505: the ADSP's
 doorbell wakes the system once it is down), and it goes on into the same
-rest, screens still off, with the pulsing indicator. On the
+rest, screens still off, with the pulsing indicator. The Pocket FIT (in
+deep sleep mode) rests on the charger the same way, after `konkr-sleep` has
+prepared the sleep: kernel patch 0019 counts its doorbell wakes, 0020 its
+power key wakes, the stick-light MCU is bound again only for the indicator
+(the MCU draws the pulse itself), and the power LED keeps its charge
+colours; it has no Power tab (default indicator settings). On the
 Retroid Pocket 6 and Nova the Power tab also has battery charging modes,
 using Retroid's own battery firmware (kernel patch 0545,
 `sm8550-charge-control`): Normal, Stop at 80 % (the firmware's limit), Hold at

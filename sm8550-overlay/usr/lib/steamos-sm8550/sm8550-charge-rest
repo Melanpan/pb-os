@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """sm8550-charge-rest — sleep on the charger for SM8550 handhelds (Retroid
-Pocket 6 / Nova, AYN Thor), and the stick lights' charging indicator.
+Pocket 6 / Nova, AYN Thor) and the KONKR Pocket FIT (SM8650), and the stick
+lights' charging indicator.
 
 Kernel deep sleep (full SoC sleep) charges at about a quarter of the awake
 rate: the charger firmware slows down while the SoC is collapsed (AYN Thor,
@@ -45,6 +46,17 @@ the indicator shows, the controllers run their LEDs at 1/4 current (LED
 control 0x07; the driver sets 0x03, 1/2): twice the steps for the same
 light. Restored before the lights go back to their owner.
 
+KONKR Pocket FIT (in deep sleep mode, konkr-sleep-mode "kernel"; standby
+and the AYANEO Pocket S2 stay with konkr-suspend): the same, after
+konkr-sleep.service has prepared the sleep (Wi-Fi, touch, gamepad and the
+stick-light MCU let go; konkr-sleep post brings them back after the wake).
+The doorbell wake is kernel patch 0019 (the same "ipcc-wake" count; on
+SM8650 a doorbell always woke deep sleep). The stick lights belong to the
+MCU (konkr_sysbtn, "konkr:rgb:joysticks"): it is bound again for the
+indicator while resting and let go again before deep sleep. The MCU draws
+the pulse itself ("breath"), at its own pace; pbosd keeps the power LED's
+charge colours and leaves the power key to this while FLAG holds.
+
 For PB-OS Utils' Power tab: `preview` shows the indicator once (a pulse,
 its gap, then the full light) with the screens on; `settings` prints the
 settings in use and the ranges as JSON; `save JSON` stores changes (merged,
@@ -76,6 +88,11 @@ BATTERY = "/sys/class/power_supply/battery"
 USB = "/sys/class/power_supply/qcom-battmgr-usb"
 ZONES = "/sys/class/leds/rgb:*"
 HTR3212 = "/sys/bus/i2c/drivers/htr3212"
+KONKR_LED = "/sys/class/leds/konkr:rgb:joysticks"   # Pocket FIT stick lights (MCU)
+KONKR_MCU = "/sys/bus/serial/drivers/konkr_sysbtn"
+KONKR_MCU_MARK = "/run/konkr-sleep-mcu"   # konkr-sleep pre: the MCUs it let go
+KONKR_SLEEP_MODE = "/usr/lib/konkr/konkr-sleep-mode"
+KONKR_MODEL = "KONKR Pocket FIT"
 LED_CONTROL = range(0x32, 0x3E)          # one per channel, 12 per controller
 LED_UPDATE = 0x25
 LED_QUARTER, LED_DRIVER = 0x07, 0x03     # on + 1/4 current; on + 1/2 (driver)
@@ -270,6 +287,67 @@ class Lights:
         rm(INDICATOR)
 
 
+class KonkrLights:
+    """The Pocket FIT's stick lights while the indicator has them. The MCU
+    behind them (konkr_sysbtn) is let go for deep sleep by konkr-sleep pre:
+    bound again here and let go again in give_back(). The pulse is the
+    MCU's own "breath" (no frames from here); pbosd puts the owner's
+    lighting back (SIGHUP from konkr-sleep post, or here)."""
+
+    mcu_pulse = True
+
+    def __init__(self) -> None:
+        self.bound: list[str] = []
+        self.shown = ""
+
+    @staticmethod
+    def available() -> bool:
+        return os.path.isdir(KONKR_LED) or bool(rd(KONKR_MCU_MARK).split())
+
+    def take(self) -> None:
+        if not os.path.isdir(KONKR_LED):
+            for dev in rd(KONKR_MCU_MARK).split():
+                if wr(f"{KONKR_MCU}/bind", dev):
+                    self.bound.append(dev)
+            end = time.monotonic() + 3.0
+            while not os.path.exists(f"{KONKR_LED}/effect") and time.monotonic() < end:
+                time.sleep(0.05)
+            time.sleep(0.2)        # the MCU's enable frame, before the first light frame
+        claim(INDICATOR)
+        log(f"stick lights: mcu {'bound ' + ' '.join(self.bound) if self.bound else 'already bound'}")
+
+    def breath(self, color: str, level: float) -> None:
+        """The MCU pulses color at level (0-255) on its own."""
+        rgb = [round(int(color[i:i + 2], 16) * level / 255) for i in (0, 2, 4)]
+        v = "breath {} {} {}".format(*rgb)
+        if self.shown != v and wr(f"{KONKR_LED}/effect", v):
+            self.shown = v
+
+    def show(self, color: str, level: float) -> None:
+        """color steady at level (0-255)."""
+        rgb = [round(int(color[i:i + 2], 16) * level / 255) for i in (0, 2, 4)]
+        v = "{} {} {}".format(*rgb)
+        if self.shown != v:
+            wr(f"{KONKR_LED}/effect", "static")
+            wr(f"{KONKR_LED}/multi_intensity", v)
+            wr(f"{KONKR_LED}/brightness", 255)
+            self.shown = v
+
+    def give_back(self) -> None:
+        wr(f"{KONKR_LED}/effect", "static")
+        wr(f"{KONKR_LED}/brightness", 0)
+        if self.bound:
+            # Let go again, as konkr-sleep pre left it (its UART keeps the XO
+            # clock on in deep sleep); konkr-sleep post binds it after the wake.
+            for dev in self.bound:
+                wr(f"{KONKR_MCU}/unbind", dev)
+            self.bound = []
+        else:
+            run("systemctl", "kill", "-s", "HUP", "pbosd.service")
+        self.shown = ""
+        rm(INDICATOR)
+
+
 def pulse_level(s: dict, t: float) -> float:
     """The pulse at t seconds: a breath over on_s (raised cosine, gamma for
     the eye) from pulse_min up to pulse_max and back, then off_s at pulse_min."""
@@ -286,8 +364,9 @@ def charger_online() -> bool:
 
 def battery_full() -> bool:
     """Full, or held below full on purpose by sm8550-charge-control (charge
-    limit or bypass; HELD holds its PID)."""
-    if rd(f"{BATTERY}/status") == "Full" or rd(f"{BATTERY}/capacity", "0") == "100":
+    limit or bypass; HELD holds its PID), or stopped by the charger firmware
+    with the charger in ("Not charging": the Pocket FIT's own 80 % limit)."""
+    if rd(f"{BATTERY}/status") in ("Full", "Not charging") or rd(f"{BATTERY}/capacity", "0") == "100":
         return True
     pid = rd(HELD)
     return pid.isdigit() and os.path.exists(f"/proc/{pid}")
@@ -296,6 +375,17 @@ def battery_full() -> bool:
 # -------------------------------------------------------------- the rest --
 def sm8550() -> bool:
     return "qcom,sm8550" in rd("/sys/firmware/devicetree/base/compatible")
+
+
+def pocket_fit() -> bool:
+    """The KONKR Pocket FIT in deep sleep mode (konkr-sleep prepared it)."""
+    if KONKR_MODEL not in rd("/sys/firmware/devicetree/base/model"):
+        return False
+    try:
+        out = subprocess.run([KONKR_SLEEP_MODE], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.strip() == "kernel"
 
 
 def run(*cmd: str) -> int:
@@ -469,6 +559,17 @@ def ipcc_wakes() -> int | None:
     return None
 
 
+def key_wakes() -> int:
+    """Power key events the kernel kept from userspace around a wake (Pocket
+    FIT 0018 + 0020: counted on the pon key's wakeup source); 0 elsewhere."""
+    n = 0
+    for w in glob.glob("/sys/class/wakeup/wakeup*"):
+        if rd(f"{w}/name").endswith(":pwrkey"):
+            v = rd(f"{w}/event_count")
+            n += int(v) if v.isdigit() else 0
+    return n
+
+
 def can_watch() -> bool:
     """Deep sleep is in use (s2idle charges at full speed anyway) and the
     kernel lets a charger plugged in wake it (0505)."""
@@ -636,9 +737,10 @@ class Rest:
         try:
             while True:
                 before = ipcc_wakes()
+                keys = key_wakes()
                 log("deep sleep")
                 run(SYSTEMD_SLEEP, "suspend")
-                if user_woke(key, lid, USER_WAKE_S):
+                if user_woke(key, lid, USER_WAKE_S) or key_wakes() > keys:
                     return "wake"
                 after = ipcc_wakes()
                 if before is None or after is None or after <= before:
@@ -657,7 +759,7 @@ class Rest:
                     switched_off = True
                     log("deep_wake off until the device wakes: too many doorbell wakes")
                 # A press while it was awake for the doorbell wakes it.
-                if user_woke(key, lid, 0):
+                if user_woke(key, lid, 0) or key_wakes() > keys:
                     return "wake"
         finally:
             for f in (key, lid):
@@ -686,6 +788,9 @@ class Rest:
         if s["enabled"] and zones():
             self.lights = Lights()
             self.lights.take()
+        elif s["enabled"] and KonkrLights.available():
+            self.lights = KonkrLights()
+            self.lights.take()
         key = input_dev("pmic_pwrkey")
         lid = input_dev("gpio-keys-lid")
         drain(key)
@@ -712,6 +817,8 @@ class Rest:
                 if self.lights:
                     if full:
                         self.lights.show(s["solid_color"], s["solid_level"])
+                    elif getattr(self.lights, "mcu_pulse", False):
+                        self.lights.breath(s["pulse_color"], s["pulse_max"])
                     else:
                         self.lights.show(s["pulse_color"], pulse_level(s, now - t0))
                         tc = (now - t0) % (s["on_s"] + s["off_s"])
@@ -763,7 +870,7 @@ def deep_sleep() -> int:
 
 def suspend() -> int:
     """systemd-suspend.service's ExecStart."""
-    if not sm8550():
+    if not sm8550() and not pocket_fit():
         os.execv(KONKR_SUSPEND, [KONKR_SUSPEND]) if os.access(KONKR_SUSPEND, os.X_OK) \
             else os.execv(SYSTEMD_SLEEP, [SYSTEMD_SLEEP, "suspend"])
     plugged = charger_online()

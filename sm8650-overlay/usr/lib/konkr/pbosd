@@ -632,6 +632,14 @@ class Leds:
 RGB_PRESETS = [(RGB_DEFAULT_MODE, RGB_DEFAULT_COLOR), ("static", "ff3c00"), ("static", "00b4ff"), ("static", "a000ff"),
                ("static", "ffffff"), ("breath", "ff0040"), ("off", "000000")]
 STANDBY_FLAG = "/run/konkr-standby"
+# sm8550-charge-rest (sleep on the charger, Pocket FIT too) holds its PID
+# here while it rests or watches deep sleep: it owns the power key then.
+CHARGE_REST_FLAG = "/run/sm8550-charge-rest"
+
+
+def charge_resting() -> bool:
+    pid = rd(CHARGE_REST_FLAG)
+    return pid.isdigit() and os.path.exists(f"/proc/{pid}")
 
 
 # -------------------------------------------------------------- hotkeys ----
@@ -959,14 +967,14 @@ class Daemon:
         last_standby = 0.0
         while True:
             timeout = 0.1 if power_down_at is not None else 0.25 if self.touch.active else 0.5
-            if os.path.exists(STANDBY_FLAG):
+            if os.path.exists(STANDBY_FLAG) or charge_resting():
                 last_standby = time.monotonic()
             keys = self.keys.poll(timeout, self.touch)
             self.touch.tick(os.path.exists(STANDBY_FLAG))
             for code, value in keys:
-                if os.path.exists(STANDBY_FLAG):
+                if os.path.exists(STANDBY_FLAG) or charge_resting():
                     last_standby = time.monotonic()
-                    continue                 # konkr-standby owns the buttons
+                    continue                 # konkr-standby / the charge rest own the buttons
                 if code == KEY_POWER:
                     if time.monotonic() - last_standby < WAKE_GRACE_S:
                         power_down_at = None     # still waking up

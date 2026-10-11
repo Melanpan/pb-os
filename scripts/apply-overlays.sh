@@ -872,6 +872,12 @@ else
     "$R/usr/lib/udev/rules.d/74-sm8550-ufs-serial.rules" \
     "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" \
     "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keeper.service"
+  # KONKR Pocket FIT: the same rest on the charger (it checks the device and
+  # konkr-sleep-mode; everything else goes on to konkr-suspend).
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-charge-rest" \
+    "$R/usr/lib/steamos-sm8550/sm8550-charge-rest" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
+    "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" 0644
 fi
 
 # CPU, GPU and memory tuning shared by SM8550 and SM8650 (measured on the
