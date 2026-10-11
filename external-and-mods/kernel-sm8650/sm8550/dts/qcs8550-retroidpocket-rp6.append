@@ -1,0 +1,23 @@
+
+/*
+ * The RP6's own ADSP and speaker tuning (sm8550/firmware/.../rp6), not AYN
+ * Odin 2's: Odin 2's ADSP holds an 8000 mAh battery profile, the RP6 has a
+ * 6000 mAh cell. With Retroid's ADSP the amps take stock Android's channel
+ * numbering: 0x34 is channel 1, 0x35 is channel 0 (left and right swap
+ * otherwise, as on the Nova). The Nova includes this file and its own
+ * .append overrides these paths afterwards.
+ */
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8550/retroidpocket/rp6/adsp.mbn",
+			"qcom/sm8550/retroidpocket/rp6/adsp_dtb.mbn";
+};
+
+&spk_amp_l {
+	firmware-name = "qcom/sm8550/retroidpocket/rp6/aw883xx_acf.bin";
+	awinic,audio-channel = <1>;
+};
+
+&spk_amp_r {
+	firmware-name = "qcom/sm8550/retroidpocket/rp6/aw883xx_acf.bin";
+	awinic,audio-channel = <0>;
+};
