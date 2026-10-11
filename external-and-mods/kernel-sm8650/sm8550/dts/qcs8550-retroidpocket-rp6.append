@@ -21,3 +21,13 @@
 	firmware-name = "qcom/sm8550/retroidpocket/rp6/aw883xx_acf.bin";
 	awinic,audio-channel = <0>;
 };
+
+/*
+ * The body vibration motor is an LRA, driven like stock Android does it
+ * (Retroid's DT: no ERM mode, 1300 mV). AYN-common's ERM setup at 5000 mV
+ * left it almost still while pushing far more voltage than stock.
+ */
+&pm8550b_hv_haptics {
+	/delete-property/ qcom,use-erm;
+	qcom,vmax-mv = <1300>;
+};
