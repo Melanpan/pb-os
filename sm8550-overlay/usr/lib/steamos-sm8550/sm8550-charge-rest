@@ -295,10 +295,26 @@ class KonkrLights:
     lighting back (SIGHUP from konkr-sleep post, or here)."""
 
     mcu_pulse = True
+    # After a bind the MCU goes back to its own last mode (the owner's awake
+    # lighting) and the first frames can be lost: shown again after these.
+    RESEND_S = (1.0, 3.0)
 
     def __init__(self) -> None:
         self.bound: list[str] = []
         self.shown = ""
+        self.resend: list[float] = []
+
+    def resend_in(self) -> float | None:
+        """Seconds until the indicator is to be written again (None: never);
+        at 0 the next breath()/show() writes it again."""
+        if not self.resend:
+            return None
+        left = self.resend[0] - time.monotonic()
+        if left <= 0:
+            self.resend.pop(0)
+            self.shown = ""
+            return 0.0
+        return left
 
     @staticmethod
     def available() -> bool:
@@ -313,6 +329,8 @@ class KonkrLights:
             while not os.path.exists(f"{KONKR_LED}/effect") and time.monotonic() < end:
                 time.sleep(0.05)
             time.sleep(0.2)        # the MCU's enable frame, before the first light frame
+            now = time.monotonic()
+            self.resend = [now + d for d in self.RESEND_S]
         claim(INDICATOR)
         log(f"stick lights: mcu {'bound ' + ' '.join(self.bound) if self.bound else 'already bound'}")
 
@@ -823,6 +841,10 @@ class Rest:
                         self.lights.show(s["pulse_color"], pulse_level(s, now - t0))
                         tc = (now - t0) % (s["on_s"] + s["off_s"])
                         timeout = 1 / FPS if tc < s["on_s"] else s["on_s"] + s["off_s"] - tc
+                if getattr(self.lights, "mcu_pulse", False):
+                    again = self.lights.resend_in()
+                    if again is not None:
+                        timeout = again if timeout is None else min(timeout, again)
                 if unplugged_at is not None:
                     left = max(0.0, unplugged_at - now)
                     timeout = left if timeout is None else min(timeout, left)
