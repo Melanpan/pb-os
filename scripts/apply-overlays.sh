@@ -13,11 +13,14 @@ OVL="${ROOT}/steamos-overlay"
 KOUT="$(readlink -f "${KERNEL_OUT:-${WORKDIR}/kernel-release/current}")"
 KREL="$(basename "$KOUT")"
 # Target SoC follows the kernel being installed (build.sh LOCALVERSION
-# -<soc>-steamos) unless SOC is set. Device-specific extras key off it.
+# -<soc>-steamos; the one-image kernel, SOC=all, has none) unless SOC is set.
+# Device-specific extras key off it: SOC=all installs both SoCs' parts, which
+# check the device tree when they run.
 if [[ -z "${SOC:-}" ]]; then
   case "$KREL" in
     *-sm8550-*) SOC=sm8550 ;;
-    *) SOC=sm8650 ;;
+    *-sm8650-*) SOC=sm8650 ;;
+    *) SOC=all ;;
   esac
 fi
 export SOC
@@ -30,7 +33,7 @@ export SOC
 DEVICE="${DEVICE:-}"
 case "$DEVICE" in
   "") ;;
-  thor) [[ "$SOC" == sm8550 ]] || { echo "ERROR: DEVICE=thor needs SOC=sm8550 (have ${SOC})" >&2; exit 1; } ;;
+  thor) [[ "$SOC" != sm8650 ]] || { echo "ERROR: DEVICE=thor needs SOC=sm8550 or all (have ${SOC})" >&2; exit 1; } ;;
   *) echo "ERROR: unknown DEVICE ${DEVICE}" >&2; exit 1 ;;
 esac
 export DEVICE
@@ -51,7 +54,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 [[ -f "$KOUT/boot/KERNEL" ]] || die "missing kernel $KOUT"
 [[ -x "$GSBUILD/src/gamescope" ]] || die "missing built gamescope"
 [[ -d "$GSSRC/scripts" ]] || die "missing gamescope source at $GSSRC (run scripts/build-gamescope-in-rootfs.sh)"
-if [[ "$SOC" == sm8550 ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
+if [[ "$SOC" != sm8650 ]] && ! grep -qa -- '--lease-connector' "$GSBUILD/src/gamescope"; then
   die "SM8550 (AYN Thor) needs a gamescope with the DRM lease patches (GAMESCOPE_BUILD=$GSBUILD has none)"
 fi
 [[ -z "$MESA_SO" || -f "$MESA_SO" ]] || die "missing Mesa $MESA_SO"
@@ -164,6 +167,12 @@ cp -r "$MOD/proton-pbos/dist/." "$R/usr/share/pb-os/proton-pbos/"
 chmod -R u=rwX,go=rX "$R/usr/share/pb-os/proton-pbos"
 install_file "$OVL/usr/lib/steamos/pbos-proton" "$R/usr/lib/steamos/pbos-proton" 0755
 install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbos-proton-launcher" 0644
+# Per-game profiles (PB-OS Tools' Games tab): the launch wrapper the tab puts
+# in a game's launch options, and its FEX and environment-variable presets.
+install_file "$OVL/usr/bin/pbos-game-launch" "$R/usr/bin/pbos-game-launch" 0755
+for f in fex-presets.json env-presets.json; do
+  install_file "$OVL/usr/share/pb-os/game-launch/$f" "$R/usr/share/pb-os/game-launch/$f" 0644
+done
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 # alpha-v0.5.2.7 ran it from a 5-minute timer; release layers are reused.
 rm -f "$R/usr/lib/systemd/user/pbos-proton.timer" \
@@ -186,6 +195,13 @@ install_file "$OVL/usr/lib/steamos/sm8550-startplasma" \
 # Desktop Mode starts Steam through sm8550-desktop-steam (Nova X11 font DPI).
 install_file "$OVL/usr/lib/steamos/sm8550-desktop-steam" \
   "$R/usr/lib/steamos/sm8550-desktop-steam" 0755
+# Steam's Browse button (Add a Non-Steam Game) is dead on Valve's arm64 client
+# (no file dialog in its steamui.so); this menu entry opens the KDE picker and
+# adds the choice through steamos-add-to-steam.
+install_file "$OVL/usr/lib/steamos/pbos-add-to-steam" \
+  "$R/usr/lib/steamos/pbos-add-to-steam" 0755
+install_file "$OVL/usr/share/applications/pbos-add-to-steam.desktop" \
+  "$R/usr/share/applications/pbos-add-to-steam.desktop" 0644
 if [[ -f "$R/etc/xdg/autostart/steam.desktop" ]]; then
   sed -i 's|^Exec=/usr/bin/steam |Exec=/usr/lib/steamos/sm8550-desktop-steam |' \
     "$R/etc/xdg/autostart/steam.desktop"
@@ -239,6 +255,11 @@ install_file "$OVL/usr/lib/systemd/user/steam.service.d/99-sm8550-bootstrap.conf
 # Session vars (refresh slider, mangoapp) via a file: onready's import races Steam.
 install_file "$OVL/usr/lib/systemd/user/steam.service.d/60-gamescope-env.conf" \
   "$R/usr/lib/systemd/user/steam.service.d/60-gamescope-env.conf" 0644
+# Default non-Steam games (vkcube) for each signed-in account, before Steam starts.
+install_file "$OVL/usr/lib/steamos/pbos-default-shortcuts" \
+  "$R/usr/lib/steamos/pbos-default-shortcuts" 0755
+install_file "$OVL/usr/lib/systemd/user/steam.service.d/80-pbos-default-shortcuts.conf" \
+  "$R/usr/lib/systemd/user/steam.service.d/80-pbos-default-shortcuts.conf" 0644
 backup "$R/usr/bin/start-gamescope-session" "$STOCK/usr/bin/start-gamescope-session"
 install_file "$OVL/usr/bin/start-gamescope-session" \
   "$R/usr/bin/start-gamescope-session" 0755
@@ -287,7 +308,7 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
          adbd.service adbd-post.service usb-gadget.service usb-gadget.target \
          usb-ncm-gadget@.service usb-ncm-dnsmasq@.service \
          steamos-boot.service efi.mount esp.mount systemd-repart.service \
-         firewalld.service atomupd.service; do
+         firewalld.service atomupd.service steamos-log-submitter.service; do
   # Frame USB-gadget/ADB/power-monitor: no such hardware here. They crash-loop
   # (1000+ restarts/night) and adbd-post polls ffs.adb/ready at 10 Hz forever,
   # which keeps the SoC out of deep idle and burned battery in standby.
@@ -304,6 +325,9 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
   # atomupd: Steam Deck A/B update daemon with no RAUC slots to act on (our
   # steamos-update hooks bypass it); it spent up to ~20 s at every boot
   # competing with Steam's startup.
+  # steamos-log-submitter: uploads crash dumps, journals and GPU reports to
+  # Valve's telemetry. PB-OS sends nothing to Valve; the dumps it would queue
+  # stay local in /var/lib/steamos-log-submitter/pending.
   ln -sfn /dev/null "$R/etc/systemd/system/${u}"
 done
 
@@ -544,10 +568,11 @@ rm -f "$R/usr/lib/konkr/konkrd" "$R/usr/lib/systemd/system/konkrd.service" \
   "$R/var/lib/overlays/etc/upper/konkrd.conf" \
   "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
 ln -sfn pbosctl "$R/usr/bin/konkrctl"
-if [[ "$SOC" != sm8650 ]]; then
+if [[ "$SOC" == sm8550 ]]; then
   # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
   # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
-  # volume on the whole card; 55 is the Pocket FIT speaker tuning.
+  # volume on the whole card; 55 is the Pocket FIT speaker tuning. SOC=all
+  # keeps both: they only match the SM8650 card ("SM8650-APS2").
   rm -f "$R/etc/wireplumber/wireplumber.conf.d/53-konkr-audio.conf" \
     "$R/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 fi
@@ -687,8 +712,6 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
     "$R/usr/lib/systemd/user/barry_launcher.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
-    "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
-    "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
     "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
@@ -697,11 +720,12 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service" \
     "$R/usr/share/applications/barry_launcher_desktop.desktop" \
+    "$R/usr/share/applications/barry_launcher_desktop_switch.desktop" \
     "$R/usr/lib/systemd/user/barry_launcher_desktop.service" \
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service" \
     "$R/usr/share/applications/org.barry_launcher.keyboard.desktop"
 }
-if [[ "$SOC" == sm8550 ]]; then
+if [[ "$SOC" != sm8650 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
     "$R/usr/lib/steamos-sm8550/sm8550-fand" 0755
@@ -737,7 +761,7 @@ if [[ "$SOC" == sm8550 ]]; then
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
   for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
-    barry_launcher_inputd barry_launcher_desktop barry-app; do
+    barry_launcher_inputd barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
@@ -767,6 +791,9 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
   install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
     "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
+  # Barry on or off in Desktop Mode (also in PB-OS Tools, Hardware tab).
+  install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop_switch.desktop" \
+    "$R/usr/share/applications/barry_launcher_desktop_switch.desktop" 0644
   # Desktop Mode: Barry on the bottom screen with the Plasma session, and
   # its keyboard registered as a virtual keyboard KWin can use.
   install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_desktop.service" \
@@ -776,17 +803,6 @@ if [[ "$SOC" == sm8550 ]]; then
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service"
   install_file "$SM8550_OVL/usr/share/applications/org.barry_launcher.keyboard.desktop" \
     "$R/usr/share/applications/org.barry_launcher.keyboard.desktop" 0644
-  # AYN Thor: InputPlumber leaves the AYN button to sm8550-thor-backlightd,
-  # which uses it to show the bottom-screen dashboard.
-  ip_thor="$R/usr/share/inputplumber/devices/50-ayn_thor.yaml"
-  if [[ -f "$ip_thor" ]]; then
-    for etc in "$R/etc" "$R/var/lib/overlays/etc/upper"; do
-      [[ "$etc" == "$R/etc" || -d "$etc" ]] || continue
-      mkdir -p "$etc/inputplumber/devices.d"
-      python3 "$SM8550_OVL/usr/share/steamos-sm8550/ip-thor-without-ayn-key.py" \
-        "$ip_thor" "$etc/inputplumber/devices.d/50-ayn_thor.yaml"
-    done
-  fi
   # Steer Steam's brightness writes to the Thor's top panel (see the .inc).
   if [[ -f "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" ]]; then
     python3 "$SM8550_OVL/usr/share/steamos-sm8550/insert-priv-write-backlight.py" \
@@ -860,8 +876,6 @@ else
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-powerbuttond.service" \
     "$R/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-fand.service" \
-    "$R/usr/lib/systemd/system/sm8550-charge-control.service" \
-    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-charge-control.service" \
     "$R/usr/lib/steamos-sm8550/sm8550-stickcal" \
     "$R/usr/lib/systemd/system/sm8550-stickcal.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-stickcal.service" \
@@ -871,8 +885,6 @@ else
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
     "$R/usr/lib/systemd/user/barry_launcher.service" \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service" \
-    "$R/etc/inputplumber/devices.d/50-ayn_thor.yaml" \
-    "$R/var/lib/overlays/etc/upper/inputplumber/devices.d/50-ayn_thor.yaml" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" \
@@ -886,6 +898,15 @@ else
     "$R/usr/lib/steamos-sm8550/sm8550-charge-rest" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" 0644
+  # KONKR Pocket FIT: charge limit (its firmware's thresholds) and slow
+  # charging; the unit's ExecCondition keeps it to the Pocket FIT.
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-charge-control" \
+    "$R/usr/lib/steamos-sm8550/sm8550-charge-control" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-charge-control.service" \
+    "$R/usr/lib/systemd/system/sm8550-charge-control.service" 0644
+  mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+  ln -sfn ../sm8550-charge-control.service \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-charge-control.service"
 fi
 
 # CPU, GPU and memory tuning shared by SM8550 and SM8650 (measured on the
@@ -928,12 +949,24 @@ for f in "$R/etc/default/steamos-scheduler" \
   if [[ -f "$f" ]]; then sed -i 's/^SCHEDULER=.*/SCHEDULER=none/' "$f"; fi
 done
 
+# Test access (test images only, scripts/test-access.sh): removed from the
+# reused rootfs on every build first, so install-tailscale's clean check
+# below sees a plain image; added back after it when the build host passes
+# PBOS_TEST_ACCESS (a per-tag dir with the user, password hash and a
+# Tailscale auth key; never in git). Release builds never set it.
+"${SCRIPT_DIR}/test-access.sh" "$R" remove
+
 # Tailscale: in every image but off, with no account or keys (see the
 # script). TAILSCALE=0 leaves it out; BUNDLE_TAILSCALE=0 still works too.
 if [[ "${TAILSCALE:-${BUNDLE_TAILSCALE:-1}}" == 1 ]]; then
   "${SCRIPT_DIR}/install-tailscale.sh" "$R" install
 else
   "${SCRIPT_DIR}/install-tailscale.sh" "$R" remove
+fi
+if [[ -n "${PBOS_TEST_ACCESS:-}" ]]; then
+  log "== test image: remote access (Tailscale SSH) from ${PBOS_TEST_ACCESS}"
+  "${SCRIPT_DIR}/test-access.sh" "$R" install "${PBOS_TEST_ACCESS}" \
+    || die "test access failed"
 fi
 
 # ---------------------------------------------------------------------------
@@ -958,6 +991,40 @@ log "== mangoapp (upstream MangoHud + PB-OS patch)"
 MANGOAPP_BUILD="${MANGOAPP_BUILD:-${WORKDIR}/mangoapp-build}"
 "${SCRIPT_DIR}/build-mangoapp-in-rootfs.sh" "$R" "$MANGOAPP_BUILD"
 install_file "$MANGOAPP_BUILD/mangoapp" "$R/usr/bin/mangoapp" 0755
+
+# ---------------------------------------------------------------------------
+# Boot splash: Plymouth (built in the rootfs) with the PB-OS theme (script
+# engine, drawn by external-and-mods/plymouth/theme-src/make-theme.py). It shows
+# once the panel is up and animates until the session's compositor starts
+# (the session scripts start pbos-splash-handoff.service, which deactivates
+# Plymouth; pbos-splash-quit.path ends it). Needs
+# `splash` on the cmdline (cmdline.sh adds it to quiet boots).
+# ---------------------------------------------------------------------------
+log "== boot splash (Plymouth + PB-OS theme)"
+PLYMOUTH_BUILD="${PLYMOUTH_BUILD:-${WORKDIR}/plymouth-build}"
+"${SCRIPT_DIR}/build-plymouth-in-rootfs.sh" "$R" "$PLYMOUTH_BUILD"
+cp -a "$PLYMOUTH_BUILD/dest/usr/." "$R/usr/"
+install_file "$OVL/usr/share/plymouth/plymouthd.defaults" "$R/usr/share/plymouth/plymouthd.defaults" 0644
+for t in pb-os pb-os-wave; do
+  rm -rf "$R/usr/share/plymouth/themes/$t"
+  cp -a "$OVL/usr/share/plymouth/themes/$t" "$R/usr/share/plymouth/themes/$t"
+done
+install_file "$OVL/usr/lib/steamos/pbos-splash-next" "$R/usr/lib/steamos/pbos-splash-next" 0755
+install_file "$OVL/usr/share/polkit-1/rules.d/50-pbos-splash.rules" \
+  "$R/usr/share/polkit-1/rules.d/50-pbos-splash.rules" 0644
+for u in plymouth-start plymouth-quit; do
+  install_file "$OVL/usr/lib/systemd/system/$u.service.d/pb-os.conf" \
+    "$R/usr/lib/systemd/system/$u.service.d/pb-os.conf" 0644
+done
+for u in pbos-splash-quit.service pbos-splash-quit.path pbos-splash-quit.timer pbos-splash-handoff.service; do
+  install_file "$OVL/usr/lib/systemd/system/$u" "$R/usr/lib/systemd/system/$u" 0644
+done
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants" "$R/usr/lib/systemd/system/timers.target.wants"
+ln -sfn ../pbos-splash-quit.path "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-splash-quit.path"
+ln -sfn ../pbos-splash-quit.timer "$R/usr/lib/systemd/system/timers.target.wants/pbos-splash-quit.timer"
+# No "The system will reboot now!" broadcast on screen at reboot/power-off.
+install_file "$OVL/usr/lib/systemd/system/pbos-no-wall.service" "$R/usr/lib/systemd/system/pbos-no-wall.service" 0644
+ln -sfn ../pbos-no-wall.service "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-no-wall.service"
 
 # ---------------------------------------------------------------------------
 # lsfg-vk
@@ -1024,6 +1091,7 @@ rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-in
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
 # that most people never found — no Decky, so no PB-OS Utils either.
 DECKY_VERSION=v3.2.9
+DECKY_SHA256=0a5246db98f2df93a6685ac8230e0acfbfa6e91d99b41b8dbbf1f94c308dedce
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then
   mkdir -p "${DECKY_LOADER%/*}"
@@ -1032,6 +1100,8 @@ if [[ ! -s "$DECKY_LOADER" ]]; then
     mv "$DECKY_LOADER.part" "$DECKY_LOADER"
 fi
 [[ -s "$DECKY_LOADER" ]] || die "Decky loader ${DECKY_VERSION} missing and download failed"
+echo "${DECKY_SHA256}  ${DECKY_LOADER}" | sha256sum -c --quiet - \
+  || die "Decky loader ${DECKY_VERSION} does not match its pinned sha256 (delete ${DECKY_LOADER} to re-download)"
 mkdir -p "$HOME_DST/homebrew/services" "$HOME_DST/homebrew/settings" "$HOME_DST/homebrew/data" "$HOME_DST/homebrew/logs"
 # ~/.cache must exist (user-owned, see chown below) before anything running
 # as root with HOME=/home/steamos can create it root-owned.
@@ -1109,7 +1179,7 @@ rm -f "$HOME_DST/Desktop/Decky Loader.desktop" "$HOME_DST/Desktop/install-decky.
 log "== plasma extras (holo kate/ark/networkmanager-qt/…)"
 # AYN Thor: xdotool for the bottom-screen keyboard (Firefox below).
 extra_pkgs=""
-[[ "$SOC" == sm8550 ]] && extra_pkgs="libxss xdotool"
+[[ "$SOC" != sm8650 ]] && extra_pkgs="libxss xdotool"
 STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-extras.sh" "$R" \
   || log "WARN: plasma extras incomplete"
 
@@ -1119,7 +1189,7 @@ STEAMOS_HOME="$HOME_DST" EXTRA_PKGS="$extra_pkgs" "${SCRIPT_DIR}/install-plasma-
 # repos lags behind (152). Its updater is off: updates come with our images.
 FIREFOX_VERSION=157.0
 FIREFOX_SHA256=73fc3d6f6f4d3fcdeee59db90156568af9959405120ad686e535f572995074d0
-if [[ "$SOC" == sm8550 ]]; then
+if [[ "$SOC" != sm8650 ]]; then
   log "== Firefox ${FIREFOX_VERSION} (Mozilla, linux-aarch64)"
   ff_tar="${WORKDIR}/cache/firefox-${FIREFOX_VERSION}-linux-aarch64.tar.xz"
   if [[ ! -s "$ff_tar" ]]; then
@@ -1159,6 +1229,13 @@ if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings/kcm_kscreen.so" ]]
   "${SCRIPT_DIR}/build-kscreen-6.2.5.sh" "$R" \
     || die "kscreen 6.2.5 is required (Display Configuration)"
 fi
+# KWin 6.2.5 + Valve's Xwayland libei-socket patches: no "requested access to
+# input devices" prompt in Desktop Mode (pb-os #6). Cached in $WORK/kwin-pbos;
+# skips itself once the base ships KWin >= 6.4 (external-and-mods/kwin-pbos).
+# The script is cheap when its cache and the rootfs stamp are current.
+log "== KWin 6.2.5 without the Xwayland input prompt"
+"${SCRIPT_DIR}/build-kwin-6.2.5.sh" "$R" \
+  || die "kwin 6.2.5 rebuild failed (Desktop Mode input prompt)"
 if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings_qwidgets/kcm_networkmanagement.so" ]]; then
   log "== KF6 NetworkManagerQt 6.14 (plasma-nm needs >= 6.5)"
   "${SCRIPT_DIR}/build-kf6-nm-qt-6.14.sh" "$R" \
@@ -1168,6 +1245,8 @@ if [[ ! -f "$R/usr/lib/qt6/plugins/plasma/kcms/systemsettings_qwidgets/kcm_netwo
     || die "plasma-nm 6.2.5 is required (Network Manager)"
 fi
 if [[ ! -x "$R/usr/bin/plasma-keyboard" ]]; then
+  # Optional Desktop Mode touch keyboard (Settings > Virtual Keyboard); not
+  # the default, see install-vendor-apps.sh. The Thor's Barry switch uses it.
   log "== plasma-keyboard 0.1.0 (desktop touch keyboard)"
   "${SCRIPT_DIR}/build-plasma-keyboard.sh" "$R" \
     || die "plasma-keyboard is required (Desktop Mode touch keyboard)"
@@ -1260,8 +1339,8 @@ log "== summary"
   echo "fixpad:    $(ls -l "$R/usr/lib/steamos/sm8550-fixpad" 2>/dev/null || echo missing)"
   echo "inputplumber: $(ls -l "$R/usr/bin/inputplumber" 2>/dev/null || echo missing)"
   echo "deck-uhid: $(grep -A2 target_devices "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || echo missing)"
-  echo "Thor pad map: $(grep capability_map_id "$R/etc/inputplumber/devices.d/02-ayn-thor.yaml" 2>/dev/null || echo missing)"
-  echo "Retroid pad maps: $(grep -h capability_map_id "$R"/etc/inputplumber/devices.d/50-retroid_pocket*.yaml 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
+  echo "Thor pad map: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_thor.yaml" 2>/dev/null || echo missing)"
+  echo "Retroid pad maps: $(grep -h capability_map_id "$R"/usr/share/inputplumber/devices/50-retroid_pocket{6,_nova}.yaml 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
   echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing), $(stat -c %a "$R/usr/lib/konkr/pbos-hostname" 2>/dev/null || echo missing)"
   echo "home:      $(find "$HOME_DST" -maxdepth 3 -printf '%p\n' | head -40)"
 } | tee -a "$LOG"

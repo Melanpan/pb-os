@@ -17,7 +17,7 @@ AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 
 ## What's in this build
 
-### Controls (Steam sees a real Steam Deck controller)
+### Controls (Steam sees a SteamOS Handheld controller)
 
 | Pocket FIT | Steam | Source |
 |------------|-------|--------|
@@ -38,7 +38,7 @@ off; `pbosctl monitor` shows which button sends what. Button actions live in
 
 The Deck controller has no spare buttons, but the Pocket FIT has no
 trackpads, so by default Custom Function and K send trackpad clicks that Steam
-can bind per game. PB-OS Utils → Hardware → Buttons → **Steam Remap** off (or
+can bind per game. PB-OS Tools → Hardware → Buttons → **Steam Remap** off (or
 `pbosctl buttons system`) makes them run pbosd's actions instead; pbosd then
 installs the other InputPlumber map from `/usr/share/pbosd/inputplumber/`
 and restarts InputPlumber, so the controller reconnects once.
@@ -72,6 +72,9 @@ konkr-game fastest %command%   # also TSO off — biggest CPU win, may crash MT 
 konkr-game compat %command%    # strict TSO / split locks for crashing games
 ```
 
+The same presets, without typing, on every device: PB-OS Tools → **Games**
+(below).
+
 ### Display
 
 - **60 / 90 / 120 / 144 Hz**: kernel patch `0003` makes the panel list all four
@@ -97,13 +100,37 @@ konkr-game compat %command%    # strict TSO / split locks for crashing games
 
 ### Quick Access panels (Decky)
 
-**PB-OS Utils**, on the Pocket FIT: the **Performance** tab has the profile,
+**PB-OS Tools**, on the Pocket FIT: the **Performance** tab has the profile,
 live temperature, fan and GPU clock; the **Hardware** tab has Steam Remap, the
 Custom Function / K actions and the MCU link toggle (until alpha v0.5.2 these
 were the PB-OS Control plugin). They replace the SM8550-Power and SM8550-LED
 plugins, which would fight `pbosd` over the fan and drive AYN-only LEDs.
 
-**PB-OS Utils** (every device): tabs for pb-os updates, moving SteamOS
+**PB-OS Tools → Games** (every device, the first tab): a profile per game,
+ported from Armada's per-game compatibility settings. Pick a game (the one
+running comes first), then set any of:
+
+- **x86 Emulation**: a FEX preset (Default = FEX's own settings; Fast,
+  Fastest and Compatible match `konkr-game`'s fast / fastest / compat) or
+  Custom, with the FEX switches one by one.
+- **CPU**: the cores the game runs on (all, big + prime, big, little, or a
+  list like `4-7`), read from the device's cpufreq clusters, and whether
+  Windows games see only those cores (Wine's CPU topology).
+- **Environment**: variables from a list of common ones (frame caps, Zink,
+  V-sync mode, WineD3D, WOW64, VKD3D feature level and shader model) or your
+  own.
+
+Settings live in `~/.config/pb-os/game-profiles.json`. The first setting puts
+`/usr/bin/pbos-game-launch --appid=<id> %command%` in front of the game's
+launch options (your own options stay); **Reset Game** deletes the profile
+and takes it out again. Games without a profile are never touched. At
+launch the wrapper writes the FEX settings to `~/.cache/pbos-fex/<id>.json`
+(`FEX_APP_CONFIG`, plus the same `FEX_*` variables), sets the CPU affinity and
+`WINE_CPU_TOPOLOGY` / `PROTON_CPU_TOPOLOGY`, then the variables, and starts the
+game; anything that fails goes to the game's log and is skipped. Changes
+apply the next time the game starts.
+
+**PB-OS Tools** (every device): tabs for pb-os updates, moving SteamOS
 between the microSD card and internal storage, and the stick lights (here
 written to `pbosd`'s state like the K button). On SM8550 (Retroid Pocket 6 /
 Nova, AYN Thor) a Power tab sets the charging indicator: sleeping on the
@@ -118,15 +145,24 @@ deep sleep mode) rests on the charger the same way, after `konkr-sleep` has
 prepared the sleep: kernel patch 0019 counts its doorbell wakes, 0020 its
 power key wakes, the stick-light MCU is bound again only for the indicator
 (the MCU draws the pulse itself), and the power LED keeps its charge
-colours; it has no Power tab (default indicator settings). On the
-Retroid Pocket 6 and Nova the Power tab also has battery charging modes,
-using Retroid's own battery firmware (kernel patch 0545,
-`sm8550-charge-control`): Normal, Stop at 80 % (the firmware's limit), Hold at
-a level, and Run from USB (charge separation: the device runs from USB power
-and the battery is left alone).
+colours (default indicator settings). The Power tab's **Battery** section
+(`sm8550-charge-control`, every device) has the charging modes Normal, Stop
+at 80 % and Hold at a level, plus Run from USB on the Retroid Pocket 6, Nova
+and AYN Thor (charge separation: the device runs from USB power and the
+battery is left alone). On the Retroids and the Thor they use two switches
+of the devices' own battery firmware (kernel patch 0545, the same OEM
+properties Retroid's and AYN's Android driver writes); on the Pocket FIT
+they set the standard charge thresholds its firmware enforces (it ships
+stopping at 80 %, which the first run keeps as the chosen mode). **Charging
+speed** Slow caps the charge current (kernel patch 0549 / 0022: the battery's
+`constant_charge_current_max`, the firmware limit Android's "restricted
+charging" writes; 1 A by default, 0.5-3 A) for less heat while playing on
+the charger. The daemon writes the settings again after a wake and a
+plug-in, and gives everything back to the firmware's defaults when it stops.
 
-**Stick Calibration** (AYN Thor, Retroid Pocket 6 and Nova, EXPERIMENTAL):
-two switches for the `rsinput` pad, kept across restarts
+**Sticks** (PB-OS Tools → Hardware on the AYN Thor, Retroid Pocket 6 and
+Nova, EXPERIMENTAL; was the Stick Calibration plugin): two switches for the
+`rsinput` pad, kept across restarts
 (`/var/lib/sm8550-stickcal`, set again at boot by `sm8550-stickcal.service`
 before InputPlumber opens the pad). **Use my calibration** is AYN's Android
 stick calibration in Game Mode: let go of the sticks, rotate them round the
@@ -136,6 +172,29 @@ its shorter typical half-travel, and `sm8550-fixpad` leaves that range alone.
 Retroid's Android use (10,4 instead of the driver's 40,7; kernel patch 0548):
 the MCU then reports a stick once it has moved 11 counts instead of 41.
 
+### Desktop Mode: no "requested access to input devices" prompt
+
+Steam moves the pointer through X11 XTest. The Frame base ships KWin 6.2.5,
+which sends that through the RemoteDesktop portal, so KDE asks for permission
+at every Desktop Mode login. The Steam Deck runs KWin 6.4, where Valve's
+kwinrc setting `XwaylandEisNoPrompt=true` makes KWin hand Xwayland its own
+input socket instead. PB-OS rebuilds KWin 6.2.5 with the three patches
+Valve used for the same thing on the Deck before 6.4
+(`scripts/build-kwin-6.2.5.sh`, `external-and-mods/kwin-pbos/`). The script
+stops itself once the base ships KWin 6.4 or newer.
+
+### Test images: remote access without setup
+
+A test build (any tag that is not a release tag) adds one sudo user with a
+random password and joins the device to the maintainers' tailnet on its
+first network connection, as `<model>-<tag>` (for example `rpnova-onetest7`),
+serving SSH over Tailscale only (`tailscale up --ssh`). The tailnet's ACL
+decides who may log in; there are no SSH keys in the image and nothing to
+set up on the device beyond Wi-Fi. The user, password hash and the
+per-build Tailscale auth key come from a directory on the build host
+(`scripts/test-access.sh`), never from the repository, and release builds
+remove every trace of it.
+
 ## Compared with the SM8550 setup, in short
 
 | Area | SM8550 (MaSi) | Pocket FIT (this project) |
@@ -144,7 +203,7 @@ the MCU then reports a stick once it has moved 11 counts instead of 41.
 | DTB selection | 14-slot index chain | ROCKNIX ABL ≥ 1.1.8 matches the DTB `model` string |
 | Root | initramfs + `root=UUID=` | tiny busybox initramfs (writes `bootlog.txt` to the FAT partition), `root=PARTUUID=` patched at image pack |
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
-| Controller | `rsinput` serial MCU | USB pad → InputPlumber `deck` (USB/IP via `vhci_hcd`, a real Steam Deck pad `28de:1205` to Steam; set after steamos-manager by `sm8550-inputplumber-ext-hid`) (+ optional MCU link) |
+| Controller | `rsinput` serial MCU | USB pad → InputPlumber `deck-uhid` (`28de:12f0`, Steam's "SteamOS Handheld Controller", like the Thor, RP6 and Nova: its layouts stay separate from a real Deck's) (+ optional MCU link) |
 | Audio | `AYN-Odin2` | `SM8650-APS2`: WSA884x speakers + WCD939x, ROCKNIX UCM |
 | UFS installer | SM8550 layouts | rewritten for the Pocket FIT: keeps Android, backs up the partition table |
 
@@ -217,8 +276,17 @@ Output: `/work/steamos-sm8650.img`.
 - SSH is off by default, like on the Steam Deck. After `passwd` and
   `sudo systemctl enable --now sshd` it allows password login for `steamos`
   (root off).
-- Desktop mode: the Steam keyboard works in Wayland apps, Discover gets the
-  Flathub catalog, and KWin/plasmashell get the big-core boost too.
+- Desktop mode: the Steam keyboard (Steam+X) works in Wayland apps, Discover
+  gets the Flathub catalog, and KWin/plasmashell get the big-core boost too.
+  Like the Steam Deck, no KDE on-screen keyboard is set up; plasma-keyboard
+  is installed as a choice in Settings > Virtual Keyboard (as the default it
+  kept the Nova's launcher menu flashing). The Thor uses Barry's keyboard.
+- Steam's Browse button in Add a Non-Steam Game does nothing on Valve's
+  arm64 Steam client: its steamui.so ships only a fallback file dialog (the
+  x86 client has a GTK/portal one), so the call fails at once. The Desktop
+  menu entry "Add a program to Steam" opens the KDE file picker and adds the
+  choice through Valve's steamos-add-to-steam, the same path as Dolphin's
+  right-click "Add to Steam".
 - Steam gets the refresh rate and overlay settings from a file now, the old
   import raced Steam's startup and lost.
 

@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Decky backend — PB-OS Utils: pb-os tools for Game Mode, in tabs.
+"""Decky backend — PB-OS Tools (plugin pbos-utils): pb-os tools for Game Mode, in tabs.
+
+Games    per-game profiles (port of Armada's per-game compatibility
+         settings, armada-os/armada, GPL-2.0-or-later): an x86 emulation
+         (FEX) preset or the user's own FEX switches, the CPU cores the game
+         runs on (with Wine's CPU topology to match), and environment
+         variables, from a list of common ones or the user's own. Kept in
+         ~/.config/pb-os/game-profiles.json; /usr/bin/pbos-game-launch applies
+         them when the game starts. The frontend puts the wrapper in a game's
+         launch options when the game gets a profile and takes it out when
+         the profile is reset; games without one are never touched.
 
 Update   pb-os updates (was the PB-OS Update plugin). Front for
          /usr/share/konkr-update/konkr-update.py (the SteamOS Update app's
@@ -19,7 +29,7 @@ Install  moves SteamOS between the microSD card and internal storage, with
          Either runs as the transient unit pbos-utils-move, with sleep held
          off, and writes its log to MOVE_LOG.
 
-Lights   stick lighting: on/off, a colour, brightness and effects. On the
+Lights   stick lighting: on/off, a color, brightness and effects. On the
          KONKR Pocket FIT pbosd owns it (its state file, applied on SIGHUP,
          shared with the K button and pbosctl) and the stick MCU renders the
          effects; on the Retroid Pocket 6 and Nova the light engine
@@ -46,9 +56,37 @@ Proton   follows Valve's Proton pick per game: Valve's Proton 11.0 (ARM64)
          Proton Experimental PB-OS (ARM); set per game like a user's pick,
          since Valve's pick outranks Steam's global default. Games on the
          Steam Linux Runtime (Linux ports) and games the user set stay as they
-         are. The global default becomes Proton 11.0-2 PB-OS (ARM) while it
-         is still Valve's. Event-driven, from the frontend: Steam start, game
-         installs/updates, Play. /usr/lib/steamos/pbos-proton builds the tools.
+         are. The global default becomes Proton 11.0-2 PB-OS (ARM) once, if
+         it is still Valve's at the first check; that decision is recorded
+         ("global_set") and the global default is never touched again, so
+         whatever the user picks later stays. Event-driven, from the
+         frontend: Steam start, game installs/updates, Play. /usr/lib/steamos/pbos-proton builds the tools.
+
+Face buttons (Hardware tab), for people who physically moved the button
+         caps: Nintendo positions (A on the right; the default on the Retroid
+         Pocket 6 / Nova and AYN Thor, printed that way) or Xbox positions
+         (A at the bottom; the default on the KONKR Pocket FIT). A front for
+         /usr/lib/steamos/sm8550-face-buttons, which swaps the InputPlumber
+         map and restarts InputPlumber; its unit re-applies the choice at
+         boot.
+
+Sticks    (Hardware tab on the Retroid Pocket 6 / Nova and AYN Thor; was the
+         Stick Calibration plugin): "Use my calibration" (AYN's Android stick
+         calibration in Game Mode: let go of the sticks, push them round the
+         edge, save; each stick's center and range are set from that) and
+         "Fine stick steps" (the controller's finer reporting), both kept
+         across restarts. The work is done by
+         /usr/lib/steamos-sm8550/sm8550-stickcal on the system's native
+         Python, which also keeps the switches and sets them again at boot
+         (sm8550-stickcal.service).
+
+Desktop  (Hardware tab on the AYN Thor): Barry Launcher on the bottom
+         screen in Desktop Mode, or off, which makes the bottom screen a
+         plain desktop screen (the taskbar; Steam+X is the keyboard, like
+         on the Steam Deck). Game Mode
+         keeps Barry. /usr/lib/barry_launcher/barry_launcher_desktop_switch
+         keeps the setting and applies it; Desktop Mode has the same switch
+         as "Barry Launcher On/Off" in its applications menu.
 """
 from __future__ import annotations
 
@@ -56,6 +94,7 @@ import asyncio
 import glob
 import json
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -440,6 +479,48 @@ def charge_rest(*args: str) -> dict[str, Any]:
     return {"supported": bool(out.get("lights")), **out}
 
 
+FACE_BUTTONS = "/usr/lib/steamos/sm8550-face-buttons"
+
+
+def face_buttons(*args: str) -> dict[str, Any]:
+    """sm8550-face-buttons get / set nintendo|xbox: {"supported", "layout", "saved", "default"}."""
+    if not os.access(FACE_BUTTONS, os.X_OK):
+        return {"supported": False}
+    r = subprocess.run([FACE_BUTTONS, *args], capture_output=True, text=True, env=CLEAN_ENV, timeout=30)
+    try:
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        decky.logger.info(f"face buttons {args[:1]}: {r.stderr.strip()}")
+        return {"supported": False}
+
+
+# Sticks: sm8550-stickcal (SM8550 only; absent elsewhere).
+STICKCAL = "/usr/lib/steamos-sm8550/sm8550-stickcal"
+STICK_AXES = ("left_x", "left_y", "right_x", "right_y")
+STICK_REST_S = 1.5
+STICK_REST_SPREAD = 80    # a resting stick moving more than this was touched
+STICK_EDGES_MAX_S = 180
+
+
+def stickcal(*args: str, stdin: str | None = None, timeout: float = 30) -> dict[str, Any]:
+    if not os.access(STICKCAL, os.R_OK):
+        return {"ok": False, "supported": False, "error": "not on this device"}
+    try:
+        r = subprocess.run(["/usr/bin/python3", STICKCAL, *args], input=stdin, capture_output=True,
+                           text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": str(exc)}
+    lines = r.stdout.strip().splitlines()
+    try:
+        res = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        res = {}
+    if r.returncode != 0 or not res:
+        res.setdefault("ok", False)
+        res.setdefault("error", r.stderr.strip() or f"exit {r.returncode}")
+    return res
+
+
 def charge_preview() -> bool:
     subprocess.run(["systemctl", "stop", f"{PREVIEW_UNIT}.service"], capture_output=True)
     subprocess.run(["systemctl", "reset-failed", f"{PREVIEW_UNIT}.service"], capture_output=True)
@@ -448,7 +529,7 @@ def charge_preview() -> bool:
     return r.returncode == 0
 
 
-# Charge limit and bypass charging (Power tab, Retroid Pocket 6 / Nova):
+# Charge limit, bypass and slow charging (Power tab, Retroid Pocket 6 / Nova, AYN Thor, KONKR Pocket FIT):
 # sm8550-charge-control owns its settings and applies them.
 CHARGE_CONTROL = "/usr/lib/steamos-sm8550/sm8550-charge-control"
 
@@ -462,6 +543,32 @@ def charge_control(*args: str) -> dict[str, Any]:
         return json.loads(r.stdout)
     except ValueError:
         decky.logger.info(f"charge control {args[:1]}: {r.stderr.strip()}")
+        return {"supported": False}
+
+
+# Barry Launcher in Desktop Mode (Hardware tab, AYN Thor): its own switch,
+# barry_launcher_desktop_switch, run as the desktop user; it applies at
+# once in a running Desktop session, else at the next Desktop start.
+BARRY_SWITCH = "/usr/lib/barry_launcher/barry_launcher_desktop_switch"
+
+
+def barry_desktop(*args: str) -> dict[str, Any]:
+    if not os.access(BARRY_SWITCH, os.X_OK):
+        return {"supported": False}
+    user = getattr(decky, "DECKY_USER", "steamos")
+    home = getattr(decky, "DECKY_USER_HOME", f"/home/{user}")
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return {"supported": False}
+    run = f"/run/user/{uid}"
+    env = {**CLEAN_ENV, "HOME": home, "XDG_RUNTIME_DIR": run, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={run}/bus"}
+    try:
+        r = subprocess.run(["runuser", "-u", user, "--", BARRY_SWITCH, *args], capture_output=True, text=True,
+                           env=env, timeout=30)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+        decky.logger.info(f"barry desktop {args[:1]} failed")
         return {"supported": False}
 
 
@@ -489,15 +596,27 @@ def proton_state() -> dict[str, Any]:
                       if isinstance(s, dict) and s.get("tool") and s.get("patched") and s.get("valve_name")}}
 
 
-# Games PB-OS switched to a twin ({appid: {"twin", "valve"}}), and games it
-# keeps its hands off because the user changed them since ("hands_off").
+# Games PB-OS switched to a twin ({appid: {"twin", "valve"}}), games it
+# keeps its hands off because the user changed them since ("hands_off"),
+# and "global_set": the global default PB-OS found at its one global check
+# (the twin when PB-OS set it). Once recorded, PB-OS never changes Steam's
+# global default again; it is never cleared.
 def proton_games_path() -> str:
     return os.path.join(getattr(decky, "DECKY_USER_HOME", "/home/steamos"), ".config/pb-os/proton-games.json")
 
 
 def proton_games_read() -> dict[str, Any]:
     st = read_json(proton_games_path())
-    return {"switched": st.get("switched", {}), "hands_off": st.get("hands_off", [])}
+    return {"switched": st.get("switched", {}), "hands_off": st.get("hands_off", []),
+            "global_set": st.get("global_set") or ""}
+
+
+def proton_games_save(state: dict[str, Any]) -> None:
+    # A recorded global check stays recorded, whatever the frontend sends.
+    old = proton_games_read()
+    proton_games_write({"switched": state.get("switched", {}),
+                        "hands_off": state.get("hands_off", []),
+                        "global_set": old["global_set"] or str(state.get("global_set") or "")})
 
 
 def proton_games_write(st: dict[str, Any]) -> None:
@@ -506,6 +625,82 @@ def proton_games_write(st: dict[str, Any]) -> None:
     write_json(path, st)
     user = getattr(decky, "DECKY_USER", "steamos")
     subprocess.run(["chown", "-R", f"{user}:{user}", os.path.dirname(path)], capture_output=True)
+
+
+# ---------------------------------------------------------------- games --
+# Per-game profiles, applied at launch by GAME_LAUNCH (see the Games tab).
+GAME_LAUNCH = "/usr/bin/pbos-game-launch"
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+CPULIST = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
+
+
+def game_profiles_path() -> str:
+    return os.path.join(getattr(decky, "DECKY_USER_HOME", "/home/steamos"), ".config/pb-os/game-profiles.json")
+
+
+def game_info() -> dict[str, Any]:
+    # The wrapper knows the presets and this device's core groups; it runs on
+    # the system's native Python (this backend is emulated).
+    if not os.access(GAME_LAUNCH, os.X_OK):
+        return {}
+    r = subprocess.run(["/usr/bin/python3", GAME_LAUNCH, "--info"], capture_output=True, text=True,
+                       env=CLEAN_ENV, timeout=15)
+    try:
+        info = json.loads(r.stdout)
+    except ValueError:
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def game_profiles() -> dict[str, Any]:
+    info = game_info()
+    games = read_json(game_profiles_path()).get("games", {})
+    return {**info, "available": bool(info), "games": games if isinstance(games, dict) else {}}
+
+
+def clean_game_profile(p: dict[str, Any], info: dict[str, Any]) -> dict[str, Any]:
+    """What is worth keeping of a profile from the frontend: known settings
+    only, and none at their defaults (an empty profile means no profile)."""
+    doc = info.get("presets", {})
+    presets = doc.get("presets", {}) if isinstance(doc, dict) else {}
+    options = {o.get("key") for o in (doc.get("options", []) if isinstance(doc, dict) else []) if isinstance(o, dict)}
+    out: dict[str, Any] = {}
+    fex = p.get("fex")
+    if fex == "custom" and isinstance(p.get("fexConfig"), dict):
+        out["fex"] = "custom"
+        out["fexConfig"] = {k: "1" if str(v) == "1" else "0" for k, v in p["fexConfig"].items() if k in options}
+    elif fex in presets and fex != "default":
+        out["fex"] = fex
+    cores = str(p.get("cores") or "").replace(" ", "")
+    if cores and (cores in info.get("cores", {}) or CPULIST.match(cores)):
+        out["cores"] = cores
+        if p.get("wineTopology") is False:
+            out["wineTopology"] = False
+    env = p.get("env")
+    if isinstance(env, dict):
+        clean = {k: str(v) for k, v in env.items() if isinstance(k, str) and ENV_NAME.match(k) and "\0" not in str(v)}
+        if clean:
+            out["env"] = clean
+    if out:
+        out["name"] = str(p.get("name") or "")[:200]
+    return out
+
+
+def game_profile_save(appid: str, profile: dict[str, Any] | None) -> dict[str, Any]:
+    if not str(appid).isdigit():
+        return {"ok": False, "error": "bad app id"}
+    path = game_profiles_path()
+    st = read_json(path)
+    games = st.get("games") if isinstance(st.get("games"), dict) else {}
+    clean = clean_game_profile(profile, game_info()) if isinstance(profile, dict) else {}
+    if clean:
+        games[str(appid)] = clean
+    else:
+        games.pop(str(appid), None)
+    write_json(path, {"games": games})
+    user = getattr(decky, "DECKY_USER", "steamos")
+    subprocess.run(["chown", "-R", f"{user}:{user}", os.path.dirname(path)], capture_output=True)
+    return {"ok": True, "profile": clean or None}
 
 
 class Plugin:
@@ -521,6 +716,11 @@ class Plugin:
         self.movelog = MoveLog()
         self.move_was_running = await asyncio.to_thread(active, MOVE_UNIT)
         self.lights = await asyncio.to_thread(lights_kind)
+        self.stick_edges: subprocess.Popen | None = None
+        self.stick_reader: threading.Thread | None = None
+        self.stick_live: dict[str, Any] | None = None
+        self.stick_rest: dict[str, Any] | None = None
+        self.stick_lock = threading.Lock()
         if self.lights == "multicolor":
             await asyncio.to_thread(start_engine)
         watchers = [self._watch(), self._watch_drives(), self._cleanup(), self._watch_move()]
@@ -531,6 +731,7 @@ class Plugin:
     async def _unload(self) -> None:
         for t in self.tasks:
             t.cancel()
+        self._stick_stop()
         if self.lights == "multicolor":
             await asyncio.to_thread(stop_engine)
 
@@ -582,15 +783,20 @@ class Plugin:
             await decky.emit("pbos_update_available", up["title"])
         return self.last
 
-    async def set_channel(self, channel: str = "prod", **_: Any) -> dict[str, Any]:
-        """Dev updates on (dev) or off (prod), then look again: dev also offers
-        test builds from pb-os-dev."""
+    async def set_channel(self, channel: str = "prod", passphrase: str = "", **_: Any) -> dict[str, Any]:
+        """Dev updates on (dev, needs a tester's passphrase) or off (prod),
+        then look again: dev also offers test builds from pb-os-dev. The
+        passphrase goes to the updater on stdin, never on its command line."""
         if channel not in ("dev", "prod"):
             return {"ok": False, "error": f"unknown channel {channel}"}
-        await asyncio.to_thread(subprocess.run, ["/usr/bin/python3", UPDATER, "channel", channel],
-                                capture_output=True, timeout=30, env=CLEAN_ENV)
+        r = await asyncio.to_thread(subprocess.run, ["/usr/bin/python3", UPDATER, "channel", channel],
+                                    input=passphrase + "\n", capture_output=True, text=True,
+                                    timeout=60, env=CLEAN_ENV)
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout).strip().splitlines()
+            return {"ok": False, "error": (err[-1] if err else "failed").removeprefix("ERROR: ")}
         self.announced = ""
-        return await self.check()
+        return {"ok": True, "release": await self.check()}
 
     async def check_local(self, **_: Any) -> dict[str, Any]:
         if await asyncio.to_thread(active, UNIT):
@@ -722,7 +928,7 @@ class Plugin:
         # The log goes to HOME afterwards too, for a report; sleep, the power
         # button and the lid are held off until the script ends.
         wrapper = ('systemd-inhibit --what=sleep:idle:shutdown:handle-power-key:handle-suspend-key:handle-lid-switch '
-                   '--who="PB-OS Utils" --why="Copying SteamOS" --mode=block "$@"; rc=$?; '
+                   '--who="PB-OS Tools" --why="Copying SteamOS" --mode=block "$@"; rc=$?; '
                    'echo "PBOS_EXIT=$rc"; '
                    f'install -o 1000 -g 1000 -m 0644 {MOVE_LOG} /home/steamos/pbos-move-{stamp}.log 2>/dev/null; '
                    'exit $rc')
@@ -776,7 +982,7 @@ class Plugin:
             st.update({"on": bool(on), "effect": effect, "color": color, "brightness": brightness, "speed": speed,
                        "reverse_left": bool(reverse_left), "reverse_right": bool(reverse_right)})
             if color2:
-                st["color2"] = clean_color(color2)     # the audio effects' intensity colour
+                st["color2"] = clean_color(color2)     # the audio effects' intensity color
             st.pop("mode", None)
             await asyncio.to_thread(write_json, LIGHTS_STATE, st)
             await asyncio.to_thread(nudge_engine)
@@ -895,6 +1101,126 @@ class Plugin:
             await asyncio.to_thread(set_mcu_link, bool(enabled))
         return await self.get_control()
 
+    # -------------------------------------------------------- face buttons --
+    async def get_face_buttons(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(face_buttons, "get")
+
+    async def set_face_buttons(self, layout: str = "nintendo", **_: Any) -> dict[str, Any]:
+        if layout not in ("nintendo", "xbox"):
+            return await self.get_face_buttons()
+        decky.logger.info(f"face buttons -> {layout}")
+        return await asyncio.to_thread(face_buttons, "set", layout)
+
+    # ------------------------------------------------- barry desktop mode --
+    async def get_barry_desktop(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(barry_desktop, "get")
+
+    async def set_barry_desktop(self, enabled: bool = True, **_: Any) -> dict[str, Any]:
+        decky.logger.info(f"barry launcher in desktop mode -> {'on' if enabled else 'off'}")
+        return await asyncio.to_thread(barry_desktop, "on" if enabled else "off")
+
+    # --------------------------------------------------------------- sticks --
+    async def stick_state(self, **_: Any) -> dict[str, Any]:
+        if not os.access(STICKCAL, os.R_OK):
+            return {"supported": False}
+        return {"supported": True, **await asyncio.to_thread(stickcal, "status")}
+
+    async def stick_rest(self, **_: Any) -> dict[str, Any]:
+        """The sticks at rest; refuses if one was touched."""
+        res = await asyncio.to_thread(stickcal, "rest", str(STICK_REST_S))
+        if not res.get("ok"):
+            return res
+        moved = [n for n, a in res["axes"].items() if a["hi"] - a["lo"] > STICK_REST_SPREAD]
+        if moved:
+            return {"ok": False, "error": "A stick moved. Let go of both sticks and try again."}
+        self.stick_rest = {n: a["mean"] for n, a in res["axes"].items()}
+        decky.logger.info("sticks rest: " + ", ".join(f"{n} {v:+.1f}" for n, v in self.stick_rest.items()))
+        return {"ok": True, "rest": self.stick_rest}
+
+    async def stick_edges(self, **_: Any) -> dict[str, Any]:
+        self._stick_stop()
+        with self.stick_lock:
+            self.stick_live = None
+        try:
+            self.stick_edges = subprocess.Popen(["/usr/bin/python3", STICKCAL, "edges", str(STICK_EDGES_MAX_S)],
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        self.stick_reader = threading.Thread(target=self._stick_read, args=(self.stick_edges,), daemon=True)
+        self.stick_reader.start()
+        return {"ok": True}
+
+    def _stick_read(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout:
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            with self.stick_lock:
+                self.stick_live = data
+
+    def _stick_stop(self) -> None:
+        proc, self.stick_edges = getattr(self, "stick_edges", None), None
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        # Its last line (the typical reach) is read before anything uses it.
+        if getattr(self, "stick_reader", None):
+            self.stick_reader.join(timeout=3)
+            self.stick_reader = None
+
+    async def stick_live_values(self, **_: Any) -> dict[str, Any] | None:
+        with self.stick_lock:
+            return self.stick_live
+
+    async def stick_cancel(self, **_: Any) -> None:
+        self._stick_stop()
+        self.stick_rest = None
+
+    async def stick_save(self, **_: Any) -> dict[str, Any]:
+        """Stop measuring, keep the result and turn it on."""
+        self._stick_stop()
+        with self.stick_lock:
+            live = self.stick_live
+        if not live or not self.stick_rest:
+            return {"ok": False, "error": "Nothing measured yet."}
+        # The typical reach of each direction (the helper's last line); the
+        # furthest values only if the helper died before writing it.
+        reach = live.get("reach") or {n: {"lo": live["lo"][n], "hi": live["hi"][n]} for n in STICK_AXES}
+        cal = {n: {"rest": self.stick_rest[n], "lo": reach[n]["lo"], "hi": reach[n]["hi"],
+                   "furthest": [live["lo"][n], live["hi"][n]]} for n in STICK_AXES}
+        res = await asyncio.to_thread(stickcal, "save", stdin=json.dumps(cal))
+        if not res.get("ok"):
+            res["error"] = f"Not saved: {res.get('error')}. Push each stick all the way round the edge."
+            return res
+        self.stick_rest = None
+        decky.logger.info(f"sticks saved and on: {json.dumps(res.get('plan'))}")
+        return res
+
+    async def stick_switch(self, which: str = "", on: bool = False, **_: Any) -> dict[str, Any]:
+        if which not in ("calibration", "fine"):
+            return {"ok": False, "error": f"unknown switch {which}"}
+        res = await asyncio.to_thread(stickcal, "set", which, "on" if on else "off")
+        decky.logger.info(f"sticks {which} {'on' if on else 'off'}: {json.dumps(res)}")
+        return res
+
+    async def stick_delete(self, **_: Any) -> dict[str, Any]:
+        res = await asyncio.to_thread(stickcal, "delete")
+        decky.logger.info(f"stick calibration deleted: {json.dumps(res)}")
+        return res
+
+    # --------------------------------------------------------------- games --
+    async def get_game_profiles(self, **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(game_profiles)
+
+    async def set_game_profile(self, appid: str = "", profile: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
+        res = await asyncio.to_thread(game_profile_save, str(appid), profile)
+        decky.logger.info(f"game profile {appid}: {json.dumps(res.get('profile'))}")
+        return res
+
     # -------------------------------------------------------------- proton --
     async def get_proton(self, **_: Any) -> dict[str, Any]:
         return await asyncio.to_thread(proton_state)
@@ -904,8 +1230,7 @@ class Plugin:
 
     async def set_proton_games(self, state: dict[str, Any] | None = None, note: str = "", **_: Any) -> bool:
         if isinstance(state, dict):
-            await asyncio.to_thread(proton_games_write, {"switched": state.get("switched", {}),
-                                                         "hands_off": state.get("hands_off", [])})
+            await asyncio.to_thread(proton_games_save, state)
         if note:
             decky.logger.info(f"Proton PB-OS: {note}")
         return True

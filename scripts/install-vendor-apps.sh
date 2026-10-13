@@ -78,6 +78,7 @@ mkdir -p "$R/usr/share/konkr-update"
 install -m0644 "$MOD/konkr-update/konkr-update.py" "$R/usr/share/konkr-update/konkr-update.py"
 install -m0644 "$MOD/konkr-update/konkr-update-gui.py" "$R/usr/share/konkr-update/konkr-update-gui.py"
 install -m0644 "$MOD/konkr-update/allowed_signers" "$R/usr/share/konkr-update/allowed_signers"
+install -m0644 "$MOD/konkr-update/dev_testers" "$R/usr/share/konkr-update/dev_testers"
 cat > "$bin/konkr-update-gui" <<'EOF'
 #!/bin/bash
 exec /usr/bin/python3 /usr/share/konkr-update/konkr-update-gui.py "$@"
@@ -268,11 +269,24 @@ if [[ -f "$R/etc/xdg/kwinrc" ]]; then
     printf '\n[Xwayland]\nScale=1.25\n' >>"$R/etc/xdg/kwinrc"
   fi
 fi
-# Desktop Mode touch keyboard: KWin shows plasma-keyboard when a text field
-# is tapped (Steam's own keyboard needs Steam+X and the Deck controller).
-KWIN_IM='/usr/share/applications/org.kde.plasma.keyboard.desktop'
-if [[ -f "$R/etc/xdg/kwinrc" ]] && ! grep -q '^\[Wayland\]' "$R/etc/xdg/kwinrc"; then
-  printf '\n[Wayland]\nInputMethod[$e]=%s\nVirtualKeyboardEnabled=true\n' "$KWIN_IM" >>"$R/etc/xdg/kwinrc"
+# Desktop Mode has no KDE on-screen keyboard, like the Steam Deck (its kwinrc
+# names no input method; Steam's keyboard, Steam+X, is the Desktop keyboard).
+# plasma-keyboard stays installed as a choice in Settings > Virtual Keyboard;
+# as the default it kept the launcher menu flashing and its search dead on
+# the Nova. The AYN Thor sets Barry's keyboard itself (barry_launcher_desktop).
+# Images build on a rootfs that earlier builds already wrote that block into
+# (onetest14 still carried it), so take it out again.
+if [[ -f "$R/etc/xdg/kwinrc" ]]; then
+  sed -i -e '\|^InputMethod\[\$e\]=/usr/share/applications/org.kde.plasma.keyboard.desktop$|d' \
+    -e '/^VirtualKeyboardEnabled=true$/d' "$R/etc/xdg/kwinrc"
+  # Drop a [Wayland] group left with nothing in it.
+  python3 - "$R/etc/xdg/kwinrc" <<'PY2'
+import re, sys
+path = sys.argv[1]
+text = open(path).read()
+text = re.sub(r'\n*\[Wayland\]\n(?=\s*(\[|\Z))', '\n', text)
+open(path, 'w').write(text.rstrip('\n') + '\n')
+PY2
 fi
 if [[ -f "$R/etc/xdg/kdeglobals" ]] && ! grep -q '^\[KScreen\]' "$R/etc/xdg/kdeglobals"; then
   printf '\n[KScreen]\nScaleFactor=1.25\nScreenScaleFactors=DSI-1=1.25\n' >>"$R/etc/xdg/kdeglobals"
@@ -285,10 +299,6 @@ Rows=1
 
 [Xwayland]
 Scale=1.25
-
-[Wayland]
-InputMethod[$e]=/usr/share/applications/org.kde.plasma.keyboard.desktop
-VirtualKeyboardEnabled=true
 EOF
 if [[ -f "$HOME_DST/.config/kdeglobals" ]]; then
   if grep -q '^\[KScreen\]' "$HOME_DST/.config/kdeglobals"; then
