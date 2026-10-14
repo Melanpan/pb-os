@@ -24,8 +24,8 @@ const jsxs = SP_JSX.jsxs;
 // Decky callable(): arguments are passed positionally to the Python method.
 const getState = callable("get_state");
 const setBottomScreen = callable("set_bottom_screen");
-const setDimmers = callable("set_dimmers");
 const setRgbDimmer = callable("set_rgb_dimmer");
+const setBrightness = callable("set_brightness");
 const barryKeyboardAvailable = callable("barry_keyboard_available");
 const getTwoScreen = callable("get_two_screen");
 const setTwoScreen = callable("set_two_screen");
@@ -558,23 +558,23 @@ function Content() {
     const [tab, setTab] = useState(lastTab);
     const pick = (id) => { lastTab = id; setTab(id); };
     const [st, setSt] = useState(null);
-    // The "both screens" slider: where it was last put, or the common level.
-    const [both, setBoth] = useState(null);
     const movedAt = useRef(0);
     const refresh = useCallback(() => {
         if (Date.now() - movedAt.current < HOLD_MS) return;
         getState().then((s) => {
             if (Date.now() - movedAt.current < HOLD_MS) return;
             setSt(s);
-            if (s && s.dimmers && s.dimmers.top === s.dimmers.bottom) setBoth(s.dimmers.top);
         }).catch(() => {});
     }, []);
-    const sendDimmers = useThrottled(useCallback((d) => { setDimmers(d.top, d.bottom).catch(() => {}); }, []));
     const sendRgb = useThrottled(useCallback((v) => { setRgbDimmer(v).catch(() => {}); }, []));
-    const dim = (top, bottom) => {
+    // Each screen's brightness, as Android's top and bottom sliders; Steam's
+    // slider is Android's "both screens" one.
+    const sendTop = useThrottled(useCallback((v) => { setBrightness("top", v).catch(() => {}); }, []));
+    const sendBottom = useThrottled(useCallback((v) => { setBrightness("bottom", v).catch(() => {}); }, []));
+    const bright = (screen, v) => {
         movedAt.current = Date.now();
-        setSt((s) => ({ ...s, dimmers: { top, bottom } }));
-        sendDimmers({ top, bottom });
+        setSt((s) => ({ ...s, brightness: { ...s.brightness, [screen]: v } }));
+        (screen === "top" ? sendTop : sendBottom)(v);
     };
     useEffect(() => {
         refresh();
@@ -585,7 +585,6 @@ function Content() {
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
     if (!st.supported) return jsx(DFL.PanelSection, { children: note("This plugin is for the AYN Thor (two screens).") });
 
-    const d = st.dimmers || { top: 100, bottom: 100 };
     const slider = (label, value, min, onChange, extra) => row(jsx(DFL.SliderField, {
         label: `${label} (${value}%)`, value, min, max: 100, step: 5, onChange, ...extra,
     }));
@@ -618,13 +617,11 @@ function Content() {
                 setBottomScreen(v).then(refresh).catch(refresh);
             },
         })),
-        slider("Top screen dimmer", d.top, 10, (v) => dim(v, d.bottom)),
-        slider("Bottom screen dimmer", d.bottom, 10, (v) => dim(d.top, v), { disabled: !st.on }),
-        slider("Both screens", both != null ? both : Math.max(d.top, d.bottom), 10, (v) => {
-            setBoth(v);
-            dim(v, v);
-        }),
-        note("Steam's brightness slider moves both screens together, each at its own setting here."),
+        ...(st.brightness ? [
+            slider("Top screen brightness", st.brightness.top, 0, (v) => bright("top", v), { step: 1 }),
+            slider("Bottom screen brightness", st.brightness.bottom, 0, (v) => bright("bottom", v), { step: 1, disabled: !st.on }),
+        ] : []),
+        note("Steam's brightness slider sets both screens."),
     ] }),
     shown === "lights" && jsxs(DFL.PanelSection, { title: "Joystick RGB Dimmer", children: [
         slider("Lights dimmer", st.rgbDimmer, 20, (v) => {

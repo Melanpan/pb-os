@@ -2,12 +2,12 @@
 """Decky backend: Barry Launcher (AYN Thor, SteamOS-ARM; the plugin's
 folder is still dual-screen).
 
-One switch for the bottom screen. Steam's brightness slider sets both panels
-(sm8550-thor-backlightd follows it), each times its own dimmer from DIMMERS,
-so the screens keep their ratio as Steam's slider moves. Turning the bottom
-screen off powers its backlight down and disables its touchscreen until it
-is turned back on. The daemon applies and enforces STATE and DIMMERS; this
-only records them.
+One switch for the bottom screen, and each screen's brightness, as on AYN's
+Android: Steam's brightness slider sets both screens (sm8550-thor-backlightd
+follows it), the top and bottom sliders here one each (SCREENS, a slider
+position 0-1 per screen). Turning the bottom screen off powers its
+backlight down and disables its touchscreen until it is turned back on.
+The daemon applies and enforces STATE and SCREENS; this only records them.
 
 Also the stick lighting's dimmer (20-100%): sm8550-thor-controlsd lights the
 LEDs at the dashboard's brightness times it.
@@ -62,9 +62,8 @@ import decky
 TOP = "/sys/class/backlight/ae96000.dsi.0"
 BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
 STATE = "/var/lib/steamos-sm8550/thor-bottom-screen"
-DIMMERS = "/var/lib/steamos-sm8550/thor-screen-dimmers.json"
+SCREENS = "/var/lib/steamos-sm8550/thor-screen-brightness.json"
 CONTROLS = "/run/sm8550-thor/controls.sock"
-DIM_MIN = 10
 RGB_DIM_MIN = 20
 SHELLD = "http://127.0.0.1:47824"
 YIELD_WAIT_S = 2.0
@@ -181,13 +180,22 @@ def _save(path: str, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _dimmers() -> dict[str, int]:
+def _screens() -> dict:
     try:
-        with open(DIMMERS, encoding="utf-8") as fh:
+        with open(SCREENS, encoding="utf-8") as fh:
             d = json.load(fh)
-        return {k: max(DIM_MIN, min(100, int(d.get(k, 100)))) for k in ("top", "bottom")}
-    except (OSError, ValueError, TypeError, AttributeError):
-        return {"top": 100, "bottom": 100}
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _brightness() -> dict[str, int] | None:
+    """Each screen's slider, 0-100; None until the daemon has set them."""
+    d = _screens()
+    try:
+        return {k: round(max(0.0, min(1.0, float(d[k]))) * 100) for k in ("top", "bottom")}
+    except (KeyError, ValueError, TypeError):
+        return None
 
 
 def _controlsd(req: dict) -> dict | None:
@@ -523,7 +531,7 @@ class Plugin:
 
     async def get_state(self, **_: Any) -> dict[str, Any]:
         ok = os.path.exists(f"{TOP}/brightness") and os.path.exists(f"{BOTTOM}/brightness")
-        return {"supported": ok, "on": _is_on(), "dimmers": _dimmers(),
+        return {"supported": ok, "on": _is_on(), "brightness": _brightness(),
                 "rgbDimmer": _rgb_dimmer(_controlsd({"op": "get"}))}
 
     async def set_bottom_screen(self, on: bool = True, **_: Any) -> bool:
@@ -535,11 +543,13 @@ class Plugin:
         decky.logger.info(f"bottom screen {'on' if on else 'off'}")
         return _is_on()
 
-    async def set_dimmers(self, top: int = 100, bottom: int = 100, **_: Any) -> dict[str, int]:
-        """Each screen's dimmer, percent of Steam's brightness."""
-        d = {"top": max(DIM_MIN, min(100, int(top))), "bottom": max(DIM_MIN, min(100, int(bottom)))}
-        _save(DIMMERS, json.dumps(d) + "\n")
-        return d
+    async def set_brightness(self, screen: str = "top", value: int = 100, **_: Any) -> dict[str, int] | None:
+        """One screen's brightness slider (0-100), as on Android."""
+        d = _screens()
+        if screen in ("top", "bottom") and "top" in d and "bottom" in d:
+            d[screen] = max(0, min(100, int(value))) / 100
+            _save(SCREENS, json.dumps(d) + "\n")
+        return _brightness()
 
     async def set_rgb_dimmer(self, value: int = 100, **_: Any) -> int | None:
         v = max(RGB_DIM_MIN, min(100, int(value)))

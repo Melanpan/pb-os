@@ -1,0 +1,61 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/panel: icna35xx: AYN Thor top panel brightness ceiling 0x0d55
+
+The ICNA3520 (the AYN Thor's top panel, the only board using it) took the
+controller's full 4096. AYN's own firmware never goes above 0x0d55 (3413):
+at full power the top panel is far brighter than the Thor's bottom one can
+go, so the two screens never looked alike at the bright end. Give the
+panel description a backlight ceiling, 0x0d55 for the ICNA3520, so the
+backlight device reports it as its maximum and refuses anything higher,
+whoever writes it, and starts there instead of at 4096. Other panels keep
+4096.
+
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -48,6 +48,9 @@
+ 	int (*init_sequence)(struct panel_info *pinfo);
+ 
+ 	struct drm_dsc_config dsc;
++
++	/* Backlight ceiling; 0 means the controller's full 4096. */
++	u16 max_brightness;
+ };
+ 
+ static const struct regulator_bulk_data panel_supplies[] = {
+@@ -324,6 +327,8 @@
+ 		.bits_per_pixel = 8 << 4,
+ 		.block_pred_enable = true,
+ 	},
++	/* AYN Thor top panel: AYN's own firmware stops at 0x0d55. */
++	.max_brightness = 0x0d55,
+ };
+ 
+ static void icna35xx_reset(struct panel_info *pinfo)
+@@ -483,13 +488,15 @@
+ 	.get_brightness = icna35xx_bl_get_brightness,
+ };
+ 
+-static struct backlight_device *icna35xx_create_backlight(struct mipi_dsi_device *dsi)
++static struct backlight_device *icna35xx_create_backlight(struct mipi_dsi_device *dsi,
++							  const struct panel_desc *desc)
+ {
+ 	struct device *dev = &dsi->dev;
++	u16 max = desc->max_brightness ?: 4096;
+ 	const struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+-		.brightness = 4096,
+-		.max_brightness = 4096,
++		.brightness = max,
++		.max_brightness = max,
+ 	};
+ 
+ 	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+@@ -532,7 +539,7 @@
+ 
+ 	pinfo->panel.prepare_prev_first = true;
+ 
+-    pinfo->panel.backlight = icna35xx_create_backlight(dsi);
++    pinfo->panel.backlight = icna35xx_create_backlight(dsi, pinfo->desc);
+ 	if (IS_ERR(pinfo->panel.backlight))
+ 		return dev_err_probe(dev, PTR_ERR(pinfo->panel.backlight),
+ 				     "Failed to create backlight\n");
