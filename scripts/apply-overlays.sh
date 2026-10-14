@@ -616,8 +616,6 @@ ln -sfn ../konkr-apk-inbox.path \
 ln -sfn ../konkr-android-setup.service \
   "$R/usr/lib/systemd/user/default.target.wants/konkr-android-setup.service"
 # Lepton overlays (Play Store etc.) go to home: see "Android apps payload" below.
-# Earlier builds of this rootfs had them on root.
-rm -rf "$R/usr/share/konkr-android"
 chroot "$R" update-mime-database /usr/share/mime
 chroot "$R" update-desktop-database -q /usr/share/applications
 # Kernel deep sleep (Pocket FIT default; konkr-sleep-mode decides):
@@ -1086,10 +1084,23 @@ mkdir -p "$HOME_DST"
 # framework fixes; external-and-mods/konkr-android, binaries fetched/built,
 # not in git). ~210 MiB, kept off the root partition; konkr-apk reads it here
 # and the updater installs it like the bundled Decky plugins.
+# Release builds export the commit, which has only the payload's text files:
+# then the binaries come from this rootfs, the root copy earlier builds made
+# (moved here) or the home copy of the last build (kept).
 KAPAY="${ROOT}/external-and-mods/konkr-android/payload"
 KADST="$HOME_DST/.local/share/konkr-android"
-if [[ -f "$KAPAY/common/system/product/priv-app/Phonesky/Phonesky.apk" ]]; then
+KAOLD="$R/usr/share/konkr-android"
+PHONESKY=common/system/product/priv-app/Phonesky/Phonesky.apk
+if [[ -f "$KAPAY/$PHONESKY" ]]; then
   rm -rf "$KADST"
+elif [[ -f "$KAOLD/$PHONESKY" ]]; then
+  log "konkr-android payload: moved from /usr/share/konkr-android"
+  rm -rf "$KADST"; mkdir -p "${KADST%/*}"; cp -a "$KAOLD" "$KADST"
+elif [[ -f "$KADST/$PHONESKY" ]]; then
+  log "konkr-android payload: kept from the last build"
+fi
+rm -rf "$KAOLD"
+if [[ -f "$KAPAY/$PHONESKY" || -f "$KADST/$PHONESKY" ]]; then
   mkdir -p "$KADST"
   # exFAT/macOS leave ._* AppleDouble files; a ._x.apk breaks PackageManager.
   rsync -a --no-owner --no-group --exclude '._*' --exclude '.DS_Store' "$KAPAY/" "$KADST/"
