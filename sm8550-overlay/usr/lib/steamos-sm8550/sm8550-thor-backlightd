@@ -16,7 +16,8 @@ from DIMMERS (percent, set by the Barry Launcher plugin; 100 when unset), so
 Steam's slider moves both screens together. Steam's slider puts out its
 position to the power STEAM_GAMMA (30% writes 7%): right for the top LCD, but
 the bottom AMOLED is close to black that low, so the bottom panel gets the
-slider's position itself. (A
+slider's position itself, spread over the range the panel shows
+(BOTTOM_VISIBLE). (A
 steamos-priv-write redirect alone ran pkexec for every slider step and
 lagged; it stays as a fallback.)
 
@@ -84,6 +85,8 @@ DIMMERS = "/var/lib/steamos-sm8550/thor-screen-dimmers.json"
 RUN_DIR = "/run/sm8550-thor"
 LEVEL = f"{RUN_DIR}/steam-brightness"
 STEAM_BOTTOM = f"{RUN_DIR}/steam-bottom-brightness"
+FIRMWARE_TYPE = f"{RUN_DIR}/bottom-backlight-type"
+DESKTOP_MAX = f"{RUN_DIR}/bottom-backlight-max"
 IN_MODIFY = 0x2
 STEAM_GAMMA = 2.2
 OVERLAY = f"{RUN_DIR}/overlay"
@@ -111,6 +114,17 @@ YIELD_RETRY_S = 2
 # A panel that refused its brightness (off, or still coming up) is tried
 # again this often.
 PANEL_RETRY_S = 0.5
+# Whether Desktop Mode (Plasma) is up is looked at this often.
+MODE_CHECK_S = 2
+# A new brightness is reached in a glide this long, a step every GLIDE_MS:
+# sliders send a few values a second, and each jump showed as a tick.
+GLIDE_S = 0.15
+GLIDE_MS = 16
+# The bottom AMOLED, measured on a Thor (2026-10-14): black up to about 200
+# of 65535, dim but readable at 500, and brighter at every doubling up to
+# the top. Both modes spread their slider evenly over those doublings, from
+# 270 (the lowest the tester wanted) up.
+BOTTOM_VISIBLE = 270
 
 
 def log(msg: str) -> None:
@@ -193,6 +207,28 @@ def shadow_bottom(path: str, value: int) -> None:
     os.chown(STEAM_BOTTOM, -1, gid)
     os.chmod(STEAM_BOTTOM, 0o664)
     subprocess.run(["mount", "--bind", STEAM_BOTTOM, path], check=True, capture_output=True)
+
+
+def bottom_alone(type_path: str, max_path: str, top_max: int, on: bool) -> None:
+    """Desktop Mode: PowerDevil's backlight helper takes every backlight of
+    the best type it finds and writes them all; both panels are "raw", so
+    the bottom slider moved the top screen too, and the helper read its
+    value back from the top panel. With "firmware" over the bottom panel's
+    type it takes that one alone. PowerDevil reads the range once, from the
+    top panel if it came first: the bottom's max_brightness shows the top's
+    too, so the slider's values come on that one scale either way. Off for
+    Game Mode, whose gamescope picks its backlight by type as well."""
+    for path, src, value in ((type_path, FIRMWARE_TYPE, "firmware"), (max_path, DESKTOP_MAX, str(top_max))):
+        if not on:
+            unshadow(path)
+            continue
+        if mounted(path):
+            continue
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(value + "\n")
+        os.chmod(src, 0o644)
+        if subprocess.run(["mount", "--bind", src, path], capture_output=True).returncode != 0:
+            log(f"cannot put {value} over {path}")
 
 
 def steam_bottom() -> int | None:
@@ -289,6 +325,24 @@ def steam_display_user() -> str | None:
     return None
 
 
+def desktop_mode() -> bool:
+    """Plasma's KWin runs and Game Mode's gamescope does not."""
+    kwin = False
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                args = fh.read().split(b"\0")
+        except OSError:
+            continue
+        name = os.path.basename(args[0])
+        if name == b"gamescope" and b"--steam" in args:
+            return False
+        kwin = kwin or name == b"kwin_wayland"
+    return kwin
+
+
 def nudge_steam() -> subprocess.Popen | None:
     user = steam_display_user()
     if user is None:
@@ -335,6 +389,9 @@ def bottom_screen_game() -> bool:
 
 
 def main() -> int:
+    # A copy left over a panel's attributes by a run that died goes first.
+    for name in ("type", "max_brightness"):
+        unshadow(os.path.realpath(f"{BOTTOM}/{name}"))
     bottom_max = int(read(f"{BOTTOM}/max_brightness", "0") or 0)
     top_max = int(read(f"{TOP}/max_brightness", "0") or 0)
     if bottom_max <= 0 or top_max <= 0:
@@ -344,6 +401,8 @@ def main() -> int:
 
     # The real bottom panel, opened before Steam's file goes over it.
     bottom_path = os.path.realpath(f"{BOTTOM}/brightness")
+    type_path = os.path.realpath(f"{BOTTOM}/type")
+    max_path = os.path.realpath(f"{BOTTOM}/max_brightness")
     unshadow(bottom_path)
     if mounted(bottom_path):
         log("Steam's file is still over the bottom panel; cannot reach the panel")
@@ -351,12 +410,14 @@ def main() -> int:
     bl_fd = os.open(bottom_path, os.O_RDWR)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
-        return run(bl_fd, bottom_path, bottom_max, top_max)
+        return run(bl_fd, bottom_path, (type_path, max_path), bottom_max, top_max)
     finally:
+        unshadow(type_path)
+        unshadow(max_path)
         unshadow(bottom_path)
 
 
-def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
+def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: int, top_max: int) -> int:
     key_fd = open_ayn_key()
     key_retry = 0
     touch_fd = open_touch()
@@ -389,7 +450,41 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     def target(level: float, dim: int, maximum: int) -> int:
         return max(1, min(maximum, round(level * dim / 100 * maximum)))
 
+    def visible(position: float) -> int:
+        """A slider position (0-1) on the bottom panel: from BOTTOM_VISIBLE
+        at its low end to full, one doubling per step."""
+        floor = min(BOTTOM_VISIBLE, bottom_max)
+        return round(floor * (bottom_max / floor) ** max(0.0, min(1.0, position)))
+
+    def desktop_bottom(value: int) -> int:
+        """Plasma's bottom slider: linear, in Steam's file, on the top
+        panel's scale (bottom_alone)."""
+        return visible(level_of(value, top_max))
+
+    def game_bottom(level: float, dim: int) -> int:
+        """Steam's level (its slider's position to the power STEAM_GAMMA)
+        times the bottom's dimmer."""
+        return visible(level ** (1 / STEAM_GAMMA) * dim / 100)
+
     dim_cache: dict = {}
+    glides: dict[str, tuple[int, int, float]] = {}  # panel -> (from, to, since)
+
+    def glide(panel: str, want: int, now: int) -> int:
+        """The value to write now on the way to want: a new want starts a
+        glide from where the panel is, in even ratios (equal steps to the
+        eye, more so on the AMOLED)."""
+        g = glides.get(panel)
+        if g is None or g[1] != want:
+            if now == want:
+                glides.pop(panel, None)
+                return want
+            g = glides[panel] = (max(1, now), want, time.monotonic())
+        start, end, since = g
+        f = (time.monotonic() - since) / GLIDE_S
+        if f >= 1:
+            glides.pop(panel, None)
+            return end
+        return max(1, round(start * (max(1, end) / start) ** f))
     try:
         level = float(read(LEVEL))
     except ValueError:
@@ -414,6 +509,7 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
     yield_retry_at = 0.0  # after Game Mode was not found
     home_over_game = False  # Home yields the bottom screen of a dual-screen game
     home_checked = 0.0
+    desktop, mode_checked = False, -MODE_CHECK_S
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         if charge_rest():
@@ -428,7 +524,7 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
             poller.register(key_fd, select.POLLIN | select.POLLERR)
         if touch_fd is not None:
             poller.register(touch_fd, select.POLLIN | select.POLLERR)
-        events = dict(poller.poll(POLL_MS))
+        events = dict(poller.poll(GLIDE_MS if glides else POLL_MS))
         if steam_fd is not None and steam_fd in events:
             try:
                 os.read(steam_fd, 4096)  # consume the notification
@@ -532,13 +628,40 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
                     write(p, "1")
         elif was_on is False:
             # Back on: at its level, then power up and allow touch.
-            set_bottom(target(level ** (1 / STEAM_GAMMA), read_dimmers(dim_cache)[1], bottom_max))
+            set_bottom(desktop_bottom(steam_value) if desktop
+                       else game_bottom(level, read_dimmers(dim_cache)[1]))
             write(f"{BOTTOM}/bl_power", BL_ON)
             for p in touch_inhibited_paths():
                 write(p, "0")
         if on != was_on:
             log(f"bottom screen {'on' if on else 'off'}")
         was_on = on
+
+        if time.monotonic() - mode_checked >= MODE_CHECK_S:
+            mode_checked = time.monotonic()
+            if desktop_mode() != desktop:
+                desktop = not desktop
+                bottom_alone(*alone_paths, top_max, desktop)
+                log("Desktop Mode: Plasma sets each screen" if desktop else "Game Mode: Steam's level, with the dimmers")
+        if desktop:
+            # Plasma has a slider per screen and sets the top panel itself;
+            # its bottom one writes into Steam's file (STEAM_BOTTOM), which
+            # goes to the panel without the dimmers (Game Mode's, set in the
+            # Barry Launcher plugin), over the range it shows (desktop_bottom).
+            # It reaches the bottom panel alone (bottom_alone).
+            steam_now = steam_bottom()
+            if steam_now is not None:
+                steam_value = steam_now
+            want_bottom = glide("bottom", desktop_bottom(steam_value), bottom_set())
+            if on and (bottom_set() != want_bottom or (bottom_refused and time.monotonic() >= panel_retry_at)):
+                refused = not set_bottom(want_bottom, quiet=bottom_refused)
+                if refused != bottom_refused:
+                    log(f"bottom panel {'refuses' if refused else 'took'} brightness {want_bottom}")
+                bottom_refused = refused
+                if refused:
+                    panel_retry_at = time.monotonic() + PANEL_RETRY_S
+            wrote_top = top_set()  # Plasma's: no level for Game Mode
+            continue
 
         # Steam's level: a new value in Steam's file (or on the top panel).
         steam_now, top_now = steam_bottom(), top_set()
@@ -551,13 +674,13 @@ def run(bl_fd: int, bottom_path: str, bottom_max: int, top_max: int) -> int:
             write(LEVEL, f"{level:.5f}")
         dims = read_dimmers(dim_cache)
         retry = (top_refused or bottom_refused) and time.monotonic() >= panel_retry_at
-        want_bottom = target(level ** (1 / STEAM_GAMMA), dims[1], bottom_max)
+        want_bottom = glide("bottom", game_bottom(level, dims[1]), bottom_set())
         if bottom_set() != want_bottom or (bottom_refused and retry):
             refused = not set_bottom(want_bottom, quiet=bottom_refused)
             if refused != bottom_refused:
                 log(f"bottom panel {'refuses' if refused else 'took'} brightness {want_bottom}")
             bottom_refused = refused
-        want_top = target(level, dims[0], top_max)
+        want_top = glide("top", target(level, dims[0], top_max), top_now)
         if top_now != want_top or (top_refused and retry):
             refused = not write(f"{TOP}/brightness", str(want_top), quiet=top_refused)
             if refused != top_refused:

@@ -379,6 +379,7 @@ class State:
         self.home_serial = 0  # counts trips home, for the home screen's slide-in
         self.home_ready = threading.Event()
         self.im = None  # Desktop Mode: barry_desktop.InputMethod
+        self.im_top = False  # Desktop Mode: the active field was tapped on the top screen
         self.last_top_click: float | None = None  # monotonic: trackpad click or top-screen touch
         self.top_keyboard = {"serial": 0, "visible": False}  # the Trackpad app's keyboard
         self.opened_for_game: dict[str, str] = {}  # game appid -> the app it opened
@@ -409,6 +410,11 @@ STATE = State()
 
 
 def dashboard_up() -> bool:
+    # The dashboard is Game Mode's: Desktop Mode never shows it, though the
+    # flag can still read 1 from Game Mode (or from an AYN press here), and
+    # it would keep the keyboard down for nothing.
+    if DESKTOP:
+        return False
     try:
         with open(DASHBOARD_FLAG, encoding="utf-8") as fh:
             return fh.read().strip() == "1"
@@ -1699,13 +1705,43 @@ TIMING = os.environ.get("BARRY_TIMING") == "1"
 IM_HIDE_DELAY_MS = 200  # a field handing over to the next one: no flicker
 
 
+def top_clicked_lately() -> bool:
+    """Desktop Mode: the latest press was a trackpad click or a finger on
+    the top screen (not on the bottom one), just now."""
+    last = STATE.last_top_click
+    if last is None or time.monotonic() - last >= TOP_CLICK_S:
+        return False
+    return STATE.touch_began is None or last > STATE.touch_began
+
+
+def top_field_keyboard(why: str) -> None:
+    """Desktop Mode, a field on the top screen: the Trackpad app's keys come
+    up, as in Game Mode (top_text_focus), with the trackpad above them; the
+    app opens with them up if it is not running. The bottom screen's own
+    keyboard is for the fields of Barry's apps there."""
+    if STATE.keyboard()["visible"]:
+        STATE.set_keyboard(False)
+    if running(TOP_INPUT_APP):
+        # Asked every time: the app puts its keys away by itself (its ⌄
+        # key), so "visible" here may be stale. Typing on them asks nothing,
+        # as only a top-screen press just before counts.
+        STATE.set_top_keyboard(True, why)
+    else:
+        log(f"{why}: Trackpad app with its keyboard")
+        launch(TOP_KEYBOARD)
+
+
 def on_im_event(ev: dict) -> None:
     kind = ev.get("event")
     if TIMING and kind in ("activate", "deactivate", "surrounding"):
         extra = f" cursor {ev.get('cursor')}" if kind == "surrounding" else ""
         log(f"timing: field {kind}{extra} {time.monotonic():.3f}")
     if kind == "activate":
-        show_for_text(False, "text field active")
+        STATE.im_top = top_clicked_lately()
+        if STATE.im_top:
+            top_field_keyboard("top-screen text field active")
+        else:
+            show_for_text(False, "text field active")
     elif kind == "deactivate":
         def hide_if_still_inactive() -> bool:
             if STATE.im is not None and not STATE.im.active and STATE.keyboard()["visible"]:
@@ -1716,14 +1752,20 @@ def on_im_event(ev: dict) -> None:
     elif kind == "surrounding":
         # A tap in the field that is already active moves its caret: show a
         # keyboard hidden by hand again.
-        if not STATE.keyboard()["visible"] and STATE.im is not None and STATE.im.active and touched_lately():
+        if STATE.im is None or not STATE.im.active:
+            return
+        if STATE.im_top:
+            if top_clicked_lately():
+                top_field_keyboard("caret moved in the top-screen field")
+        elif not STATE.keyboard()["visible"] and touched_lately():
             show_for_text(False, "caret moved in the active field")
 
 
 def watch_presses(name: str, codes: tuple, attr: str = "last_touch", retry: bool = False) -> None:
     """A press on another touch device (the top screen, the trackpad's
-    clicks) is noted in STATE.attr: Desktop Mode counts it as a touch for
-    showing the keyboard; Game Mode as a click for the Trackpad app's. With
+    clicks) is noted in STATE.attr (several, space-separated): Desktop Mode
+    counts it as a touch for showing a keyboard and as a click on the top
+    screen; Game Mode as a click for the Trackpad app's. With
     retry, a device not there yet (barry_launcher_inputd makes the trackpad's)
     is looked for again, and again after it goes away."""
     while True:
@@ -1752,7 +1794,9 @@ def watch_presses_once(name: str, codes: tuple, attr: str) -> bool:
                         return True
                     _, _, etype, code, value = INPUT_EVENT.unpack(data)
                     if etype == EV_KEY and code in codes and value == 1:
-                        setattr(STATE, attr, time.monotonic())
+                        now = time.monotonic()
+                        for a in attr.split():
+                            setattr(STATE, a, now)
                     if TIMING and etype == EV_KEY and code in codes and value in (0, 1):
                         log(f"timing: {name} {'press' if value else 'release'} {time.monotonic():.3f}")
         except OSError:
@@ -1773,7 +1817,8 @@ def start_desktop() -> None:
     STATE.im = barry_desktop.InputMethod(on_im_event)
     threading.Thread(target=STATE.im.run, daemon=True).start()
     for name, codes in TOP_PRESS_DEVICES:
-        threading.Thread(target=watch_presses, args=(name, codes), daemon=True).start()
+        threading.Thread(target=watch_presses, args=(name, codes, "last_touch last_top_click", True),
+                         daemon=True).start()
 
 
 def main() -> None:

@@ -93,6 +93,19 @@ function keepOff(w, o) {
     const t = elsewhere(o);
     if (t) workspace.sendClientToScreen(w, t);
 }
+// Barry's windows fill the bottom output without going full screen: while
+// the active window is on another output (a text field on the top screen
+// that calls the keyboard), KWin keeps a full-screen window above "keep
+// above" ones, and the home screen would cover the keyboard. The app the
+// keyboard is up for (inset) ends above it.
+var insetFor = null, insetHeight = 0;
+function fill(w, o) {
+    const g = o.geometry, h = w === insetFor ? insetHeight : 0;
+    if (w.fullScreen) w.fullScreen = false;
+    const f = w.frameGeometry;
+    if (f.x !== g.x || f.y !== g.y || f.width !== g.width || f.height !== g.height - h)
+        w.frameGeometry = {x: g.x, y: g.y, width: g.width, height: g.height - h};
+}
 function place(w) {
     const o = bottom();
     if (!o || !barryOn) return;
@@ -118,7 +131,7 @@ function place(w) {
             w.frameGeometry = {x: g.x, y: g.y + g.height - h, width: g.width, height: h};
         return;
     }
-    if (!w.fullScreen) w.fullScreen = true;
+    fill(w, o);
 }
 function watch(w) {
     place(w);
@@ -127,8 +140,9 @@ function watch(w) {
     // the keyboard changes height: put Barry's windows back.
     w.outputChanged.connect(function () { place(w); });
     w.frameGeometryChanged.connect(function () {
-        // The keyboard changes height; other windows may be dragged over.
-        if (w.caption === KEYBOARD || !ours(w)) place(w);
+        // The keyboard changes height, other windows may be dragged over,
+        // and Barry's own may resize themselves.
+        place(w);
     });
     w.interactiveMoveResizeFinished.connect(function () { place(w); });
 }
@@ -137,7 +151,7 @@ workspace.windowAdded.connect(function (w) {
     watch(w);
     // A new Barry app or tool goes on top. KWin would stack a window it may
     // not activate (the trackpad and keyboards refuse focus) under the
-    // active one, which here is the full-screen home screen.
+    // active one, which here is the home screen.
     if (barry(w) && w.caption !== "Barry Launcher" && w.caption !== KEYBOARD)
         workspace.raiseWindow(w);
     w.captionChanged.connect(function () {
@@ -167,19 +181,19 @@ function activate(M) {
 }
 // The keyboard is up or down: the active Barry app on the bottom output
 // shrinks to the space above the keyboard window (its height as KWin has
-// it, whatever scale the keyboard drew at), or goes back to full screen.
+// it, whatever scale the keyboard drew at), or fills the output again.
 function inset(up) {
     const o = bottom(), w = workspace.activeWindow;
     let height = 0;
     for (const k of workspace.windowList()) if (k.caption === KEYBOARD && k.output === o) height = k.frameGeometry.height;
-    if (!o || !w || !barry(w) || w.caption === KEYBOARD || w.caption === "Barry Launcher" || w.output !== o) return;
-    const g = o.geometry;
-    if (up && height > 0) {
-        w.fullScreen = false;
-        w.frameGeometry = {x: g.x, y: g.y, width: g.width, height: g.height - height};
-    } else {
-        w.fullScreen = true;
-    }
+    if (!o) return;
+    const fits = w && barry(w) && w.caption !== KEYBOARD && w.caption !== "Barry Launcher" && w.output === o;
+    const was = insetFor;
+    insetFor = up && height > 0 && fits ? w : null;
+    insetHeight = height;
+    if (fits) fill(w, o);
+    // The app it was up for (no longer the active one, say) fills the output again.
+    if (was && was !== insetFor && workspace.windowList().indexOf(was) >= 0) fill(was, o);
 }
 registerShortcut(%(shortcut)s, "Barry Launcher: run queued requests", "", function () {
     callDBus(%(service)s, %(path)s, %(service)s, "Take", function (queued) {

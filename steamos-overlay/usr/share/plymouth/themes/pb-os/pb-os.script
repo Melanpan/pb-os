@@ -103,16 +103,29 @@ loop[87] = 0;
 loop[88] = 0;
 loop[89] = 0;
 
-top = Math.Int(Window.GetY() + Window.GetHeight() / 2 - 256);
 cat = Sprite(tiles[0]);
-cat.SetPosition(Math.Int(Window.GetX() + Window.GetWidth() / 2 - 195), top, 1);
 words = Sprite(Image("words.png"));
-words.SetPosition(Math.Int(Window.GetX() + Window.GetWidth() / 2 - 135), top + 442, 1);
+
+# Centered on Plymouth's window, the largest screen with the smaller ones
+# centered inside it. A screen that shows up after the script started
+# (the Thor's second panel, some boots) changes that window, so check
+# every frame and center again.
+fun place ()
+  {
+    global.win_w = Window.GetWidth();
+    global.win_h = Window.GetHeight();
+    top = Math.Int(Window.GetY() + win_h / 2 - 256);
+    cat.SetPosition(Math.Int(Window.GetX() + win_w / 2 - 195), top, 1);
+    words.SetPosition(Math.Int(Window.GetX() + win_w / 2 - 135), top + 442, 1);
+  }
+place();
 
 tick = 0;
 shown = 0;
 fun refresh_callback ()
   {
+    if (Window.GetWidth() != win_w || Window.GetHeight() != win_h)
+      place();
     if (tick < 0)
       i = intro[tick];
     else
