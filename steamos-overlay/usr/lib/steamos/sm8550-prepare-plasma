@@ -167,6 +167,29 @@ seed_thor_layout() {
 }
 seed_thor_layout
 
+# AYN Thor: the taskbar on the top screen. Plasma ties a panel to a screen
+# number when it first builds the desktop, and keeps it there: a Thor's one
+# taskbar has ended up on the bottom screen, under Barry (once on a card's
+# first Desktop start, and on Thors whose saved screen order had the bottom
+# one first). Plasma's scripts cannot move a panel to another screen, so its
+# layout file gets it before Plasma starts: a lone taskbar saved on another
+# screen goes to screen 0, the top one (the shipped layout makes it first).
+# Layouts with no taskbar or several are left alone, as is a running
+# Plasma's (it saves its own when it quits).
+thor_taskbar_on_top() {
+  local rc="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc" panels id
+  grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null || return 0
+  [[ -f "$rc" ]] || return 0
+  pgrep -u "$(id -u)" -x plasmashell >/dev/null && return 0
+  panels="$(awk '/^\[Containments\]\[[0-9]+\]$/ { split($0, a, /[][]/); id = a[4] }
+    $0 == "plugin=org.kde.panel" { print id }' "$rc")"
+  [[ -n "$panels" && "$panels" != *$'\n'* ]] || return 0
+  id="$panels"
+  [[ "$(kreadconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$id" --key lastScreen)" != 0 ]] || return 0
+  kwriteconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$id" --key lastScreen 0
+}
+thor_taskbar_on_top
+
 # The SM8550 image carries Barry Launcher for the AYN Thor's bottom screen.
 # Elsewhere its menu entry and its virtual keyboard (Settings > Virtual
 # Keyboard) are hidden by a user copy marked Hidden, removed again on a Thor.
