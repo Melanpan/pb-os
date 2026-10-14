@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """sm8550-charge-control — charge limit, bypass charging and slow charging on
-the Retroid Pocket 6, Nova, AYN Thor and KONKR Pocket FIT.
+the Retroid Pocket 6 and Nova, the AYN Thor, Odin 2 and Odin 2 Portal, and
+the KONKR Pocket FIT.
 
 Two ways to hold the battery below full, picked by what the kernel offers:
 
-  OEM switches (Retroid Pocket 6, Nova, AYN Thor): their battery firmware
-  (the devices' own ADSP builds) has two switches that Retroid's and AYN's
-  Android driver calls usb_charge_now and limit_capacity_charge; kernel
+  OEM switches (Retroid Pocket 6, Nova, AYN Thor, Odin 2, Odin 2 Portal): their
+  battery firmware (the devices' own ADSP builds) has two switches that
+  Retroid's and AYN's Android driver calls usb_charge_now and
+  limit_capacity_charge; kernel
   patch 0545 exposes them on the battery manager device as
     retroid_charge_now      0 = run from USB power and leave the battery
                             alone ("charge separation", bypass), 1 = charge
     retroid_limit_capacity  1 = the firmware stops charging at 80 %
+
+  The AYN Odin 2's and Odin 2 Portal's firmware (stock 1.0.0.387 and
+  20250312, patch 0551) only has the first switch: their 80 % limit is a hold
+  at 80 % done here, like "hold".
 
   Charge thresholds (KONKR Pocket FIT): the standard power-supply pair
   charge_control_start_threshold / charge_control_end_threshold, which its
@@ -239,6 +245,8 @@ class Oem:
 
     def __init__(self, dev: str):
         self.dev = dev
+        # The Odin 2 and Portal have no firmware limit (no retroid_limit_capacity).
+        self.has_limit = os.path.exists(f"{dev}/retroid_limit_capacity")
         self.charge = None       # last values written (None = write again)
         self.limit = None
         self.wanted_charge = 1   # hysteresis memory for hold/bypass
@@ -251,12 +259,13 @@ class Oem:
         mode = s["mode"]
         if mode == "normal":
             return 1, 0
-        if mode == "limit80":
+        if mode == "limit80" and self.has_limit:
             return 1, 1
         if cap is None:
             return 1, 0
-        if mode == "hold":
-            stop, resume = s["hold_at"], s["hold_at"] - HOLD_GAP
+        if mode in ("hold", "limit80"):
+            at = s["hold_at"] if mode == "hold" else LIMIT
+            stop, resume = at, at - HOLD_GAP
             if cap >= stop:
                 self.wanted_charge = 0
             elif cap <= resume:
@@ -271,7 +280,7 @@ class Oem:
     def apply(self, s: dict, cap: int | None, plugged: bool, force: bool) -> bool:
         """Returns whether the battery is held below full on purpose."""
         charge, limit = self.want(s, cap)
-        if force or limit != self.limit:
+        if self.has_limit and (force or limit != self.limit):
             if wr(f"{self.dev}/retroid_limit_capacity", limit):
                 if limit != self.limit:
                     log(f"80 % limit {'on' if limit else 'off'} at {cap} %")
@@ -285,7 +294,8 @@ class Oem:
             charge == 0 or (limit == 1 and cap >= LIMIT - 1))
 
     def restore(self) -> None:
-        wr(f"{self.dev}/retroid_limit_capacity", 0)
+        if self.has_limit:
+            wr(f"{self.dev}/retroid_limit_capacity", 0)
         wr(f"{self.dev}/retroid_charge_now", 1)
 
 
@@ -459,7 +469,7 @@ def main() -> int:
             break
         time.sleep(1)
     if control is None:
-        log("no charge controls (kernel patch 0545 with Retroid or Thor firmware, or charge thresholds): nothing to do")
+        log("no charge controls (kernel patch 0545 with Retroid, Thor, Odin 2 or Portal firmware, or charge thresholds): nothing to do")
         return 0
     current = CurrentLimit() if has_current_limit() else None
     if current is None:

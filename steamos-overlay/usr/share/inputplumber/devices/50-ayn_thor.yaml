@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
 # AYN Thor rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
-# Same as 02-ayn-odin.yaml but with the Thor's Nintendo face buttons
+# Same as 50-ayn_odin2.yaml (without the M1/M2 back buttons), with the Thor's Nintendo face buttons
 # (ayn_mcu_nintendo: the printed A is Steam's A).
 #
 # Installed over InputPlumber's own 50-ayn_thor.yaml so the Thor has one

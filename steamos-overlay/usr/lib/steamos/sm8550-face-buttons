@@ -4,10 +4,11 @@
 #
 #   nintendo   A on the right, B at the bottom, X on top, Y on the left: the
 #              button in each place is Steam's button of that letter. The
-#              default on the AYN Thor and Retroid Pocket 6 / Nova, which are
-#              printed that way.
+#              default on the AYN Thor and Odin 2 and the Retroid Pocket 6 /
+#              Nova, which are printed that way.
 #   xbox       A at the bottom, B on the right, Y on top, X on the left. The
-#              default on the KONKR Pocket FIT.
+#              default on the KONKR Pocket FIT and the AYN Odin 2 Mini and
+#              Odin 2 Portal.
 #
 # The choice lives in STATE and is written into the device's InputPlumber
 # config as the capability map id(s). sm8550-face-buttons.service writes it
@@ -29,6 +30,16 @@ FILE= PAIRS= DEFAULT=
 case " $compat " in
   *"ayn,thor"*)
     FILE=$DEV/50-ayn_thor.yaml; PAIRS="ayn_mcu_nintendo:ayn_mcu_thor"; DEFAULT=nintendo ;;
+  # Same rsinput button table as the Thor; the sed covers both sources (pad,
+  # M1/M2). Not the Odin 2 Portal ("ayn,odin2portal"), printed Xbox-style.
+  *"ayn,odin2 "*)
+    FILE=$DEV/50-ayn_odin2.yaml; PAIRS="ayn_mcu_nintendo:ayn_mcu_thor"; DEFAULT=nintendo ;;
+  # The Odin 2's pad and M1/M2, printed Xbox-style: positions by default.
+  *"ayn,odin2portal"*)
+    FILE=$DEV/50-ayn_odin2portal.yaml; PAIRS="ayn_mcu_nintendo:ayn_mcu_thor"; DEFAULT=xbox ;;
+  # Also printed Xbox-style; no back buttons, the pad is the only source.
+  *"ayn,odin2mini"*)
+    FILE=$DEV/50-ayn_odin2_mini.yaml; PAIRS="ayn_mcu_nintendo:ayn_mcu_thor"; DEFAULT=xbox ;;
   *"retroidpocket,rpnova"*)
     FILE=$DEV/50-retroid_pocket_nova.yaml; PAIRS="rsinput_nintendo:rsinput1"; DEFAULT=nintendo ;;
   *"retroidpocket,rp6"*)

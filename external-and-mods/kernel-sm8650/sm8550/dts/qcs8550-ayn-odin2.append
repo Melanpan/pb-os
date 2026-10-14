@@ -1,0 +1,9 @@
+
+/*
+ * From Armada (armada-os/armada@8675d4090): with its IO supply cut in sleep
+ * the panel draws more than 1 W, so l12b stays on. Together with the SN3112
+ * suspend fix (patches/0550) Armada measured 1.5 W asleep before, 0.2 W after.
+ */
+&vreg_l12b_1p8 {
+	regulator-always-on;
+};

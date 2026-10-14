@@ -20,9 +20,12 @@ LED_SAVE=/run/sm8550-sleep-leds
 NULL=sm8550-sleep
 
 leds() {
-    # The stick LEDs: multicolor groups (the RGB rings). The charge LED is left alone.
+    # The stick LEDs: multicolor groups (the RGB rings; on the AYN Odin 2
+    # PWM multicolor LEDs on two SN3112s). The charge LED is left alone.
     for d in /sys/class/leds/*; do
-        [ "$(basename "$(readlink "$d/device/driver" 2>/dev/null)")" = leds_group_multicolor ] && echo "$d"
+        case "$(basename "$(readlink "$d/device/driver" 2>/dev/null)")" in
+            leds_group_multicolor|leds_pwm_multicolor) echo "$d" ;;
+        esac
     done
 }
 

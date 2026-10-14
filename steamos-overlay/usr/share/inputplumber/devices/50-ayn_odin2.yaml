@@ -1,5 +1,13 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# SM8550 rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
+# AYN Odin 2 rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic),
+# with the Odin 2's Nintendo face buttons (ayn_mcu_nintendo: the printed A is
+# Steam's A), like the Thor. The back buttons M1/M2 are their own gpio-keys
+# device (BTN_Z/BTN_C); ayn_mcu* map them to the left/right paddles.
+#
+# Installed over InputPlumber's own 50-ayn_odin2.yaml so the Odin 2 has one
+# config. Matched by model, the Odin 2 only: the stock file also matched the
+# Odin 2 Portal, which is printed with Xbox positions and has its own
+# 50-ayn_odin2portal.yaml.
 #
 # Do not list USB/BT as ignore sources: deck-uhid is USB (VID 28de) and
 # matching it as a source restarts the composite in a loop (cursor, no Steam).
@@ -14,16 +22,6 @@ matches:
       attributes:
         - name: model
           value: AYN Odin 2
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: AYN Odin 2 Mini
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: AYN Odin 2 Portal
 
 single_source: false
 
@@ -32,7 +30,14 @@ source_devices:
     evdev:
       phys_path: rsinput-gamepad/input0
       handler: event*
-    capability_map_id: ayn_mcu
+    capability_map_id: ayn_mcu_nintendo
+    passthrough: false
+
+  - group: gamepad
+    evdev:
+      name: gpio-keys-paddles
+      handler: event*
+    capability_map_id: ayn_mcu_nintendo
     passthrough: false
 
 options:

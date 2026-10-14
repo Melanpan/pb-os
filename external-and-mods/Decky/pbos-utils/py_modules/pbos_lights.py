@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""PB-OS Utils' light engine: the Retroid Pocket 6 / Nova stick lights and
-the shared lighting definitions.
+"""PB-OS Utils' light engine: the Retroid Pocket 6 / Nova and AYN Odin 2 /
+Odin 2 Portal stick lights and the shared lighting definitions.
 
 Decky's plugin loader is an x86-64 program run by box64 here, so the plugin
 backend's Python is emulated: Breathing cost 46 % of a core there and under
@@ -43,9 +43,22 @@ def indicator_active() -> bool:
     """INDICATOR holds its owner's PID; a leftover from a crash counts for nothing."""
     pid = rd(INDICATOR)
     return pid.isdigit() and os.path.exists(f"/proc/{pid}")
-# Retroid Pocket 6 / Nova: four RGB groups around each stick
+LEDS = "/sys/class/leds"
+# Retroid Pocket 6 / Nova, AYN Odin 2 Portal: four RGB groups around each stick
 # (leds-group-multicolor, functions l1..l4 and r1..r4).
-MULTICOLOR = "/sys/class/leds/rgb:[lr][1-4]"
+MULTICOLOR = "rgb:[lr][1-4]"
+# AYN Odin 2: per stick a ring and a strip on the grip's side, each one RGB
+# LED (pwm-leds-multicolor on two SN3112s), named by their DT labels.
+ODIN2_ZONES = ("left-joystick", "left-side", "right-joystick", "right-side")
+
+
+def led_paths() -> dict[str, str]:
+    """The stick LEDs found, by zone name (l1..r4, or the Odin 2's labels)."""
+    found = {p.rsplit(":", 1)[-1]: p for p in glob.glob(f"{LEDS}/{MULTICOLOR}")}
+    for name in ODIN2_ZONES:
+        if os.path.exists(f"{LEDS}/{name}/multi_intensity"):
+            found[name] = f"{LEDS}/{name}"
+    return found
 
 
 def log(msg: str) -> None:
@@ -115,7 +128,7 @@ def lights_kind() -> str:
     # ExecCondition).
     if re.search(r"KONKR Pocket FIT|AYANEO Pocket S2", rd("/sys/firmware/devicetree/base/model")):
         return "pbosd"
-    if glob.glob(MULTICOLOR):
+    if led_paths():
         return "multicolor"
     return ""
 
@@ -177,7 +190,11 @@ AUDIO_MODES = {"audio": "pulse", "spectrum": "spectrum"}
 
 
 def multicolor_effects(audio: bool) -> list[dict[str, Any]]:
-    return EFFECTS["multicolor"] + (AUDIO_EFFECTS if audio else [])
+    effects = EFFECTS["multicolor"] + (AUDIO_EFFECTS if audio else [])
+    if len(led_paths()) < 6:
+        # Two zones per stick (Odin 2): nothing to turn either way round.
+        effects = [{**e, "turns": False} for e in effects]
+    return effects
 
 
 def multicolor_lights() -> dict[str, Any]:
@@ -193,7 +210,7 @@ def multicolor_lights() -> dict[str, Any]:
             "brightness": max(0, min(255, int(st.get("brightness", 160)))),
             "speed": max(1, min(10, int(st.get("speed", 5)))),
             "reverse_left": bool(st.get("reverse_left", False)), "reverse_right": bool(st.get("reverse_right", False)),
-            "available": bool(glob.glob(MULTICOLOR))}
+            "available": bool(led_paths())}
 
 
 # Each ring clockwise from the top, left stick then right, by device model.
@@ -204,6 +221,11 @@ def multicolor_lights() -> dict[str, Any]:
 RING_ORDERS = {
     "Retroid Pocket Nova": ("l3", "l2", "l1", "l4", "r4", "r1", "r2", "r3"),
     "Retroid Pocket 6": ("l2", "l1", "l4", "l3", "r3", "r2", "r1", "r4"),
+    # Same HTR3212 groups as the Retroids (ROCKNIX DT); the Nova's order until
+    # someone maps it by eye. Before "AYN Odin 2", which its model starts with.
+    "AYN Odin 2 Portal": ("l3", "l2", "l1", "l4", "r4", "r1", "r2", "r3"),
+    # Two places per stick: the ring (place 0) and the side strip.
+    "AYN Odin 2": ODIN2_ZONES,
 }
 RING_ORDER = RING_ORDERS["Retroid Pocket Nova"]
 
@@ -216,11 +238,11 @@ def ring_order() -> tuple[str, ...]:
 def zones() -> list[str]:
     """The stick LEDs in ring order (ring_order()), so Spin and Rainbow Wave
     go round each stick, both sticks in step."""
-    found = {p.rsplit(":", 1)[-1]: p for p in glob.glob(MULTICOLOR)}
+    found = led_paths()
     order = ring_order()
     if set(found) == set(order):
         return [found[z] for z in order]
-    return sorted(found.values(), key=lambda p: (p[-2], p[-1]))
+    return [found[z] for z in sorted(found)]
 
 
 def lights_signature() -> tuple[int, ...]:
@@ -250,6 +272,9 @@ METER_FILL = ((2 / 3, 1.0), (1 / 3, 2 / 3), (0.0, 1 / 3), (1 / 3, 2 / 3))
 # each place round a ring shows (0 top, clockwise), per stick: bass at the
 # bottom, treble at the top, low mids on the outer side, high mids inner.
 SPECTRUM_PLACES = ((3, 2, 0, 1), (3, 1, 0, 2))
+# With two places per stick (AYN Odin 2): bass in the ring, high mids (a
+# snare's snap) on the side strip.
+SPECTRUM_PAIR = (0, 2)
 
 
 def even_hue(h: float) -> tuple[float, float, float]:
@@ -362,7 +387,8 @@ def frame(effect: str, t: float, rgb: tuple[int, int, int], speed: int, n: int,
                 out.append(scale(col if f else rgb, bg + (1 - bg) * f))
                 continue
             else:                                 # each stick its side's four bands
-                c = side * 4 + SPECTRUM_PLACES[side][i % ring] if len(lv) >= 8 else -1
+                band = SPECTRUM_PLACES[side][i % ring] if ring == 4 else SPECTRUM_PAIR[i % ring % 2]
+                c = side * 4 + band if len(lv) >= 8 else -1
             v_level, a = (lv[c], ac[c]) if c >= 0 else (0.0, 0.0)
             bg = max(floor, AUDIO_BACKGROUND)
             v = bg + (1 - bg) * max(AUDIO_LEVEL_SHARE * v_level, a)
@@ -713,9 +739,10 @@ class AudioMeter:
 
 
 class Animator:
-    """Drives the Retroid Pocket 6 / Nova stick LEDs. Static and off are
-    written once; effects run in a thread at FPS, writing only zones whose
-    color changed (each write is an I2C transfer to the LED driver)."""
+    """Drives the Retroid Pocket 6 / Nova and AYN Odin 2 / Odin 2 Portal stick
+    LEDs. Static and off are written once; effects run in a thread at FPS,
+    writing only zones whose color changed (each write is an I2C transfer to
+    the LED driver)."""
 
     # Measured on the Nova (Spin, 20 s each): 20 and 30 fps both cost ~1.7 %
     # of one core, 60 fps 3.7 %; a frame's writes take under 1 ms. Battery

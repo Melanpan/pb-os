@@ -135,8 +135,6 @@ install_odin_composite() {
     "${R}/usr/lib/systemd/system/inputplumber.service.d" \
     "${R}/etc/systemd/system/multi-user.target.wants"
   local f
-  install -m0644 "${OVL}/etc/inputplumber/devices.d/02-ayn-odin.yaml" \
-    "${R}/etc/inputplumber/devices.d/02-ayn-odin.yaml"
   # ayn_mcu_thor is the Thor's "Xbox positions" map (sm8550-face-buttons);
   # the RP6 and Nova use InputPlumber's own rsinput1 for that.
   for f in ayn_mcu.yaml ayn_mcu_nintendo.yaml ayn_mcu_thor.yaml rsinput_nintendo.yaml; do
@@ -155,6 +153,20 @@ install_odin_composite() {
   [[ -f "${dev}/50-ayn_thor.yaml" ]] || die "InputPlumber ${IP_VER} has no 50-ayn_thor.yaml"
   install -m0644 "${OVL}/usr/share/inputplumber/devices/50-ayn_thor.yaml" \
     "${dev}/50-ayn_thor.yaml"
+  # AYN Odin 2: the same, matched by model so the stock file's Odin 2 Portal
+  # match (Xbox-printed) goes with it.
+  [[ -f "${dev}/50-ayn_odin2.yaml" ]] || die "InputPlumber ${IP_VER} has no 50-ayn_odin2.yaml"
+  install -m0644 "${OVL}/usr/share/inputplumber/devices/50-ayn_odin2.yaml" \
+    "${dev}/50-ayn_odin2.yaml"
+  # AYN Odin 2 Portal: its own config (Xbox positions), as InputPlumber has
+  # none once the stock Odin 2 file is replaced.
+  install -m0644 "${OVL}/usr/share/inputplumber/devices/50-ayn_odin2portal.yaml" \
+    "${dev}/50-ayn_odin2portal.yaml"
+  # AYN Odin 2 Mini: ours replaces the stock one (positional map like the
+  # Portal's, Deck target).
+  [[ -f "${dev}/50-ayn_odin2_mini.yaml" ]] || die "InputPlumber ${IP_VER} has no 50-ayn_odin2_mini.yaml"
+  install -m0644 "${OVL}/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml" \
+    "${dev}/50-ayn_odin2_mini.yaml"
   # Retroid Pocket 6 and Nova: InputPlumber's own profiles with the Nintendo
   # face-button map (the printed A is Steam's A).
   for f in 50-retroid_pocket6.yaml 50-retroid_pocket_nova.yaml; do
@@ -164,7 +176,8 @@ install_odin_composite() {
     sed -i 's/capability_map_id: rsinput1$/capability_map_id: rsinput_nintendo/' "${dev}/${f}"
   done
   # Earlier builds' second copies of these, in /etc and its overlay upper.
-  for f in 02-ayn-thor.yaml 50-ayn_thor.yaml 50-retroid_pocket6.yaml 50-retroid_pocket_nova.yaml; do
+  for f in 02-ayn-odin.yaml 02-ayn-thor.yaml 50-ayn_thor.yaml 50-ayn_odin2.yaml \
+      50-ayn_odin2_mini.yaml 50-ayn_odin2portal.yaml 50-retroid_pocket6.yaml 50-retroid_pocket_nova.yaml; do
     rm -f "${R}/etc/inputplumber/devices.d/${f}" \
       "${R}/var/lib/overlays/etc/upper/inputplumber/devices.d/${f}"
   done
@@ -190,8 +203,8 @@ install_odin_composite() {
     "${R}/usr/lib/systemd/system/sm8550-face-buttons.service"
   ln -sfn /usr/lib/systemd/system/sm8550-face-buttons.service \
     "${R}/usr/lib/systemd/system/multi-user.target.wants/sm8550-face-buttons.service"
-  # Keep 02-ayn-odin.yaml (deck-uhid + keyboard). Drop Ubuntu-named
-  # composites and any leftover mouse composite from the tarball.
+  # Drop Ubuntu-named composites and any leftover mouse composite from the
+  # tarball.
   rm -f "${R}/etc/inputplumber/devices.d/"*mouse* \
     "${R}/etc/inputplumber/devices.d/02-ayn-controller.yaml" \
     "${R}/etc/inputplumber/devices.d/01-ayn-controller.yaml"

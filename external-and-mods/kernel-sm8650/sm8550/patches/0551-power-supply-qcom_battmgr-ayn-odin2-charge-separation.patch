@@ -1,0 +1,102 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] power: supply: qcom_battmgr: AYN Odin 2 and Portal charge separation
+
+AYN added charge separation to the Odin 2 in stock firmware 1.0.0.387
+(2025-09): its qti_battery_charger exposes usb_charge_now and sends it as
+USB property 0x0e (0 = run from USB without charging, 1 = charge), not
+the 0x0f the Retroid handhelds and the Thor use. The Odin 2 Portal's stock
+firmware (20250312) has the same switch on 0x0f. Neither has a capacity
+limit property. Only those ADSP builds have the handler (log string
+"usb_set_power_supply_properties::%s charging"); PB-OS ships them
+(firmware/qcom/sm8550/ayn/odin2, …/odin2portal).
+
+Keep each device's property numbers next to the cached values and offer
+retroid_charge_now on the Odin 2 and Portal, without
+retroid_limit_capacity. Not yet tested on either.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -344,6 +344,9 @@
+ 	/* Retroid OEM USB properties (see qcom_battmgr_retroid_attrs); -1 = never set. */
+ 	int retroid_charge_now;
+ 	int retroid_limit_capacity;
++	/* The firmware's property numbers; 0 = the firmware has no such control. */
++	u32 retroid_charge_now_prop;
++	u32 retroid_limit_capacity_prop;
+ 
+ 	/*
+ 	 * @lock is used to prevent concurrent power supply requests to the
+@@ -1739,6 +1742,15 @@
+ #define RETROID_USB_CHARGE_NOW		0x0f
+ #define RETROID_USB_LIMIT_CAPACITY	0x10
+ 
++/*
++ * AYN's Odin 2 firmware (stock 1.0.0.387, 2025-09) numbers charge separation
++ * 0x0e (its qti_battery_charger usb_charge_now) and has no capacity limit.
++ * Only that ADSP build acts on it; the older Odin 2 ADSPs ignore the request.
++ * The Odin 2 Portal's (stock 20250312) uses the Retroid number, 0x0f, also
++ * without a capacity limit; ROCKNIX's older Portal ADSP ignores it.
++ */
++#define ODIN2_USB_CHARGE_NOW		0x0e
++
+ static ssize_t qcom_battmgr_retroid_store(struct device *dev, const char *buf,
+ 					  size_t count, int property, int *cache)
+ {
+@@ -1777,7 +1789,8 @@
+ {
+ 	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);
+ 
+-	return qcom_battmgr_retroid_store(dev, buf, count, RETROID_USB_CHARGE_NOW,
++	return qcom_battmgr_retroid_store(dev, buf, count,
++					  battmgr->retroid_charge_now_prop,
+ 					  &battmgr->retroid_charge_now);
+ }
+ static DEVICE_ATTR_RW(retroid_charge_now);
+@@ -1796,7 +1809,8 @@
+ {
+ 	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);
+ 
+-	return qcom_battmgr_retroid_store(dev, buf, count, RETROID_USB_LIMIT_CAPACITY,
++	return qcom_battmgr_retroid_store(dev, buf, count,
++					  battmgr->retroid_limit_capacity_prop,
+ 					  &battmgr->retroid_limit_capacity);
+ }
+ static DEVICE_ATTR_RW(retroid_limit_capacity);
+@@ -1807,8 +1821,21 @@
+ 	NULL
+ };
+ 
++static umode_t qcom_battmgr_retroid_is_visible(struct kobject *kobj,
++					       struct attribute *attr, int n)
++{
++	struct qcom_battmgr *battmgr = dev_get_drvdata(kobj_to_dev(kobj));
++
++	if (attr == &dev_attr_retroid_limit_capacity.attr &&
++	    !battmgr->retroid_limit_capacity_prop)
++		return 0;
++
++	return attr->mode;
++}
++
+ static const struct attribute_group qcom_battmgr_retroid_group = {
+ 	.attrs = qcom_battmgr_retroid_attrs,
++	.is_visible = qcom_battmgr_retroid_is_visible,
+ };
+ 
+ static char *qcom_battmgr_battery[] = { "battery" };
+@@ -1926,6 +1953,15 @@
+ 	if (of_machine_is_compatible("retroidpocket,rp6") ||
+ 	    of_machine_is_compatible("retroidpocket,rpnova") ||
+ 	    of_machine_is_compatible("ayn,thor")) {
++		battmgr->retroid_charge_now_prop = RETROID_USB_CHARGE_NOW;
++		battmgr->retroid_limit_capacity_prop = RETROID_USB_LIMIT_CAPACITY;
++	} else if (of_machine_is_compatible("ayn,odin2")) {
++		battmgr->retroid_charge_now_prop = ODIN2_USB_CHARGE_NOW;
++	} else if (of_machine_is_compatible("ayn,odin2portal")) {
++		battmgr->retroid_charge_now_prop = RETROID_USB_CHARGE_NOW;
++	}
++
++	if (battmgr->retroid_charge_now_prop) {
+ 		battmgr->retroid_charge_now = -1;
+ 		battmgr->retroid_limit_capacity = -1;
+ 		dev_set_drvdata(dev, battmgr);

@@ -2,7 +2,8 @@
 # Kernel for SteamOS ARM on Snapdragon handhelds:
 #   SOC=sm8650 (default)  Snapdragon 8 Gen 3 / G3 Gen 3: KONKR Pocket FIT,
 #                         AYANEO Pocket S2 (same ROCKNIX dtsi)
-#   SOC=sm8550            Snapdragon 8 Gen 2: Retroid Pocket 6 and Nova, AYN Thor
+#   SOC=sm8550            Snapdragon 8 Gen 2: Retroid Pocket 6 and Nova, AYN Thor,
+#                         Odin 2, Odin 2 Mini and Odin 2 Portal
 #   SOC=all               one kernel for all of them (the single pb-os image):
 #                         both SoCs' ROCKNIX patches, DTS and config, both
 #                         port patch sets, every DTB
@@ -49,10 +50,11 @@ TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 # Port patches, DTS appends and the extra config fragment are per SoC: the
 # SM8650 ones are Pocket FIT drivers (KONKR MCU, AR14 panel modes).
 DTBS_SM8650="sm8650-ayaneo-ps2 sm8650-konkr-pf"
-# ABL boots the DTB whose model matches "Set device model": "AYN Thor",
-# "Retroid Pocket 6", "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova"
-# (ROCKNIX's Nova DTS is the RP6 one with its own panel, touch and sticks).
-DTBS_SM8550="qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova"
+# ABL boots the DTB whose model matches "Set device model": "AYN Odin 2",
+# "AYN Odin 2 Mini", "AYN Odin 2 Portal", "AYN Thor", "Retroid Pocket 6",
+# "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova" (ROCKNIX's Nova DTS is
+# the RP6 one with its own panel, touch and sticks).
+DTBS_SM8550="qcs8550-ayn-odin2 qcs8550-ayn-odin2mini qcs8550-ayn-odin2portal qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova"
 case "$SOC" in
   sm8650) SOCS=(SM8650); PORT_DIRS=("${HERE}"); DTBS="${DTBS:-$DTBS_SM8650}" ;;
   sm8550) SOCS=(SM8550); PORT_DIRS=("${HERE}/sm8550"); DTBS="${DTBS:-$DTBS_SM8550}" ;;

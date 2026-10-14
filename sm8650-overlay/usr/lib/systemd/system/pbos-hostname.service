@@ -1,5 +1,5 @@
 [Unit]
-Description=Name the device after its model (rp6, rpnova, thor, kpf, pockets2)
+Description=Name the device after its model (rp6, rpnova, thor, odin2, odin2mini, odin2portal, kpf, pockets2)
 # Early, before anything announces the name: DHCP, Avahi, Tailscale.
 DefaultDependencies=no
 After=etc.mount local-fs.target

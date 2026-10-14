@@ -67,7 +67,8 @@ if a.rp6_bridge and (a.soc != 'sm8550' or not a.release):
 # Device models (DTB `model`) each package may install on: the one image
 # (SOC all) takes every device; earlier releases had one image per SoC.
 SOC_DEVICES = {'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
-               'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor']}
+               'sm8550': ['Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova', 'AYN Thor',
+                          'AYN Odin 2', 'AYN Odin 2 Mini', 'AYN Odin 2 Portal']}
 DEVICES = SOC_DEVICES['sm8550'] + SOC_DEVICES['sm8650'] if a.soc == 'all' else SOC_DEVICES[a.soc]
 root = Path(a.rootfs).resolve()
 stamped = root / 'usr/share/pb-os/version'

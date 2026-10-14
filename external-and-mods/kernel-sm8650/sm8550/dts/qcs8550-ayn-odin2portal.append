@@ -1,0 +1,38 @@
+
+/*
+ * From Armada (armada-os/armada, packages/kernel/dts/
+ * qcs8550-ayn-odin2portal.dts.patch): the Odin 2 Portal has the Odin 2's back
+ * buttons M1/M2 on TLMM GPIO 57/58, which ROCKNIX's Portal DTS leaves out.
+ * Same gpio-keys-paddles device as the Odin 2 (BTN_Z / BTN_C), which the
+ * ayn_mcu* InputPlumber maps take as the left/right paddles.
+ */
+&tlmm {
+	paddle_keys_default: paddle-keys-default-state {
+		pins = "gpio57", "gpio58";
+		function = "gpio";
+		bias-pull-up;
+		drive-strength = <2>;
+	};
+};
+
+/ {
+	gpio-keys-paddles {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&paddle_keys_default>;
+
+		key-paddle-m1 {
+			label = "Back Paddle M1";
+			linux,code = <BTN_Z>;
+			gpios = <&tlmm 57 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+
+		key-paddle-m2 {
+			label = "Back Paddle M2";
+			linux,code = <BTN_C>;
+			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+	};
+};
