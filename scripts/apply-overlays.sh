@@ -710,6 +710,9 @@ remove_thor_bottom_screen() {
     "$R/usr/share/applications/barry_launcher_desktop_switch.desktop" \
     "$R/usr/lib/systemd/user/barry_launcher_desktop.service" \
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/barry_launcher_desktop.service" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness" \
+    "$R/usr/lib/systemd/user/sm8550-thor-desktop-brightness.service" \
+    "$R/usr/lib/systemd/user/plasma-workspace.target.wants/sm8550-thor-desktop-brightness.service" \
     "$R/usr/share/applications/org.barry_launcher.keyboard.desktop"
 }
 if [[ "$SOC" != sm8650 ]]; then
@@ -798,6 +801,14 @@ if [[ "$SOC" != sm8650 ]]; then
   fi
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
     "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
+  # Desktop Mode: Plasma's brightness sliders share Game Mode's per-screen
+  # brightness (sm8550-thor-backlightd).
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness" \
+    "$R/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-thor-desktop-brightness.service" \
+    "$R/usr/lib/systemd/user/sm8550-thor-desktop-brightness.service" 0644
+  ln -sfn ../sm8550-thor-desktop-brightness.service \
+    "$R/usr/lib/systemd/user/plasma-workspace.target.wants/sm8550-thor-desktop-brightness.service"
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-backlightd.service" \
     "$R/usr/lib/systemd/system/sm8550-thor-backlightd.service" 0644
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"

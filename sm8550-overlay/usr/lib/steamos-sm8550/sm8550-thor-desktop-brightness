@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""sm8550-thor-desktop-brightness: AYN Thor, Desktop Mode. Plasma's two
+brightness sliders share each screen's brightness with Game Mode (SCREENS,
+kept by sm8550-thor-backlightd), as each screen has one brightness on AYN's
+Android.
+
+Plasma's PowerDevil lists both panels as "Built-in Screen", each 0..10000:
+the top one (display0) dims in software, the bottom one (display1) goes to
+the bottom panel's backlight, which sm8550-thor-backlightd takes over. When
+Plasma has started, this sets both sliders to SCREENS as Desktop Mode began
+(DESKTOP_START; Plasma first applies its own last levels), says so
+(DESKTOP_READY), and from then on writes the top slider's position to
+DESKTOP_TOP on each change (PowerDevil's BrightnessChanged signal). The
+bottom slider's changes reach the daemon through the panel itself.
+
+Which display is the bottom one is checked, not assumed: setting it must
+show in the bottom panel's brightness (Steam's file there, on the top
+panel's scale while Desktop Mode is up).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+
+import dbus
+import dbus.mainloop.glib
+from gi.repository import GLib
+
+SERVICE = "org.kde.ScreenBrightness"
+PATH = "/org/kde/ScreenBrightness"
+DISPLAY = "org.kde.ScreenBrightness.Display"
+RUN_DIR = "/run/sm8550-thor"
+DESKTOP_START = f"{RUN_DIR}/desktop-start.json"
+DESKTOP_READY = f"{RUN_DIR}/desktop-ready"
+DESKTOP_TOP = f"{RUN_DIR}/desktop-top"
+SCREENS = "/var/lib/steamos-sm8550/thor-screen-brightness.json"
+BOTTOM_FILE = "/sys/class/backlight/ae94000.dsi.0/brightness"
+BOTTOM_MAX = "/sys/class/backlight/ae94000.dsi.0/max_brightness"
+# The daemon's: the top panel's lowest and highest, as on AYN's Android.
+PANEL_MIN, TOP_CAP = 10, 3413
+CHECK_S = 1.0  # how long the bottom panel may take to show a new level
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def read(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().replace("\0", " ").strip()
+    except OSError:
+        return ""
+
+
+def screens() -> dict | None:
+    for path in (DESKTOP_START, SCREENS):
+        try:
+            d = json.loads(read(path))
+            return {k: max(0.0, min(1.0, float(d[k]))) for k in ("top", "bottom")}
+        except (ValueError, TypeError, KeyError):
+            continue
+    return None
+
+
+def write(path: str, text: str) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+class Display:
+    def __init__(self, bus: dbus.SessionBus, name: str) -> None:
+        self.name = name
+        obj = bus.get_object(SERVICE, f"{PATH}/{name}")
+        self.props = dbus.Interface(obj, "org.freedesktop.DBus.Properties")
+        self.iface = dbus.Interface(obj, DISPLAY)
+        self.max = int(self.props.Get(DISPLAY, "MaxBrightness"))
+
+    def set(self, ratio: float) -> None:
+        self.iface.SetBrightness(dbus.Int32(round(ratio * self.max)), dbus.UInt32(0))
+
+
+def bottom_shows(ratio: float) -> bool:
+    """Has the bottom panel's brightness come to ratio of its range?"""
+    try:
+        maximum = int(read(BOTTOM_MAX))
+    except ValueError:
+        return False
+    deadline = time.monotonic() + CHECK_S
+    while time.monotonic() < deadline:
+        words = read(BOTTOM_FILE).split()
+        if words and words[-1].isdigit() and abs(int(words[-1]) - ratio * maximum) <= max(2, maximum / 500):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def setup(bus: dbus.SessionBus) -> None:
+    want = screens()
+    if want is None:
+        log("no brightness to share yet; Plasma's sliders stay as they are")
+        write(DESKTOP_READY, "1\n")
+        return
+    names = [str(n) for n in dbus.Interface(bus.get_object(SERVICE, PATH), "org.freedesktop.DBus.Properties")
+             .Get(SERVICE, "DisplaysDBusNames")]
+    displays = [Display(bus, n) for n in names]
+    if len(displays) != 2:
+        log(f"expected two displays, found {names}; leaving Plasma's sliders alone")
+        write(DESKTOP_READY, "1\n")
+        return
+    # The bottom one is display1 on a Thor; checked by its panel.
+    top, bottom = displays
+    bottom.set(want["bottom"])
+    if not bottom_shows(want["bottom"]):
+        top, bottom = bottom, top
+        bottom.set(want["bottom"])
+        log(f"{top.name} turned out to be the bottom screen's" if bottom_shows(want["bottom"])
+            else "cannot tell the screens apart: the bottom panel did not follow either")
+    # Plasma's top slider dims in software; never lower than the panel's own
+    # lowest, as on Android.
+    top.set(max(want["top"], PANEL_MIN / TOP_CAP))
+    log(f"top ({top.name}) {want['top']:.3f}, bottom ({bottom.name}) {want['bottom']:.3f}")
+    write(DESKTOP_READY, "1\n")
+
+    def changed(name, brightness, *_):
+        if str(name) == top.name:
+            write(DESKTOP_TOP, f"{int(brightness) / top.max:.5f}\n")
+
+    bus.add_signal_receiver(changed, "BrightnessChanged", SERVICE, path=PATH)
+
+
+def main() -> int:
+    if not os.path.isdir(RUN_DIR):
+        log(f"{RUN_DIR} missing: sm8550-thor-backlightd is not running")
+        return 0
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    loop = GLib.MainLoop()
+    started = False
+
+    def owner(name: str) -> None:
+        nonlocal started
+        if name and not started:
+            started = True
+            try:
+                setup(bus)
+            except dbus.DBusException as err:
+                log(f"PowerDevil: {err}")
+                write(DESKTOP_READY, "1\n")
+
+    # PowerDevil may come up after this: wait for its brightness service.
+    bus.watch_name_owner(SERVICE, owner)
+    loop.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

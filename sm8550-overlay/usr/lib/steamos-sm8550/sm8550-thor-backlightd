@@ -105,6 +105,18 @@ STEAM_GAMMA = 2.2
 OVERLAY = f"{RUN_DIR}/overlay"
 TOP_INPUT = f"{RUN_DIR}/top-input"
 HOME = f"{RUN_DIR}/home"  # a request counter; any change means "go home"
+# Desktop Mode shares SCREENS with Game Mode, through
+# sm8550-thor-desktop-brightness in the Plasma session: on entering it this
+# leaves DESKTOP_START (SCREENS as they were) and holds both panels there
+# until the helper has set Plasma's sliders to it and made DESKTOP_READY
+# (Plasma first applies its own last levels), or DESKTOP_READY_S passes.
+# Plasma's top slider dims in software, so the top panel then stays at its
+# highest and the helper writes that slider's position to DESKTOP_TOP; its
+# bottom slider writes into Steam's file (bottom_alone).
+DESKTOP_START = f"{RUN_DIR}/desktop-start.json"
+DESKTOP_READY = f"{RUN_DIR}/desktop-ready"
+DESKTOP_TOP = f"{RUN_DIR}/desktop-top"
+DESKTOP_READY_S = 10
 LONG_PRESS_S = 0.6
 TOUCH_NAME = "bottom_touchscreen"
 AYN_KEYS_NAME = "gpio-keys-ayn"
@@ -200,6 +212,15 @@ def read_screens(cache: dict) -> dict | None:
         except (OSError, ValueError, TypeError, KeyError):
             cache.update(mtime=mtime, value=None)
     return cache["value"]
+
+
+def clear_desktop() -> None:
+    """A Desktop Mode session's files, gone once it has ended."""
+    for path in (DESKTOP_START, DESKTOP_READY, DESKTOP_TOP):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def save_screens(screens: dict) -> None:
@@ -432,6 +453,7 @@ def main() -> int:
         log("no usable backlights")
         return 1
     setup_overlay()
+    clear_desktop()
     for path in LEFTOVERS:
         try:
             os.remove(path)
@@ -509,10 +531,6 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
         position = max(0.0, min(1.0, level)) ** (1 / STEAM_GAMMA)
         return max(0.0, (position - lowest) / (1 - lowest))
 
-    def desktop_bottom(value: int) -> int:
-        """Plasma's bottom slider: its percent, in Steam's file on the top
-        panel's scale (bottom_alone), through AYN's curve."""
-        return stock_bottom(level_of(value, top_max))
 
     glides: dict[str, tuple[int, int, float]] = {}  # panel -> (from, to, since)
 
@@ -565,6 +583,8 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
     home_over_game = False  # Home yields the bottom screen of a dual-screen game
     home_checked = 0.0
     desktop, mode_checked = False, -MODE_CHECK_S
+    desktop_since = 0.0
+    desktop_top_seen: int | None = None  # DESKTOP_TOP's mtime last taken in
     log(f"following {BOTTOM} (max {bottom_max}) -> {TOP} (max {top_max})")
     while True:
         if charge_rest():
@@ -683,8 +703,7 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                     write(p, "1")
         elif was_on is False:
             # Back on: at its level, then power up and allow touch.
-            set_bottom(desktop_bottom(steam_value) if desktop
-                       else stock_bottom(screens["bottom"]))
+            set_bottom(stock_bottom(screens["bottom"]))
             write(f"{BOTTOM}/bl_power", BL_ON)
             for p in touch_inhibited_paths():
                 write(p, "0")
@@ -697,23 +716,48 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
             if desktop_mode() != desktop:
                 desktop = not desktop
                 bottom_alone(*alone_paths, top_max, desktop)
+                if desktop:
+                    # The helper may have been quicker; it then read SCREENS.
+                    desktop_since, desktop_top_seen = time.monotonic(), None
+                    if not os.path.exists(DESKTOP_READY):
+                        write(DESKTOP_START, json.dumps(screens) + "\n")
+                else:
+                    clear_desktop()
                 if not desktop and screens["steam"] > 0:
                     # Plasma's bottom slider wrote into Steam's file: it
                     # gets back what Steam last wrote, which a move of
                     # Steam's slider is told from.
                     steam_value = screens["steam"]
                     write(STEAM_BOTTOM, f"{steam_value}\n")
-                log("Desktop Mode: Plasma sets each screen" if desktop else "Game Mode: Steam's level on both, as on Android")
+                log("Desktop Mode: Plasma's sliders, sharing Game Mode's brightness" if desktop else "Game Mode: Steam's level on both, as on Android")
         if desktop:
-            # Plasma has a slider per screen and sets the top panel itself;
-            # its bottom one writes into Steam's file (STEAM_BOTTOM), which
-            # goes to the panel through AYN's curve (desktop_bottom). It
-            # reaches the bottom panel alone (bottom_alone). The top never
-            # goes above TOP_CAP, whoever writes it.
+            # Plasma has a slider per screen, and they set SCREENS as the
+            # Barry Launcher plugin's do in Game Mode: the bottom one writes
+            # into Steam's file (STEAM_BOTTOM) on the top panel's scale
+            # (bottom_alone), the top one dims in software and comes through
+            # DESKTOP_TOP. Until the helper is ready, both panels hold
+            # SCREENS. The top never goes above TOP_CAP, whoever writes it.
+            ready = os.path.exists(DESKTOP_READY) or time.monotonic() - desktop_since >= DESKTOP_READY_S
             steam_now = steam_bottom()
+            if ready:
+                changed = False
+                if steam_now is not None and steam_now != steam_value:
+                    screens["bottom"], changed = level_of(steam_now, top_max), True
+                try:
+                    mtime = os.stat(DESKTOP_TOP).st_mtime_ns
+                except OSError:
+                    mtime = None
+                if mtime is not None and mtime != desktop_top_seen:
+                    desktop_top_seen = mtime
+                    try:
+                        screens["top"], changed = max(0.0, min(1.0, float(read(DESKTOP_TOP)))), True
+                    except ValueError:
+                        pass
+                if changed:
+                    save_screens(screens)
             if steam_now is not None:
                 steam_value = steam_now
-            want_bottom = glide("bottom", desktop_bottom(steam_value), bottom_set())
+            want_bottom = glide("bottom", stock_bottom(screens["bottom"]), bottom_set())
             if on and (bottom_set() != want_bottom or (bottom_refused and time.monotonic() >= panel_retry_at)):
                 refused = not set_bottom(want_bottom, quiet=bottom_refused)
                 if refused != bottom_refused:
@@ -721,7 +765,8 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                 bottom_refused = refused
                 if refused:
                     panel_retry_at = time.monotonic() + PANEL_RETRY_S
-            if top_set() > top_max and not write(f"{TOP}/brightness", str(top_max), quiet=top_refused):
+            want_top = glide("top", top_max if ready else stock_top(screens["top"]), top_set())
+            if top_set() != want_top and not write(f"{TOP}/brightness", str(want_top), quiet=top_refused):
                 top_refused = True
             wrote_top = top_set()  # Plasma's: no level for Game Mode
             continue
