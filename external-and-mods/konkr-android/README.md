@@ -1,9 +1,11 @@
 # konkr-android
 
 Files layered over Lepton's Android image (Valve's Android layer, Steam app
-3029110) for `konkr-apk` apps. Installed to `/usr/share/konkr-android`;
-`konkr-apk` hands the dirs to Lepton, which bind-mounts every file over the
-Android rootfs. Steam's own Android games keep Valve's image.
+3029110) for `konkr-apk` apps. Installed to `~/.local/share/konkr-android`
+(home, not the root partition: ~210 MiB); update packages carry it like the
+bundled Decky plugins, deltas only when it changed. `konkr-apk` hands the
+dirs to Lepton, which bind-mounts every file over the Android rootfs. Steam's
+own Android games keep Valve's image.
 
 ## payload/common
 

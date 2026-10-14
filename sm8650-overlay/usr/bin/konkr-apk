@@ -29,7 +29,9 @@ RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 READY="${RUNDIR}/konkr-android.ready"
 DESKTOP_DIR="${HOME}/.local/share/applications"
 APK_INFO=/usr/lib/konkr/apk-info
-OVERLAY_ROOT=/usr/share/konkr-android
+# Lepton overlays (Play Store, framework fixes): in home, not on the root
+# partition; the updater installs them there.
+OVERLAY_ROOT="${HOME}/.local/share/konkr-android"
 # Launchable system apps that get a Steam title too.
 SYSTEM_TITLES=(com.android.vending)
 # Touch keyboard shipped in the overlay (Simple Keyboard, F-Droid).

@@ -31,7 +31,11 @@ from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import root_trim
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--rootfs', required=True)
@@ -137,10 +141,26 @@ def tree_state(base, hashes=None):
     return entries
 
 
-def write_state(path, entries):
+# Android apps payload (Lepton overlays for konkr-apk): in home, not on the root
+# partition. Packages carry it like the bundled plugins; deltas only when it changed.
+ANDROID = 'home/steamos/.local/share/konkr-android'
+
+
+def tree_digest(top):
+    """One checksum over a directory's paths, modes and file contents."""
+    h = hashlib.sha256()
+    for p in sorted(top.rglob('*')) if top.is_dir() else []:
+        st = p.lstat()
+        h.update(f'{p.relative_to(top)}\0{st.st_mode:o}\0'.encode())
+        if stat.S_ISREG(st.st_mode): h.update(sha256(p).encode())
+        elif stat.S_ISLNK(st.st_mode): h.update(os.readlink(p).encode())
+    return h.hexdigest() if top.is_dir() else None
+
+
+def write_state(path, entries, android):
     with gzip.open(path, 'wt') as f:
         json.dump({'format': 1, 'version': version, 'base': release_base, 'image': image, 'kernel': sha256(a.kernel),
-                   'entries': entries}, f, separators=(',', ':'))
+                   'android': android, 'entries': entries}, f, separators=(',', ':'))
     print('state', path)
 
 
@@ -181,8 +201,10 @@ def pack(stage, output, manifest, members, aliases=()):
 
 
 if a.state_only:
+    keep = set(root_trim.kept(root))
     write_state(Path(a.output).resolve() if a.output else out_dir / f'pb-os-{version}-{image}.state.json.gz',
-                tree_state(root))
+                {rel: e for rel, e in tree_state(root).items() if not root_trim.left_out(rel, keep)},
+                tree_digest(root / ANDROID))
     raise SystemExit(0)
 
 output = (Path(a.output) if a.output else out_dir / f'pb-os-{version}-{image}.update.tar.gz').resolve()
@@ -231,6 +253,8 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     for rel in MANAGED:
         src = root / rel
         if src.exists(): copy(src, stage / 'root' / rel)
+    # Same paths the image leaves out. Unlinking hard links leaves the build tree alone.
+    root_trim.apply(stage / 'root')
     for rel, mode in SUID.items():
         p = stage / 'root' / rel
         if p.is_symlink() or not p.is_file(): continue
@@ -244,6 +268,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         src = root / 'home/steamos/homebrew/plugins' / name
         if not src.is_dir(): raise SystemExit(f'missing Decky plugin in rootfs home: {name}')
         copy(src, stage / 'home/steamos/homebrew/plugins' / name)
+    if (root / ANDROID).is_dir(): copy(root / ANDROID, stage / ANDROID)
     if a.soc == 'sm8650':
         # Updaters from before the PB-OS Control rename refuse a package without
         # konkr-control; an empty one empties the old plugin, pbosd removes it.
@@ -256,7 +281,8 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         files[str(p.relative_to(stage))] = sha256(p)
     common = {'architecture': 'aarch64', 'devices': DEVICES, 'version': version, 'remove_plugins': REMOVE}
     new = tree_state(stage / 'root', files)
-    write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new)
+    android = tree_digest(stage / ANDROID)
+    write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new, android)
     # A patch release ships only its delta (feature releases bring the full system).
     if cumulative is None:
         pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'],
@@ -293,6 +319,8 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         for rel in changed: place(rel)
         for name in PLUGINS:
             copy(stage / 'home/steamos/homebrew/plugins' / name, delta / 'home/steamos/homebrew/plugins' / name)
+        # States from before it moved to home have no checksum: it goes along.
+        if android and any(o.get('android') != android for o in olds): copy(stage / ANDROID, delta / ANDROID)
         members = ['home']
         if (delta / 'root').exists(): members.insert(0, 'root')
         if kernel:

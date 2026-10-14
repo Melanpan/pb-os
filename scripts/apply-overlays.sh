@@ -615,22 +615,9 @@ ln -sfn ../konkr-apk-inbox.path \
 # First login adds a Google Play Store title.
 ln -sfn ../konkr-android-setup.service \
   "$R/usr/lib/systemd/user/default.target.wants/konkr-android-setup.service"
-# Lepton rootfs overlays: Play Store, keyboard, pad layout, framework fixes
-# (external-and-mods/konkr-android; binaries are fetched/built, not in git).
-KAPAY="${ROOT}/external-and-mods/konkr-android/payload"
-if [[ -f "$KAPAY/common/system/product/priv-app/Phonesky/Phonesky.apk" ]]; then
-  rm -rf "$R/usr/share/konkr-android"
-  mkdir -p "$R/usr/share/konkr-android"
-  # exFAT/macOS leave ._* AppleDouble files; a ._x.apk breaks PackageManager.
-  rsync -a --no-owner --no-group --exclude '._*' --exclude '.DS_Store' "$KAPAY/" "$R/usr/share/konkr-android/"
-  chown -R root:root "$R/usr/share/konkr-android"
-  find "$R/usr/share/konkr-android" -type d -exec chmod 0755 {} +
-  find "$R/usr/share/konkr-android" -type f -exec chmod 0644 {} +
-  # Valve's prebaked dalvik-cache files are 0755; keep ours the same.
-  find "$R/usr/share/konkr-android" -path '*/data/dalvik-cache/*' -type f -exec chmod 0755 {} +
-else
-  log "WARN: no konkr-android payload (external-and-mods/konkr-android/build-payload.sh); Android apps will lack the Play Store and fixes"
-fi
+# Lepton overlays (Play Store etc.) go to home: see "Android apps payload" below.
+# Earlier builds of this rootfs had them on root.
+rm -rf "$R/usr/share/konkr-android"
 chroot "$R" update-mime-database /usr/share/mime
 chroot "$R" update-desktop-database -q /usr/share/applications
 # Kernel deep sleep (Pocket FIT default; konkr-sleep-mode decides):
@@ -1084,6 +1071,24 @@ else
   HOME_DST="$R/home/steamos"
 fi
 mkdir -p "$HOME_DST"
+# Android apps payload: Lepton overlays (Play Store, keyboard, pad layout,
+# framework fixes; external-and-mods/konkr-android, binaries fetched/built,
+# not in git). ~210 MiB, kept off the root partition; konkr-apk reads it here
+# and the updater installs it like the bundled Decky plugins.
+KAPAY="${ROOT}/external-and-mods/konkr-android/payload"
+KADST="$HOME_DST/.local/share/konkr-android"
+if [[ -f "$KAPAY/common/system/product/priv-app/Phonesky/Phonesky.apk" ]]; then
+  rm -rf "$KADST"
+  mkdir -p "$KADST"
+  # exFAT/macOS leave ._* AppleDouble files; a ._x.apk breaks PackageManager.
+  rsync -a --no-owner --no-group --exclude '._*' --exclude '.DS_Store' "$KAPAY/" "$KADST/"
+  find "$KADST" -type d -exec chmod 0755 {} +
+  find "$KADST" -type f -exec chmod 0644 {} +
+  # Valve's prebaked dalvik-cache files are 0755; keep ours the same.
+  find "$KADST" -path '*/data/dalvik-cache/*' -type f -exec chmod 0755 {} +
+else
+  log "WARN: no konkr-android payload (external-and-mods/konkr-android/build-payload.sh); Android apps will lack the Play Store and fixes"
+fi
 # Copy plugin tree (resolve lsfg .so symlink into a real file if needed)
 # .local/lib/liblsfg-vk.so is a link to the SM8550 builder's host library;
 # skip it (decky-lsfg-vk installs its own copy).

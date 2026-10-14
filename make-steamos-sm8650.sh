@@ -444,15 +444,18 @@ build_image() {
   fetch_rocknix_abl
 
   if [[ "${AUTO_ROOT}" -eq 1 ]]; then
-    local used_mib
+    local used_mib trim_mib
     used_mib="$(du -sm \
       --exclude=home --exclude=boot --exclude=proc --exclude=sys \
       --exclude=dev --exclude=tmp --exclude=run --exclude='.image-mnt' \
       "${R}" | awk '{print $1}')"
     # ~500 MiB free after 1% reserved blocks + a little slack for first boot.
     # 1.5 GiB free at pack: 500 MiB filled on first boot last time (root 100%).
+    # Sized from the untrimmed rootfs on purpose: what scripts/root_trim.py
+    # leaves out (SteamVR, headers, docs, ~1.9 GiB) stays free for updates.
+    trim_mib="$(python3 "${SCRIPTS}/root_trim.py" size "${R}")"
     ROOT_MIB=$((used_mib + 1536 + used_mib / 100 + 128))
-    log "root auto-size ${ROOT_MIB} MiB (rootfs ${used_mib} MiB, ~1.5 GiB free)"
+    log "root auto-size ${ROOT_MIB} MiB (rootfs ${used_mib} MiB, ~$((1536 + trim_mib)) MiB free after trimming ${trim_mib} MiB)"
   fi
   if [[ "${AUTO_HOME}" -eq 1 ]]; then
     local home_mib
@@ -510,7 +513,9 @@ EOF
   sudo_run mount "${boot_dev}" "${MNT}/boot"
 
   log "Copying root filesystem"
+  python3 "${SCRIPTS}/root_trim.py" filter "${R}" >"${WORKDIR}/.root-trim.filter"
   sudo_run rsync -aHAX --numeric-ids --info=progress2 \
+    --filter="merge ${WORKDIR}/.root-trim.filter" \
     --exclude='/home/**' \
     --exclude='/boot/**' \
     --exclude='/dev/**' \
