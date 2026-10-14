@@ -44,7 +44,10 @@ Stick lights: the multicolor zones rgb:l1..r4 over two HTR3212 controllers.
 At the dim levels of an indicator the PWM has only a few steps, so while
 the indicator shows, the controllers run their LEDs at 1/4 current (LED
 control 0x07; the driver sets 0x03, 1/2): twice the steps for the same
-light. Restored before the lights go back to their owner.
+light. Restored before the lights go back to their owner. The AYN Odin 2's
+four PWM multicolor zones (left-joystick, left-side, right-joystick,
+right-side, on two SN3112s) show the same indicator at their own current;
+the SN3112 has no current setting to change.
 
 KONKR Pocket FIT (in deep sleep mode, konkr-sleep-mode "kernel"; standby
 and the AYANEO Pocket S2 stay with konkr-suspend): the same, after
@@ -87,6 +90,7 @@ KONKR_SUSPEND = "/usr/lib/konkr/konkr-suspend"
 BATTERY = "/sys/class/power_supply/battery"
 USB = "/sys/class/power_supply/qcom-battmgr-usb"
 ZONES = "/sys/class/leds/rgb:*"
+ODIN2_ZONES = ("left-joystick", "left-side", "right-joystick", "right-side")
 HTR3212 = "/sys/bus/i2c/drivers/htr3212"
 KONKR_LED = "/sys/class/leds/konkr:rgb:joysticks"   # Pocket FIT stick lights (MCU)
 KONKR_MCU = "/sys/bus/serial/drivers/konkr_sysbtn"
@@ -198,9 +202,10 @@ def settings() -> dict:
 # --------------------------------------------------------- stick lights --
 def zones() -> list[str]:
     out = []
-    for d in sorted(glob.glob(ZONES)):
+    for d in sorted(glob.glob(ZONES)) + [f"/sys/class/leds/{n}" for n in ODIN2_ZONES]:
         drv = os.path.basename(os.path.realpath(f"{d}/device/driver"))
-        if drv == "leds_group_multicolor" and os.path.exists(f"{d}/multi_intensity"):
+        if drv in ("leds_group_multicolor", "leds_pwm_multicolor") \
+                and os.path.exists(f"{d}/multi_intensity"):
             out.append(d)
     return out
 

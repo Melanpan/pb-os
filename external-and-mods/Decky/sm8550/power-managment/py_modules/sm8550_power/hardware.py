@@ -49,6 +49,9 @@ GPU_GOV_FALLBACK = {
 KNOWN_DEVICES = (
     ("konkr", "KONKR Pocket FIT"),
     ("pocket-s2", "AYANEO Pocket S2"),
+    # Before "odin2": that needle is also in ayn,odin2portal and ayn,odin2mini.
+    ("odin2portal", "AYN Odin 2 Portal"),
+    ("odin2mini", "AYN Odin 2 Mini"),
     ("ayn-odin", "AYN Odin 2"),
     ("odin2", "AYN Odin 2"),
     ("odin-2", "AYN Odin 2"),

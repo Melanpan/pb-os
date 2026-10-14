@@ -1,0 +1,27 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/panel: xm91080g: send the four init writes the Odin 2 Mini's stock firmware sends
+
+The AYN Odin 2 Mini's stock DT (odin2_mini 2024-06-26, overlay "KalamaP HDK")
+sends 76 commands in its panel on-sequence. ROCKNIX's driver sends the same
+commands byte for byte except four, which it leaves out after the first b6
+block:
+
+  00 b0 / b6 07 8c 08 0c / 00 c1 / b2 01
+
+Add them in the stock position. Reset, delays and timings already match.
+Untested on hardware (no Mini).
+
+--- a/drivers/gpu/drm/panel/panel-boe-xm91080g.c
++++ b/drivers/gpu/drm/panel/panel-boe-xm91080g.c
+@@ -82,6 +82,11 @@
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb6,
+ 					 0x83, 0x02, 0x00, 0x00, 0x82, 0x02,
+ 					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xb0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb6,
++					 0x07, 0x8c, 0x08, 0x0c);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xc1);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb2, 0x01);
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xbc,
+ 					 0x00, 0x00, 0x0e, 0x26, 0x25, 0x02,

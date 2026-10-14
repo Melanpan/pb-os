@@ -1,0 +1,147 @@
+From: lavachemist <48248311+lavachemist@users.noreply.github.com>
+Subject: [PATCH] drm/panel: icna35xx: ICNA3512 init tables from the factory firmware
+
+Two ICNA3512 mode-switch commands differ from what both the AYANEO Pocket
+EVO/DS factory DT and the AYN Odin 2 Portal stock DT send:
+
+- 60 Hz: CB is 7 bytes, 01 01 01 01 04 09 2c (the 0x09 was missing).
+- 120 Hz: D9 ends 00 eb 00 00 00 00 00 00 00 (was 00 eb 11 ff).
+
+The Odin 2 Portal's stock init (Odin2Portal 20250312) also differs from the
+AYANEO tables, so these are sent only on ayn,odin2portal:
+
+- 48 00 before 53 e0;
+- 120 Hz: B3 byte 23 is 0xb9 (0x9c on the AYANEO tables), then 48 00, 48 30;
+- 60 Hz: B3 is 00 e0 a0 10 ff 00 (c8 on the AYANEO tables), then 48 30, 48 00.
+
+The display-on command stays after the PPS: stock sends it right after
+ce 22 with a 120 ms wait, but its PPS goes out from the host, which this
+driver does not mirror.
+
+The panel is 1080x1920 portrait, so the short side is the width: 89 x 160 mm,
+not 160 x 89.
+
+Untested on hardware (no Portal, no EVO/DS).
+
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -93,51 +93,76 @@
+ 	int cur_mode = icna35xx_get_current_mode(pinfo);
+ 	int cur_vrefresh = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]);
+ 
++	/*
++	 * The AYN Odin 2 Portal's stock init (Odin2Portal 20250312) differs
++	 * from the AYANEO Pocket tables in a few bytes and in the 0x48 writes.
++	 */
++	bool portal = of_machine_is_compatible("ayn,odin2portal");
++
+ 	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9C, 0xA5, 0xA5);
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFD, 0x5A, 0x5A);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9C, 0xA5, 0xA5);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFD, 0x5A, 0x5A);
++	if (portal)
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x53, 0xE0);
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x35, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x35, 0x00);
+ 
+ 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 120);
+ 
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0F);
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE, 0x22);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0F);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE, 0x22);
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
+ 	if (cur_vrefresh == 120) {
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
+-                0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00, 0x02, 0x83, 
+-                0x00, 0x10, 0x14, 0x00, 0x00, 0xC3, 0x00, 0x10, 
+-                0x14, 0x00, 0x00, 0xE0, 0x10, 0x10, 0x9C, 0x00, 
+-                0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x22, 0x18, 0x18, 
+-                0x18, 0x18, 0x18);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x07);
++		if (portal)
++			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
++					0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00, 0x02, 0x83,
++					0x00, 0x10, 0x14, 0x00, 0x00, 0xC3, 0x00, 0x10,
++					0x14, 0x00, 0x00, 0xE0, 0x10, 0x10, 0xB9, 0x00,
++					0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x22, 0x18, 0x18,
++					0x18, 0x18, 0x18);
++		else
++			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
++					0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00, 0x02, 0x83,
++					0x00, 0x10, 0x14, 0x00, 0x00, 0xC3, 0x00, 0x10,
++					0x14, 0x00, 0x00, 0xE0, 0x10, 0x10, 0x9C, 0x00,
++					0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x22, 0x18, 0x18,
++					0x18, 0x18, 0x18);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x07);
+ 		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB5,
+-                0x04, 0x0C, 0x08, 0x0C, 0x04, 0x00, 0xC4);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xD9,
+-                0x88, 0x40, 0x40, 0x88, 0x40, 0x40, 0x00, 0xEB,
+-                0x11, 0xFF);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE,
+-                0x01, 0x01, 0x01, 0x01, 0x04, 0x09, 0x2C);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x30);
+-	}
+-	else {
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
+-                0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x07);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2,
+-                0x04, 0x18, 0x08, 0x0C, 0x02, 0x00, 0xC4);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xD3,
+-                0x88, 0x4A, 0x4A, 0x88, 0x4A, 0x4A, 0x00, 0xEB, 
+-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCB,
+-                0x01, 0x01, 0x01, 0x01, 0x04, 0x2C);
+-        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++				0x04, 0x0C, 0x08, 0x0C, 0x04, 0x00, 0xC4);
++		/* Factory AYANEO and AYN tables: 15 bytes, zero tail. */
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xD9,
++				0x88, 0x40, 0x40, 0x88, 0x40, 0x40, 0x00, 0xEB,
++				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE,
++				0x01, 0x01, 0x01, 0x01, 0x04, 0x09, 0x2C);
++		if (portal)
++			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x30);
++	} else {
++		if (portal)
++			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
++					0x00, 0xE0, 0xA0, 0x10, 0xFF, 0x00);
++		else
++			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
++					0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x07);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2,
++				0x04, 0x18, 0x08, 0x0C, 0x02, 0x00, 0xC4);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xD3,
++				0x88, 0x4A, 0x4A, 0x88, 0x4A, 0x4A, 0x00, 0xEB,
++				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
++		/* Factory AYANEO and AYN tables: 7 bytes (0x09 was missing). */
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCB,
++				0x01, 0x01, 0x01, 0x01, 0x04, 0x09, 0x2C);
++		if (portal)
++			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x30);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
+ 	}
+ 
+ 	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
+@@ -260,8 +285,8 @@
+ static struct panel_desc icna3512_desc = {
+ 	.modes = icna3512_modes,
+ 	.num_modes = ARRAY_SIZE(icna3512_modes),
+-	.width_mm = 160,
+-	.height_mm = 89,
++	.width_mm = 89,
++	.height_mm = 160,
+ 	.bpc = 8,
+ 	.lanes = 4,
+ 	.format = MIPI_DSI_FMT_RGB888,

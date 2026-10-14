@@ -7,3 +7,17 @@
 &vreg_l12b_1p8 {
 	regulator-always-on;
 };
+
+/*
+ * Stock AYN settings (factory DT, KalamaP HDK overlay, same on the Odin 2,
+ * Odin 2 Portal and Odin 2 Mini): the haptics base voltage is 3200 mV (the
+ * per-effect voltages already match AYN-common), and the fan PWM period is
+ * 50 us. AYN-common, which the Thor shares, has 5000 mV and 40 us.
+ */
+&pm8550b_hv_haptics {
+	qcom,vmax-mv = <3200>;
+};
+
+&pwm_fan {
+	pwms = <&pm8550_pwm 3 50000>;
+};
