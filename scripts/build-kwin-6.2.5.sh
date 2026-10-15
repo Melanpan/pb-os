@@ -27,9 +27,8 @@ JOBS="${KWIN_JOBS:-$(nproc)}"
 KWIN_VER=6.2.5
 KWIN_URL="https://download.kde.org/stable/plasma/${KWIN_VER}/kwin-${KWIN_VER}.tar.xz"
 KWIN_SHA=5cc450a6e41105c8c49929b72550b331237f96aafb294690f4707bdc5f776848
-# Extra CMake Modules is cmake-only (arch any); the Frame base has none.
-ECM_URL="http://mirror.archlinuxarm.org/aarch64/extra/extra-cmake-modules-6.30.0-1-any.pkg.tar.xz"
-ECM_SHA=1c3fc456c94e2606365c6c1631b8e173f6abc5ac0d74de6bb38a14c6bb2b8685
+# Extra CMake Modules (cmake-only; the Frame base has none): scripts/install-ecm.sh.
+ECM_SCRIPT="${SCRIPT_DIR}/install-ecm.sh"
 
 log() { printf '==> [kwin] %s\n' "$*"; }
 die() { printf 'ERROR: [kwin] %s\n' "$*" >&2; exit 1; }
@@ -61,7 +60,6 @@ esac
 # --- sources ----------------------------------------------------------------
 mkdir -p "$CACHE"
 TGZ="$CACHE/kwin-${KWIN_VER}.tar.xz"
-ECM_PKG="$CACHE/$(basename "$ECM_URL")"
 fetch() { # url dest sha
   if [[ ! -f "$2" ]] || [[ "$(sha256sum "$2" | cut -d' ' -f1)" != "$3" ]]; then
     log "downloading $(basename "$2")"
@@ -70,13 +68,12 @@ fetch() { # url dest sha
   [[ "$(sha256sum "$2" | cut -d' ' -f1)" == "$3" ]] || die "checksum mismatch: $2"
 }
 fetch "$KWIN_URL" "$TGZ" "$KWIN_SHA"
-fetch "$ECM_URL" "$ECM_PKG" "$ECM_SHA"
 
 # One stamp per (source, patches, base package, flags): rebuilt only when
 # one of them changes, so image builds reuse the cached package.
 stamp_input="$(
   echo "kwin $KWIN_SHA"
-  echo "ecm $ECM_SHA"
+  echo "ecm $(sha256sum "$ECM_SCRIPT" | cut -d' ' -f1)"
   echo "base $base_ver"
   for p in "$PATCH_DIR"/*.patch; do sha256sum "$p" | cut -d' ' -f1; done
   echo "flags v1"
@@ -90,7 +87,7 @@ build() {
   mkdir -p "$src" "$bld" "$ecm" "$stage"
   log "unpacking kwin-${KWIN_VER}"
   tar -xJf "$TGZ" -C "$src"
-  tar -xJf "$ECM_PKG" -C "$ecm" usr/share/ECM
+  "$ECM_SCRIPT" "$R" "$ecm"
   local tree="$src/kwin-${KWIN_VER}"
   for p in "$PATCH_DIR"/*.patch; do
     log "patch $(basename "$p")"

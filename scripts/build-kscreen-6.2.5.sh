@@ -28,32 +28,8 @@ command -v bwrap >/dev/null 2>&1 || {
   exit 1
 }
 
-# Extra CMake Modules is cmake-only (any). ALARM 6.7 kscreen packages are unusable.
-# Frame/holo ships ECM 6.1.0 (plasma-extras may install it); Plasma 6.2.5
-# needs >= 6.5. ECM is build-time cmake only, so upgrading is safe.
-ecm_version() {
-  sed -n 's/^set(PACKAGE_VERSION "\([0-9.]*\)").*/\1/p' \
-    "$R/usr/share/ECM/cmake/ECMConfigVersion.cmake" 2>/dev/null | head -1
-}
-ecm_too_old() {
-  local v; v="$(ecm_version)"
-  [[ -z "$v" ]] && return 0
-  [[ "$(printf '%s\n6.5.0\n' "$v" | sort -V | head -1)" != "6.5.0" ]]
-}
-if [[ ! -f "$R/usr/share/ECM/cmake/ECMConfig.cmake" ]] || ecm_too_old; then
-  rm -rf "$R/usr/share/ECM"
-  echo "==> installing extra-cmake-modules into rootfs"
-  ECM_PKG="${ECM_PKG:-/tmp/extra-cmake-modules-6.30.0-1-any.pkg.tar.xz}"
-  if [[ ! -f "$ECM_PKG" ]]; then
-    curl -fsSL --max-time 60 -o "$ECM_PKG" \
-      "http://mirror.archlinuxarm.org/aarch64/extra/extra-cmake-modules-6.30.0-1-any.pkg.tar.xz"
-  fi
-  tmp="$(mktemp -d)"
-  tar -C "$tmp" -xf "$ECM_PKG"
-  mkdir -p "$R/usr/share"
-  cp -a "$tmp/usr/share/ECM" "$R/usr/share/"
-  rm -rf "$tmp"
-fi
+# Plasma 6.2.5 needs ECM >= 6.5; the Frame base ships 6.1.0 or none.
+"${SCRIPT_DIR}/install-ecm.sh" "$R"
 [[ -f "$R/usr/share/ECM/cmake/ECMConfig.cmake" ]] || {
   echo "ERROR: ECM still missing after install" >&2
   exit 1
