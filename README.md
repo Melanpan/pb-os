@@ -5,7 +5,7 @@
 > [Claude Code](https://www.anthropic.com/claude-code), running Anthropic's
 > Claude Opus 5.5 (`claude-opus-5-5`).** This applies only to what Project
 > Barry added on top of hashtagbasit's
-> [SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds):
+> [SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port):
 > Claude wrote that code, its commit messages and this README, **except the
 > statement right below**, which lavachemist, a human, wrote by hand. The
 > upstream code, and the projects it builds on, is its own authors' work.
@@ -41,7 +41,7 @@ lavachemist
 
 pb-os runs Valve's SteamOS for ARM (the Steam Frame build) on Snapdragon
 handhelds. It is a fork of hashtagbasit's
-[SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds).
+[SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port).
 Alpha v0.5.4, one image for the Retroid Pocket 6, Retroid Pocket Nova, AYN
 Thor and KONKR Pocket FIT, is on the
 [Releases](https://github.com/project-barry/pb-os/releases) page, with
@@ -71,21 +71,24 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
 
 ## How it differs from upstream
 
-- **Snapdragon 8 Gen 2 (SM8550) support** for the Retroid Pocket 6, Retroid
-  Pocket Nova and AYN Thor.
+Upstream's [v1.4](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.4)
+also runs on the Retroid Pocket 6, Retroid Pocket Nova and AYN Thor, uses
+Linux 7.2.8 from ROCKNIX built with GCC 15, and has its own bottom-screen
+dashboard on the Thor. pb-os differs in these ways:
+
 - **One image and one kernel** for every device, Snapdragon 8 Gen 2 and 8
-  Gen 3; each device sets itself up for its own hardware at boot.
-- **Linux 7.2.8** on both chips, from ROCKNIX's recipes, built with GCC 15.
-- **Valve's stable channel** (SteamOS 0.4.5) as the base, not the
-  development branch.
-- **Shared tuning:** EAS scheduling by default, no hard CPU pinning, GPU
-  interrupts kept off the little cores, zstd zram, and fixes for GPU hangs,
-  sleep, UFS and udisks CPU storms.
+  Gen 3; each device sets itself up for its own hardware at boot. Upstream
+  has one image per chip.
+- **Valve's stable channel** (SteamOS 0.4.5) as the base. Upstream v1.4 is
+  built on SteamOS 0.5.3, which is not on Valve's stable channel.
+- **EAS scheduling by default:** upstream keeps Valve's scheduler setting.
+- **Nothing is sent to Valve:** SteamOS's crash and log submitter is off on
+  every device. Upstream turns it off on the 8 Elite only.
 - **Tailscale** installed but switched off, with no account in the image.
-- **AYN Thor extras** (started only on the Thor): the bottom screen as a
-  second display in Game Mode, the Barry Launcher (apps, keyboard,
-  trackpad, performance dashboard) and a Barry Launcher Decky plugin.
-  Anyone can make apps for Barry Launcher and install them from a zip:
+- **AYN Thor: Barry Launcher** on the bottom screen in Game Mode instead of
+  upstream's dashboard, with apps, a keyboard, a trackpad, a performance
+  dashboard and a Barry Launcher Decky plugin. Anyone can make apps for
+  Barry Launcher and install them from a zip:
   [barry-launcher-apps](https://github.com/project-barry/barry-launcher-apps).
   DS, 3DS and Wii U games on both screens are in progress:
   [docs/thor-dual-screen-emulators.md](docs/thor-dual-screen-emulators.md).
@@ -96,7 +99,7 @@ Each commit message explains its change.
 
 The full list, with what came from where, is in [CREDITS.md](CREDITS.md).
 
-- **[hashtagbasit](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds)**:
+- **[hashtagbasit](https://github.com/hashtagbasit/SteamOS-ARM-Port)**:
   the upstream project this forks, including the KONKR Pocket FIT port. Support
   them on [Ko-fi](https://ko-fi.com/aimalb) or
   [PayPal](https://paypal.me/Basit2000).

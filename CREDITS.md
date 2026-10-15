@@ -1,8 +1,9 @@
 # Credits
 
-**[SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds)**
-by hashtagbasit brings official SteamOS ARM to the KONKR Pocket FIT (SM8650).
-pb-os is a fork of it. Some of that project's groundwork (the image builder
+**[SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port)**
+(formerly SteamOS-ARM-Handhelds)
+by hashtagbasit brings official SteamOS ARM to Snapdragon handhelds, starting
+with the KONKR Pocket FIT (SM8650). pb-os is a fork of it. Some of that project's groundwork (the image builder
 and a few scripts) came from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi
 credits below still applies.
 
