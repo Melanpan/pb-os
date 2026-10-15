@@ -77,21 +77,12 @@ Linux 7.2.8 from ROCKNIX built with GCC 15, and has its own bottom-screen
 dashboard on the Thor. pb-os differs in these ways:
 
 - **One image and one kernel** for every device, Snapdragon 8 Gen 2 and 8
-  Gen 3; each device sets itself up for its own hardware at boot. Upstream
-  has one image per chip.
-- **Valve's stable channel** (SteamOS 0.4.5) as the base. Upstream v1.4 is
-  built on SteamOS 0.5.3, which is not on Valve's stable channel.
+  Gen 3;
+- **Valve's stable channel** (SteamOS 0.4.5) as the base.
 - **EAS scheduling by default:** upstream keeps Valve's scheduler setting.
-- **Nothing is sent to Valve:** SteamOS's crash and log submitter is off on
-  every device. Upstream turns it off on the 8 Elite only.
-- **Tailscale** installed but switched off, with no account in the image.
-- **AYN Thor: Barry Launcher** on the bottom screen in Game Mode instead of
-  upstream's dashboard, with apps, a keyboard, a trackpad, a performance
-  dashboard and a Barry Launcher Decky plugin. Anyone can make apps for
-  Barry Launcher and install them from a zip:
-  [barry-launcher-apps](https://github.com/project-barry/barry-launcher-apps).
-  DS, 3DS and Wii U games on both screens are in progress:
-  [docs/thor-dual-screen-emulators.md](docs/thor-dual-screen-emulators.md).
+- **AYN Thor: Barry Launcher** on the bottom screen, with apps, a keyboard, a trackpad, a performance
+  dashboard and a Barry Launcher Decky plugin.
+- Two screen Gamescope mod - enabling native DS and 3DS emulation in Game Mode on supported dual screen devices.
 
 Each commit message explains its change.
 
