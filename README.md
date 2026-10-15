@@ -69,12 +69,7 @@ they are not officially supported.
 
 Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/benchmark-results.md)
 
-## How it differs from upstream
-
-Upstream's [v1.4](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.4)
-also runs on the Retroid Pocket 6, Retroid Pocket Nova and AYN Thor, uses
-Linux 7.2.8 from ROCKNIX built with GCC 15, and has its own bottom-screen
-dashboard on the Thor. pb-os differs in these ways:
+## PB-OS Features
 
 - **One image and one kernel** for every device, Snapdragon 8 Gen 2 and 8
   Gen 3;
@@ -83,8 +78,6 @@ dashboard on the Thor. pb-os differs in these ways:
 - **AYN Thor: Barry Launcher** on the bottom screen, with apps, a keyboard, a trackpad, a performance
   dashboard and a Barry Launcher Decky plugin.
 - Two screen Gamescope mod - enabling native DS and 3DS emulation in Game Mode on supported dual screen devices.
-
-Each commit message explains its change.
 
 ## Credits
 
