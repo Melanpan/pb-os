@@ -6,11 +6,10 @@
 > Claude Opus 5.5 (`claude-opus-5-5`).** This applies only to what Project
 > Barry added on top of hashtagbasit's
 > [SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port):
-> Claude wrote that code, its commit messages and this README, **except the
-> statement right below and parts of the feature list**, which lavachemist, a
-> human, wrote by hand. The
-> upstream code, and the projects it builds on, is its own authors' work.
-> People set the goals, made the decisions and did the hands-on testing.
+> Claude wrote that code and its commit messages. **This README was written
+> by lavachemist, a human, with Claude's assistance**; the statement right
+> below is lavachemist's own, written by hand. The upstream code, and the
+> projects it builds on, is its own authors' work. People set the goals, made the decisions and did the hands-on testing.
 > Review the code before you rely on it.
 
 ### A note from lavachemist (written by a human)
