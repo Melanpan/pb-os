@@ -7,7 +7,8 @@
 > Barry added on top of hashtagbasit's
 > [SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port):
 > Claude wrote that code, its commit messages and this README, **except the
-> statement right below**, which lavachemist, a human, wrote by hand. The
+> statement right below and parts of the feature list**, which lavachemist, a
+> human, wrote by hand. The
 > upstream code, and the projects it builds on, is its own authors' work.
 > People set the goals, made the decisions and did the hands-on testing.
 > Review the code before you rely on it.
@@ -72,9 +73,9 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
 ## PB-OS Features
 
 - **One image and one kernel** for every device, Snapdragon 8 Gen 2 and 8
-  Gen 3;
+  Gen 3.
 - **Valve's stable channel** (SteamOS 0.4.5) as the base.
-- **EAS scheduling by default:** upstream keeps Valve's scheduler setting.
+- **EAS scheduling by default.**
 - **AYN Thor: Barry Launcher** on the bottom screen, with apps, a keyboard, a trackpad, a performance
   dashboard and a Barry Launcher Decky plugin.
 - Two screen Gamescope mod - enabling native DS and 3DS emulation in Game Mode on supported dual screen devices.
