@@ -1,15 +1,17 @@
 # Credits
 
-**SteamOS-ARM-Handhelds** brings official SteamOS ARM to the KONKR Pocket FIT
-(SM8650). Some of its groundwork (the image builder and a few scripts) came
-from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still applies.
+**[SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds)**
+by hashtagbasit brings official SteamOS ARM to the KONKR Pocket FIT (SM8650).
+pb-os is a fork of it. Some of that project's groundwork (the image builder
+and a few scripts) came from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi
+credits below still applies.
 
 ## This project
 
 | Source | URL | What we use |
 |--------|-----|-------------|
 | **MaSi / SteamOS-ARM-SM8550** | https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550 | The whole base: image builder, SteamOS ARM overlay, Box64/Decky setup, scripts |
-| **ROCKNIX SM8650** | https://github.com/ROCKNIX/distribution | Kernel recipe (20260801, Linux 7.1.2), Pocket FIT panel/touch/MCU patches, device tree, firmware, audio UCM |
+| **ROCKNIX SM8650** | https://github.com/ROCKNIX/distribution | Kernel recipe (20260901, Linux 7.2.8), Pocket FIT panel/touch/MCU patches, device tree, firmware, audio UCM |
 | **ROCKNIX SM8550** | https://github.com/ROCKNIX/distribution | Retroid Pocket 6 kernel (20260901 recipe, Linux 7.2.8): RP6 and Nova device trees and panels, RSInput pad, HTR3212 LED and haptics drivers, AYN-signed firmware |
 | **linux-firmware** | https://gitlab.com/kernel-firmware/linux-firmware | Adreno 740 microcode and zap shader (SM8550), pinned by tag and SHA-256 |
 | **Retroid (Moorechip)** | Retroid Pocket Nova and Retroid Pocket 6 stock Android (RPN_V1.0.0.436, RP6_V1.0.0.406) | Their own ADSP firmware and AW88166 speaker tuning (`sm8550/firmware/…/rpnova`, `…/rp6`), used instead of AYN Odin 2's |

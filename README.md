@@ -42,9 +42,10 @@ lavachemist
 pb-os runs Valve's SteamOS for ARM (the Steam Frame build) on Snapdragon
 handhelds. It is a fork of hashtagbasit's
 [SteamOS-ARM-Handhelds](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds).
-Alpha v0.3 images for the Retroid Pocket 6, the KONKR Pocket FIT and the AYN
-Thor are on the [Releases](https://github.com/project-barry/pb-os/releases)
-page, with flashing steps. You can also build your own.
+Alpha v0.5.4, one image for the Retroid Pocket 6, Retroid Pocket Nova, AYN
+Thor and KONKR Pocket FIT, is on the
+[Releases](https://github.com/project-barry/pb-os/releases) page, with
+flashing steps. You can also build your own.
 
 ## Tested devices
 
@@ -53,28 +54,35 @@ Physical testing was done on one unit of each:
 | Device | Chip | Tested |
 |--------|------|--------|
 | Retroid Pocket 6 | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD and internal storage |
+| Retroid Pocket Nova | Snapdragon 8 Gen 2 (QCS8550) | Yes: from microSD and internal storage |
 | AYN Thor | Snapdragon 8 Gen 2 (SM8550) | Yes: from microSD |
 | KONKR Pocket FIT | Snapdragon 8 Gen 3 (SM8650) | Yes: from microSD and internal storage |
 
 Installing to internal storage (UFS, next to Android) has run for several
-days on the Retroid Pocket 6 and the KONKR Pocket FIT; see
-[external-and-mods/ufs-install](external-and-mods/ufs-install/README.md). On
-the AYN Thor it is untested.
+days on the Retroid Pocket 6, the Retroid Pocket Nova and the KONKR Pocket
+FIT; see [external-and-mods/ufs-install](external-and-mods/ufs-install/README.md).
+On the AYN Thor it is untested.
+
+The image also includes support for the AYN Odin 2, Odin 2 Portal, Odin 2
+Mini and AYANEO Pocket S2. None of it has been tested on those devices, so
+they are not officially supported.
 
 Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/benchmark-results.md)
 
 ## How it differs from upstream
 
-- **Snapdragon 8 Gen 2 (SM8550) support** for the Retroid Pocket 6 and AYN
-  Thor, in one image.
+- **Snapdragon 8 Gen 2 (SM8550) support** for the Retroid Pocket 6, Retroid
+  Pocket Nova and AYN Thor.
+- **One image and one kernel** for every device, Snapdragon 8 Gen 2 and 8
+  Gen 3; each device sets itself up for its own hardware at boot.
 - **Linux 7.2.8** on both chips, from ROCKNIX's recipes, built with GCC 15.
-- **Valve's stable channel** (SteamOS 0.3.0) as the base, not the
+- **Valve's stable channel** (SteamOS 0.4.5) as the base, not the
   development branch.
 - **Shared tuning:** EAS scheduling by default, no hard CPU pinning, GPU
   interrupts kept off the little cores, zstd zram, and fixes for GPU hangs,
   sleep, UFS and udisks CPU storms.
 - **Tailscale** installed but switched off, with no account in the image.
-- **AYN Thor extras** (in the SM8550 image, started only on the Thor): the bottom screen as a
+- **AYN Thor extras** (started only on the Thor): the bottom screen as a
   second display in Game Mode, the Barry Launcher (apps, keyboard,
   trackpad, performance dashboard) and a Barry Launcher Decky plugin.
   Anyone can make apps for Barry Launcher and install them from a zip:
