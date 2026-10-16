@@ -240,11 +240,13 @@ WATCH_SERVICE=""
 
 # DRM backend = Wayland compositor + Xwayland. Steam paints on X11 (:0 / xcb).
 # --backend wayland/sdl would nest inside another compositor and drop the panel.
+# No --force-windows-fullscreen: a game with a fixed-size window (Maitetsu,
+# 1280x720) fought it, resizing back every frame (flicker, picture stuck to the
+# top, 63,000 wineserver calls/s under FEX). --scaler fit scales it, as on the Deck.
 GAMESCOPE_ARGS=(
   --backend drm
   --prefer-output "$OUTPUT"
   --force-internal
-  --force-windows-fullscreen
   --scaler fit
   --filter linear
   --steam
@@ -286,7 +288,9 @@ fi
 # gamescope-onready import races Steam's start: Steam then has no refresh-rate
 # slider (only 144/n frame limits) and no STEAM_USE_MANGOAPP. Hand the Steam
 # session vars over through a file steam.service reads at start.
-env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_[A-Z_]+|STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND|GAMESCOPE_MANGOAPP_SOCKET_DISABLE|MANGOHUD_CONFIGFILE)=' \
+# ENABLE_GAMESCOPE_WSI reaches games through Steam: without gamescope's WSI
+# layer a game that isn't full-screen ignores the frame limit.
+env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_[A-Z_]+|STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND|GAMESCOPE_MANGOAPP_SOCKET_DISABLE|MANGOHUD_CONFIGFILE|ENABLE_GAMESCOPE_WSI)=' \
   >"$XDG_RUNTIME_DIR/gamescope-steam.env" 2>/dev/null || true
 
 echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION}"
