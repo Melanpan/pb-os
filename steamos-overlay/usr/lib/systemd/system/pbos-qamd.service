@@ -1,0 +1,15 @@
+[Unit]
+Description=PB-OS Quick Access (the PB-OS tab in Steam's Quick Access menu)
+Documentation=https://github.com/project-barry/pb-os/tree/main/external-and-mods/pbos-qam
+After=local-fs.target home.mount
+Wants=home.mount
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/pbos-qam/pbos-qamd
+Environment=PBOS_QAM_USER=steamos
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

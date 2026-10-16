@@ -1,27 +1,17 @@
-const manifest = {"name":"Barry Launcher"};
-const API_VERSION = 2;
-const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
-if (!internalAPIConnection) {
-    throw new Error('[@decky/api]: Failed to connect to the loader as as the loader API was not initialized. This is likely a bug in Decky Loader.');
-}
-let api;
-try {
-    api = internalAPIConnection.connect(API_VERSION, manifest.name);
-}
-catch {
-    api = internalAPIConnection.connect(1, manifest.name);
-}
-const callable = api.callable;
-const definePlugin = (fn) => (...args) => fn(...args);
-
-const DFL = window.DFL;
-const SP_REACT = window.SP_REACT;
-const SP_JSX = window.SP_JSX;
+// Barry Launcher in PB-OS's Quick Access tab (was the Barry Launcher Decky
+// plugin, dual-screen; AYN Thor only): each former tab is a plugin in the
+// PB-OS list, its component unchanged. pbos-qamd's barry section is the
+// backend. The loader (src/loader.js) gives P: @decky/ui as DFL, Steam's
+// React and JSX, callable(), openFilePicker() and plugin().
+window.__pbosQam.section("barry", (P) => {
+const { DFL, SP_REACT, SP_JSX, callable } = P;
+const api = P;
 const { useEffect, useState, useCallback, useRef } = SP_REACT;
 const jsx = SP_JSX.jsx;
 const jsxs = SP_JSX.jsxs;
 
-// Decky callable(): arguments are passed positionally to the Python method.
+// pbos-qamd's barry section (daemon/barry.cpp): arguments are passed
+// positionally, as Decky's callable() passed them to the plugin's Python.
 const getState = callable("get_state");
 const setBottomScreen = callable("set_bottom_screen");
 const setRgbDimmer = callable("set_rgb_dimmer");
@@ -52,7 +42,7 @@ const setLanguage = callable("set_language");
 const checkLanguage = callable("check_language");
 const installLanguage = callable("install_language");
 const removeLanguage = callable("remove_language");
-// Decky's file browser (select 0: a file), as @decky/api's openFilePicker.
+// The PB-OS tab's file picker (select 0: a file), called as @decky/api's openFilePicker.
 const ARCHIVE_EXTENSIONS = ["zip", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tar"];
 
 // Steam's on-screen keyboard never shows on the top screen: whenever Steam
@@ -183,7 +173,11 @@ function linkableGames() {
         if (!seen.has(id) && name) { seen.add(id); out.push({ id, name, running }); }
     };
     for (const a of (DFL.Router && DFL.Router.RunningApps) || []) add(a.appid, a.display_name, true);
-    const all = (window.collectionStore && collectionStore.allAppsCollection && collectionStore.allAppsCollection.allApps) || [];
+    // Steam's collections throw until a user has signed in: no games then.
+    let all = [];
+    try {
+        all = (window.collectionStore && collectionStore.allAppsCollection && collectionStore.allAppsCollection.allApps) || [];
+    } catch (e) { /* signed out */ }
     all.filter((a) => (a.app_type === STEAM_GAME || a.app_type === NON_STEAM_GAME) && a.rt_last_time_played > 0)
         .sort((a, b) => b.rt_last_time_played - a.rt_last_time_played)
         .slice(0, 40)
@@ -280,30 +274,6 @@ const LanguagesIcon = () => svg([
 ]);
 
 // LB and RB: the controller's bumpers, in Steam's button numbering.
-const GB = DFL.GamepadButton || {};
-const BUMPER_LEFT = GB.BUMPER_LEFT != null ? GB.BUMPER_LEFT : 5;
-const BUMPER_RIGHT = GB.BUMPER_RIGHT != null ? GB.BUMPER_RIGHT : 6;
-
-// The tab shown, kept while Steam runs.
-let lastTab = "screens";
-
-function TabBar({ tabs, active, onPick }) {
-    return jsx(DFL.Focusable, {
-        "flow-children": "horizontal",
-        style: { display: "flex", gap: "6px", padding: "0 16px 8px" },
-        children: tabs.map((t) => jsx(DFL.DialogButton, {
-            onClick: () => onPick(t.id),
-            style: {
-                flex: 1, minWidth: 0, height: "40px", padding: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                ...(t.id === active
-                    ? { background: "#1a9fff", color: "#fff" }
-                    : { opacity: 0.8 }),
-            },
-            children: jsx(t.icon, {}),
-        }, t.id)),
-    });
-}
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
 
 // Sliders send while they move, at most this often, and the last value
@@ -824,9 +794,9 @@ function GamesSection() {
     ] });
 }
 
-function Content() {
-    const [tab, setTab] = useState(lastTab);
-    const pick = (id) => { lastTab = id; setTab(id); };
+// The Dual Screen page and the Joystick RGB Dimmer page share the plugin's
+// old panel state: getState every 3 s while shown, sliders held a while.
+function useBarryState() {
     const [st, setSt] = useState(null);
     const movedAt = useRef(0);
     const refresh = useCallback(() => {
@@ -846,40 +816,28 @@ function Content() {
         setSt((s) => ({ ...s, brightness: { ...s.brightness, [screen]: v } }));
         (screen === "top" ? sendTop : sendBottom)(v);
     };
+    const rgb = (v) => {
+        movedAt.current = Date.now();
+        setSt((s) => ({ ...s, rgbDimmer: v }));
+        sendRgb(v);
+    };
     useEffect(() => {
         refresh();
         const t = setInterval(refresh, 3000);
         return () => clearInterval(t);
     }, [refresh]);
+    return { st, setSt, refresh, bright, rgb };
+}
 
+const slider = (label, value, min, onChange, extra) => row(jsx(DFL.SliderField, {
+    label: `${label} (${value}%)`, value, min, max: 100, step: 5, onChange, ...extra,
+}));
+
+function ScreensPage() {
+    const { st, setSt, refresh, bright } = useBarryState();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.supported) return jsx(DFL.PanelSection, { children: note("This plugin is for the AYN Thor (two screens).") });
-
-    const slider = (label, value, min, onChange, extra) => row(jsx(DFL.SliderField, {
-        label: `${label} (${value}%)`, value, min, max: 100, step: 5, onChange, ...extra,
-    }));
-    const tabs = [
-        { id: "screens", icon: ThorIcon },
-        { id: "apps", icon: AppsIcon },
-        { id: "themes", icon: ThemesIcon },
-        { id: "languages", icon: LanguagesIcon },
-        { id: "games", icon: GamesIcon },
-        ...(st.rgbDimmer != null ? [{ id: "lights", icon: RgbIcon }] : []),
-        { id: "emulators", icon: HandheldIcon },
-    ];
-    const shown = tabs.some((t) => t.id === tab) ? tab : "screens";
-    const step = (by) => {
-        const i = tabs.findIndex((t) => t.id === shown);
-        pick(tabs[(i + by + tabs.length) % tabs.length].id);
-    };
-    return jsxs(DFL.Focusable, {
-        onButtonDown: (evt) => {
-            const b = evt && evt.detail && evt.detail.button;
-            if (b === BUMPER_LEFT) step(-1);
-            else if (b === BUMPER_RIGHT) step(1);
-        },
-        children: [jsx(TabBar, { tabs, active: shown, onPick: pick }),
-    shown === "screens" && jsxs(DFL.PanelSection, { title: "Dual Screen", children: [
+    if (!st.supported) return jsx(DFL.PanelSection, { children: note("This is for the AYN Thor (two screens).") });
+    return jsxs(DFL.PanelSection, { title: "Dual Screen", children: [
         row(jsx(DFL.ToggleField, {
             label: "Bottom screen",
             description: st.on ? undefined : "Off: dark and ignoring touch until you turn it back on.",
@@ -894,43 +852,36 @@ function Content() {
             slider("Bottom screen brightness", st.brightness.bottom, 0, (v) => bright("bottom", v), { step: 1, disabled: !st.on }),
         ] : []),
         note("Steam's brightness slider sets both screens."),
-    ] }),
-    shown === "lights" && jsxs(DFL.PanelSection, { title: "Joystick RGB Dimmer", children: [
-        slider("Lights dimmer", st.rgbDimmer, 20, (v) => {
-            movedAt.current = Date.now();
-            setSt((s) => ({ ...s, rgbDimmer: v }));
-            sendRgb(v);
-        }),
-        note("This setting adjusts the brightness threshold of the performance dashboard settings"),
-    ] }),
-    shown === "apps" && jsx(AppsSection, {}),
-    shown === "themes" && jsx(ThemesSection, {}),
-    shown === "languages" && jsx(LanguagesSection, {}),
-    shown === "games" && jsx(GamesSection, {}),
-    shown === "emulators" && jsx(TwoScreenSection, {}),
     ] });
 }
 
-var index = definePlugin(() => {
-    const timer = setInterval(watchBarryKeyboard, 2000);
-    watchBarryKeyboard();
-    const gameTimer = setInterval(watchGames, 1000);
-    watchGames();
-    return {
-        name: "Barry Launcher",
-        content: jsx(Content, {}),
-        icon: jsx("div", { style: { fontWeight: 800 }, children: "☀" }),
-        alwaysRender: false,
-        onDismount() {
-            clearInterval(timer);
-            clearInterval(gameTimer);
-            gamesSeen = null;
-            if (unhookKeyboard) unhookKeyboard();
-            unhookKeyboard = null;
-            unwatchClicks();
-            barryAvailable = false;
-        },
-    };
-});
+function DimmerPage() {
+    const { st, rgb } = useBarryState();
+    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    if (st.rgbDimmer == null) return jsx(DFL.PanelSection, { children: note("The stick lights' controller isn't answering.") });
+    return jsxs(DFL.PanelSection, { title: "Joystick RGB Dimmer", children: [
+        slider("Lights dimmer", st.rgbDimmer, 20, rgb),
+        note("This setting adjusts the brightness threshold of the performance dashboard settings"),
+    ] });
+}
 
-export { index as default };
+// ------------------------------------------------------------- plugins ---
+// Each former tab is a plugin in the PB-OS list, in the old tab order.
+P.plugin({ id: "screens", title: "Dual Screen", icon: ThorIcon, content: ScreensPage, order: 10 });
+P.plugin({ id: "apps", title: "Apps", icon: AppsIcon, content: AppsSection, order: 20 });
+P.plugin({ id: "themes", title: "Themes", icon: ThemesIcon, content: ThemesSection, order: 30 });
+P.plugin({ id: "languages", title: "Keyboard Languages", icon: LanguagesIcon, content: LanguagesSection, order: 40 });
+P.plugin({ id: "games", title: "Companion Apps", icon: GamesIcon, content: GamesSection, order: 50 });
+P.plugin({ id: "emulators", title: "Emulators", icon: HandheldIcon, content: TwoScreenSection, order: 70 });
+// The dimmer only where the stick lights' controller answers.
+getState().then((s) => {
+    if (s && s.rgbDimmer != null) P.plugin({ id: "lights", title: "Joystick RGB Dimmer", icon: RgbIcon, content: DimmerPage, order: 60 });
+}).catch((e) => P.fail("dimmer", e));
+
+// While Steam runs (as the Decky plugin did while loaded): Barry's keyboard
+// in place of Steam's, and the companion apps following running games.
+setInterval(watchBarryKeyboard, 2000);
+watchBarryKeyboard();
+setInterval(watchGames, 1000);
+watchGames();
+});

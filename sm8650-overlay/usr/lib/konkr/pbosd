@@ -169,12 +169,16 @@ def migrate_from_konkrd() -> None:
         log(f"moved {LEGACY_STATE_DIR} to {STATE_DIR}")
     if os.path.isdir(LEGACY_STATE_DIR) and not os.listdir(LEGACY_STATE_DIR):
         os.rmdir(LEGACY_STATE_DIR)
-    if not os.path.isdir(f"{PLUGINS_DIR}/pbos-utils"):
+    # PB-OS Utils itself became the PB-OS tab in Quick Access
+    # (pbos-qamd), and goes too.
+    qam = os.path.exists("/usr/lib/pbos-qam/pbos-qamd")
+    if not qam and not os.path.isdir(f"{PLUGINS_DIR}/pbos-utils"):
         return
-    gone = [n for n in ("konkr-control", "pbos-control") if os.path.isdir(f"{PLUGINS_DIR}/{n}")]
+    old = ("konkr-control", "pbos-control") + (("pbos-utils",) if qam else ())
+    gone = [n for n in old if os.path.isdir(f"{PLUGINS_DIR}/{n}")]
     for name in gone:
         shutil.rmtree(f"{PLUGINS_DIR}/{name}", ignore_errors=True)
-        log(f"removed the old {name} plugin (PB-OS Utils has its tabs)")
+        log(f"removed the old {name} plugin (the PB-OS tab has its settings)")
     if gone:
         subprocess.run(["systemctl", "try-restart", "plugin_loader.service"], check=False)
 

@@ -1,0 +1,14 @@
+{
+  "name": "pbos-qam-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PB-OS Quick Access loader: the PB-OS tab in Steam's Quick Access menu, with @decky/ui bundled",
+  "license": "GPL-2.0",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@decky/ui": "4.13.0",
+    "esbuild": "0.28.2"
+  }
+}

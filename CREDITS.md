@@ -92,7 +92,8 @@ Inherited from **SteamOS-Ubuntu**. See
 | Source | URL | What we use |
 |--------|-----|-------------|
 | **SteamOS-Ubuntu** | https://github.com/MaSieS4Fun/SteamOS-Ubuntu | SM8550-Power and SM8550-LED as shipped here |
-| **SteamDeckHomebrew / decky-loader** | https://github.com/SteamDeckHomebrew/decky-loader | PluginLoader (x86_64 via Box64) |
+| **SteamDeckHomebrew / decky-loader** | https://github.com/SteamDeckHomebrew/decky-loader | PluginLoader (x86_64 via Box64); the PB-OS tab's Quick Access tab hook and toaster follow its frontend (`tabs-hook.tsx`, `toaster.tsx`, GPL-2.0) |
+| **SteamDeckHomebrew / decky-frontend-lib** | https://github.com/SteamDeckHomebrew/decky-frontend-lib | @decky/ui (LGPL-2.1), bundled in the PB-OS tab's loader (`external-and-mods/pbos-qam/frontend/dist/pbos-qam.js`) |
 | **Hooandee / panel-de-control** | https://github.com/Hooandee/panel-de-control | Power-plugin design reference |
 | **Hooandee / decky-colores** | https://github.com/Hooandee/decky-colores | LED-plugin design reference |
 | **xXJSONDeruloXx / decky-lsfg-vk** | https://github.com/xXJSONDeruloXx/decky-lsfg-vk | LSFG Decky UI (when bundled) |

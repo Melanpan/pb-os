@@ -76,7 +76,9 @@ Here is a link to all of our benchmark tests: [docs/benchmark-results.md](docs/b
 - **Valve's stable channel** (SteamOS 0.4.5) as the base.
 - **EAS scheduling by default.**
 - **AYN Thor: Barry Launcher** on the bottom screen, with apps, a keyboard, a trackpad, a performance
-  dashboard and a Barry Launcher Decky plugin.
+  dashboard, and its settings in the PB-OS tab.
+- **PB-OS tab in Quick Access** (Barry's head): PB-OS Tools and Barry Launcher settings with one native
+  backend, instead of Decky plugins.
 - Two screen Gamescope mod - enabling native DS and 3DS emulation in Game Mode on supported dual screen devices.
 
 ## Credits

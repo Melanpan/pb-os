@@ -1,28 +1,17 @@
-const manifest = {"name":"PB-OS Tools"};
-const API_VERSION = 2;
-const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
-if (!internalAPIConnection) {
-    throw new Error('[@decky/api]: Failed to connect to the loader as as the loader API was not initialized. This is likely a bug in Decky Loader.');
-}
-let api;
-try {
-    api = internalAPIConnection.connect(API_VERSION, manifest.name);
-}
-catch {
-    api = internalAPIConnection.connect(1, manifest.name);
-}
-const callable = api.callable;
-const toaster = api.toaster;
-const definePlugin = (fn) => (...args) => fn(...args);
-
-const DFL = window.DFL;
-const SP_REACT = window.SP_REACT;
-const SP_JSX = window.SP_JSX;
+// PB-OS Tools in PB-OS's Quick Access tab (was the PB-OS Tools Decky
+// plugin, pbos-utils): each former tab is a plugin in the PB-OS list, its
+// component unchanged. pbos-qamd's tools section is the backend.
+// The loader (src/loader.js) gives P: @decky/ui as DFL, Steam's React and
+// JSX, callable(), toaster, events and plugin().
+window.__pbosQam.section("tools", (P) => {
+const { DFL, SP_REACT, SP_JSX, callable, toaster } = P;
+const api = P;
 const { useEffect, useState, useCallback, useRef } = SP_REACT;
 const jsx = SP_JSX.jsx;
 const jsxs = SP_JSX.jsxs;
 
-// Decky callable(): arguments are passed positionally to the Python method.
+// pbos-qamd's tools section (daemon/tools.cpp): arguments are passed
+// positionally, as Decky's callable() passed them to the plugin's Python.
 const getState = callable("get_state");
 const check = callable("check");
 const start = callable("start");
@@ -128,32 +117,6 @@ const GamesIcon = svg(jsx("path", { fillRule: "evenodd", d: "M7 6h10a5 5 0 0 1 4
 
 // A lightning bolt: power and charging.
 const PowerIcon = svg(jsx("path", { d: "M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z" }));
-
-// LB and RB: the controller's bumpers, in Steam's button numbering.
-const GB = DFL.GamepadButton || {};
-const BUMPER_LEFT = GB.BUMPER_LEFT != null ? GB.BUMPER_LEFT : 5;
-const BUMPER_RIGHT = GB.BUMPER_RIGHT != null ? GB.BUMPER_RIGHT : 6;
-
-// The tab shown, kept while Steam runs; at first the first tab (Games).
-let lastTab = null;
-
-function TabBar({ tabs, active, onPick }) {
-    return jsx(DFL.Focusable, {
-        "flow-children": "horizontal",
-        style: { display: "flex", gap: "6px", padding: "0 16px 8px" },
-        children: tabs.map((t) => jsx(DFL.DialogButton, {
-            onClick: () => onPick(t.id),
-            style: {
-                flex: 1, minWidth: 0, height: "40px", padding: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                ...(t.id === active
-                    ? { background: "#1a9fff", color: "#fff" }
-                    : { opacity: 0.8 }),
-            },
-            children: jsx(t.icon, {}),
-        }, t.id)),
-    });
-}
 
 // Sliders send while they move, at most this often, and the last value always.
 const SEND_MS = 120;
@@ -1691,69 +1654,17 @@ function GamesTab() {
     ] });
 }
 
-// ---------------------------------------------------------------- panel ---
-function Content() {
-    const [tab, setTab] = useState(lastTab);
-    const [lights, setLightsKind] = useState(null);
-    const [power, setPower] = useState(null);
-    const [face, setFace] = useState(null);
-    const pick = (id) => { lastTab = id; setTab(id); };
-    useEffect(() => {
-        getLights().then((s) => setLightsKind(s.kind || "")).catch(() => setLightsKind(""));
-        Promise.all([getFaceButtons().catch(() => ({})), stickState().catch(() => ({}))])
-            .then(([f, s]) => setFace(!!f.supported || !!s.supported));
-        Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))])
-            .then(([rest, cc]) => setPower(!!rest.supported || !!cc.supported));
-    }, []);
-    // Until the device's tabs are known, so the tab bar doesn't jump.
-    if (lights === null || power === null || face === null) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    const tabs = [
-        // Games first, on every device.
-        { id: "games", icon: GamesIcon },
-        ...(lights ? [{ id: "lights", icon: LightsIcon }] : []),
-        // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
-        ...(lights === "pbosd" ? [{ id: "performance", icon: PerformanceIcon }, { id: "hardware", icon: HardwareIcon }] : []),
-        // Face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
-        ...(lights !== "pbosd" && face ? [{ id: "hardware", icon: HardwareIcon }] : []),
-        ...(power ? [{ id: "power", icon: PowerIcon }] : []),
-        { id: "update", icon: UpdateIcon },
-        { id: "install", icon: InstallIcon },
-    ];
-    const shown = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
-    const step = (by) => {
-        const i = tabs.findIndex((t) => t.id === shown);
-        pick(tabs[(i + by + tabs.length) % tabs.length].id);
-    };
-    return jsxs(DFL.Focusable, {
-        onButtonDown: (evt) => {
-            const b = evt && evt.detail && evt.detail.button;
-            if (b === BUMPER_LEFT) step(-1);
-            else if (b === BUMPER_RIGHT) step(1);
-        },
-        children: [
-            jsx(TabBar, { tabs, active: shown, onPick: pick }),
-            shown === "games" && jsx(GamesTab, {}),
-            shown === "update" && jsx(UpdateTab, {}),
-            shown === "install" && jsx(InstallTab, {}),
-            shown === "lights" && jsx(LightsTab, {}),
-            shown === "performance" && jsx(PerformanceTab, {}),
-            shown === "hardware" && jsx(HardwareTab, {}),
-            shown === "power" && jsx(PowerTab, {}),
-        ],
-    });
-}
-
 function onAvailable(title) {
-    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS Tools in Quick Access.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `${title} is available. Open PB-OS › Updates in Quick Access.`, duration: 6000 });
 }
 
 function onLocal(version, place) {
-    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS Tools in Quick Access to install it.`, duration: 6000 });
+    toaster.toast({ title: "pb-os update", body: `pb-os ${version} is ${place}. Open PB-OS › Updates in Quick Access to install it.`, duration: 6000 });
 }
 
 function onMoveDone(direction, ok) {
     const what = direction === "sd" ? "Copy to microSD" : "Install to internal storage";
-    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS Tools for the next steps.` : `${what} failed. Open PB-OS Tools for details.`, duration: 8000 });
+    toaster.toast({ title: "PB-OS Tools", body: ok ? `${what} finished. Open PB-OS › Move SteamOS for the next steps.` : `${what} failed. Open PB-OS › Move SteamOS for details.`, duration: 8000 });
 }
 
 // Toast whenever the profile changes (Performance button, pbosctl or the
@@ -1860,31 +1771,36 @@ function protonSoon(appids) {
 }
 let protonEvents = [];
 
-var index = definePlugin(() => {
-    protonSoon(null);
-    protonEvents = [
-        SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
-        SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),
-    ];
-    api.addEventListener("pbos_update_available", onAvailable);
-    api.addEventListener("pbos_mode", onMode);
-    api.addEventListener("pbos_local_available", onLocal);
-    api.addEventListener("pbos_move_done", onMoveDone);
-    return {
-        name: "PB-OS Tools",
-        content: jsx(Content, {}),
-        // A wrench.
-        icon: jsx("svg", { viewBox: "0 0 24 24", width: "1em", height: "1em", fill: "currentColor",
-            children: jsx("path", { d: "M21.7 6.3a6 6 0 0 1-7.9 7.2l-7.4 7.4a2.1 2.1 0 0 1-3-3l7.4-7.4a6 6 0 0 1 7.2-7.9l-3.6 3.6.6 2.9 2.9.6z" }) }),
-        alwaysRender: false,
-        onDismount() {
-            for (const e of protonEvents) if (e && e.unregister) e.unregister();
-            api.removeEventListener("pbos_update_available", onAvailable);
-            api.removeEventListener("pbos_local_available", onLocal);
-            api.removeEventListener("pbos_move_done", onMoveDone);
-            api.removeEventListener("pbos_mode", onMode);
-        },
-    };
-});
+// ------------------------------------------------------------- plugins ---
+// Each former tab is a plugin in the PB-OS list. Games first on every
+// device; the device's own ones (lighting, performance, hardware, power)
+// once the backend has said which it has.
+P.plugin({ id: "games", title: "Game Profiles", icon: GamesIcon, content: GamesTab, order: 10 });
+P.plugin({ id: "update", title: "Updates", icon: UpdateIcon, content: UpdateTab, order: 70 });
+P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: InstallTab, order: 80 });
+(async () => {
+    const lights = await getLights().then((s) => s.kind || "").catch(() => "");
+    const [f, s] = await Promise.all([getFaceButtons().catch(() => ({})), stickState().catch(() => ({}))]);
+    const face = !!f.supported || !!s.supported;
+    const [rest, cc] = await Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))]);
+    const power = !!rest.supported || !!cc.supported;
+    if (lights) P.plugin({ id: "lights", title: "Lighting", icon: LightsIcon, content: LightsTab, order: 20 });
+    // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
+    if (lights === "pbosd") P.plugin({ id: "performance", title: "Performance", icon: PerformanceIcon, content: PerformanceTab, order: 30 });
+    // pbosd's buttons, or face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
+    if (lights === "pbosd" || face) P.plugin({ id: "hardware", title: "Hardware", icon: HardwareIcon, content: HardwareTab, order: 40 });
+    if (power) P.plugin({ id: "power", title: "Power", icon: PowerIcon, content: PowerTab, order: 50 });
+})().catch((e) => P.fail("plugins", e));
 
-export { index as default };
+// While Steam runs (as the Decky plugin did while loaded): Proton PB-OS
+// follows Valve's picks, and the backend's news shows as toasts.
+protonSoon(null);
+protonEvents = [
+    SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
+    SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),
+];
+api.addEventListener("pbos_update_available", onAvailable);
+api.addEventListener("pbos_mode", onMode);
+api.addEventListener("pbos_local_available", onLocal);
+api.addEventListener("pbos_move_done", onMoveDone);
+});

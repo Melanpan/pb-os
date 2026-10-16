@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""PB-OS Utils' light engine: the Retroid Pocket 6 / Nova and AYN Odin 2 /
-Odin 2 Portal stick lights and the shared lighting definitions.
+"""PB-OS Tools' light engine: the Retroid Pocket 6 / Nova and AYN Odin 2 /
+Odin 2 Portal stick lights.
 
-Decky's plugin loader is an x86-64 program run by box64 here, so the plugin
-backend's Python is emulated: Breathing cost 46 % of a core there and under
-1 % on the system's own Python (measured on the Nova). So the effects run
-in their own process on /usr/bin/python3 (`python3 pbos_lights.py`, the
-transient unit pbos-utils-lights, started by the plugin): it shows what
-LIGHTS_STATE says, again on SIGHUP (the plugin sends one after each
-change), and fades the lights back in when their devices come back after a
-sleep. The plugin imports this module only for the definitions and the
-saved settings.
+It runs in its own process on /usr/bin/python3 (`python3 pbos_lights.py`,
+the transient unit pbos-utils-lights, started by pbos-qamd's tools section):
+it shows what LIGHTS_STATE says, again on SIGHUP (pbos-qamd sends one after
+each change), and fades the lights back in when their devices come back
+after a sleep. pbos-qamd (daemon/tools.cpp) keeps its own copy of the
+definitions and the saved settings' reading; keep the two in step.
+
+(It ran beside the PB-OS Tools Decky plugin, whose Python was emulated by
+box64: Breathing cost 46 % of a core there and under 1 % here, measured on
+the Nova.)
 """
 from __future__ import annotations
 

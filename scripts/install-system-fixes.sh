@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LSFG-VK shutdown, AYN Thor touch, Decky SM8550 plugins, Return icon.
+# LSFG-VK shutdown, AYN Thor touch, Decky plugin bundle, Return icon.
 # Usage: install-system-fixes.sh [rootfs]
 set -euo pipefail
 
@@ -172,29 +172,24 @@ fi
 # ── Bundled Decky plugins (built dist, no node_modules) ──
 log "Stage Decky plugins (SOC=${SOC})"
 BUNDLE="$R/usr/share/steamos-odin/decky-plugins"
-# pbosd's settings (KONKR Pocket FIT / AYANEO Pocket S2) are PB-OS Utils'
-# Performance and Hardware tabs. SM8550-Power would fight pbosd over the
-# fan/governors and SM8550-LED drives the AYN MCU LEDs, so neither ships on
-# SM8650. DECKY_PLUGINS (colon-separated paths) overrides.
+# SM8550-Power would fight pbosd over the fan/governors and SM8550-LED
+# drives the AYN MCU LEDs, so neither ships.
+# PB-OS Tools and Barry Launcher are no longer Decky plugins: they are the
+# PB-OS tab in Quick Access (install-pbos-qam.sh, pbos-qamd). Only plugins
+# named in DECKY_PLUGINS (colon-separated paths) are bundled now.
 decky_plugins=()
 if [[ -n "${DECKY_PLUGINS:-}" ]]; then
   IFS=: read -ra decky_plugins <<<"${DECKY_PLUGINS}"
-elif [[ "$SOC" != sm8650 ]]; then
-  # SM8550 and the one image. Dual Screen: AYN Thor bottom screen on/off;
-  # on other devices sync-decky-bundled-plugins.sh --prune and the updater
-  # remove it. (Stick Calibration is PB-OS Tools' Hardware tab now.)
-  decky_plugins=("${MOD}/Decky/sm8550/dual-screen")
 fi
-# PB-OS Utils (updates, moving SteamOS between the card and internal
-# storage, stick lights; hardware: face buttons, sticks, and on the Pocket
-# FIT performance and buttons) on every device.
-decky_plugins+=("${MOD}/Decky/pbos-utils")
 # The bundle is owned by this script: start clean so a rootfs reused from
 # another target keeps no stale plugins.
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE"
-# PB-OS Control became PB-OS Utils' Performance and Hardware tabs.
-rm -rf "${HOME_DST}/homebrew/plugins/pbos-control"
+# PB-OS Control became PB-OS Utils' Performance and Hardware tabs; PB-OS
+# Utils (PB-OS Tools) and Dual Screen (Barry Launcher) became the PB-OS tab.
+rm -rf "${HOME_DST}/homebrew/plugins/pbos-control" \
+  "${BUNDLE}/pbos-utils" "${HOME_DST}/homebrew/plugins/pbos-utils" \
+  "${BUNDLE}/dual-screen" "${HOME_DST}/homebrew/plugins/dual-screen"
 # Renamed to dual-screen.
 rm -rf "${BUNDLE}/thor-screens" "${HOME_DST}/homebrew/plugins/thor-screens"
 # Renamed to pbos-control.
@@ -205,9 +200,6 @@ rm -rf "${BUNDLE}/pbos-update" "${HOME_DST}/homebrew/plugins/pbos-update"
 # Calibration itself (0.5.2.10 - 0.5.2.12), now PB-OS Utils' Hardware tab.
 rm -rf "${BUNDLE}/thor-stick-calibration" "${HOME_DST}/homebrew/plugins/thor-stick-calibration" \
   "${BUNDLE}/stick-calibration" "${HOME_DST}/homebrew/plugins/stick-calibration"
-if [[ "$SOC" == sm8650 ]]; then
-  rm -rf "${HOME_DST}/homebrew/plugins/dual-screen"
-fi
 for src in ${decky_plugins[@]+"${decky_plugins[@]}"}; do
   [[ -f "${src}/plugin.json" && -f "${src}/dist/index.js" ]] || {
     log "WARN: skip $(basename "$src") (not built)"

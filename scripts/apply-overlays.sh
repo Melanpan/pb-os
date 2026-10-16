@@ -1123,7 +1123,9 @@ fi
 # skip it (decky-lsfg-vk installs its own copy).
 rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-ins/" "$HOME_DST/"
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
-# that most people never found — no Decky, so no PB-OS Utils either.
+# that most people never found. (PB-OS's own settings are the PB-OS tab,
+# pbos-qamd, without Decky; Decky stays for decky-lsfg-vk and the user's
+# own plugins.)
 DECKY_VERSION=v3.2.9
 DECKY_SHA256=0a5246db98f2df93a6685ac8230e0acfbfa6e91d99b41b8dbbf1f94c308dedce
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
@@ -1301,6 +1303,9 @@ done
 log "== vendor apps (UFS, MESA, Proton-ARM, Non-Steam, SRM)"
 STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-vendor-apps.sh" "$R" \
   || die "required vendor apps (installer/updater) failed"
+log "== PB-OS Quick Access (the PB-OS tab: PB-OS Tools, Barry Launcher)"
+STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-pbos-qam.sh" "$R" \
+  || die "PB-OS Quick Access failed"
 log "== system fixes (LSFG-VK, Thor, Decky plugins, Return icon)"
 STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-system-fixes.sh" "$R" \
   || log "WARN: system fixes incomplete"
