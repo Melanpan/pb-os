@@ -569,8 +569,22 @@ def _skins_state() -> dict[str, Any]:
         skins.append({"name": s["name"], "title": s.get("title") or s["name"],
                       "author": s.get("author", ""), "builtin": builtin,
                       "variants": variants,
-                      "variant": chosen.get(s["name"]) if chosen.get(s["name"]) in ids else (ids[0] if ids else "")})
+                      "variant": chosen.get(s["name"]) if chosen.get(s["name"]) in ids else (ids[0] if ids else ""),
+                      "added": 0 if builtin else _added_time(s.get("dir", ""))})
+    # Built-in first (Barry Launcher's own, then by title), then the added
+    # ones in the order they came onto the device, the newest last.
+    skins.sort(key=lambda t: (not t["builtin"], t["name"] != "ayn",
+                              t["added"], t["title"].lower()))
     return {"ok": True, "current": current, "skins": skins}
+
+
+def _added_time(path: str) -> float:
+    """When a theme came onto the device: its folder's time (install_theme
+    puts the folder in place in one move, so this is when it was added)."""
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return 0
 
 
 def _skin_name(raw: str) -> str:

@@ -577,7 +577,6 @@ function ThemesSection() {
             if (r && r.ok) setSt(r); else setErr((r && r.error) || "Could not change the color.");
         }).catch(() => setErr("Could not change the color."));
     };
-    const inUse = st ? st.skins.find((t) => t.name === st.current) : null;
     // A variant's swatch, as a small keyboard: its background, a key and the
     // accent key.
     const swatch = (t, v) => {
@@ -613,35 +612,37 @@ function ThemesSection() {
     return jsxs(DFL.PanelSection, { title: "Themes", children: [
         err && note(err),
         // One theme per row, apart from the next: its name (picks it) and,
-        // for one you added, ✕ (removes it).
-        ...(st ? st.skins : []).map((t) => row(jsxs(DFL.Focusable, {
-            "flow-children": "horizontal",
-            style: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" },
-            children: [
-                jsx(DFL.DialogButton, {
-                    onClick: () => use(t),
-                    style: { flex: 1, minWidth: 0, height: "40px", padding: "0 12px",
-                             display: "flex", alignItems: "center", gap: "10px" },
-                    children: [
-                        jsx("span", { style: { width: "14px", color: "#1a9fff" }, children: st.current === t.name ? "✓" : "" }, "c"),
-                        jsx("span", { style: { flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t.title }, "t"),
-                    ],
-                }),
-                !t.builtin && jsx(DFL.DialogButton, {
-                    onClick: () => remove(t),
-                    style: { minWidth: "40px", width: "40px", height: "40px", padding: 0, flexShrink: 0 },
-                    children: "✕",
-                }),
-            ],
-        }))),
-        inUse && inUse.variants.length > 1 && row(jsx(DFL.Focusable, {
-            "flow-children": "horizontal",
-            // Apart from the theme list above it.
-            style: { display: "flex", flexWrap: "wrap", margin: "16px -3px 0" },
-            children: inUse.variants.map((v) => swatch(inUse, v)),
-        })),
-        inUse && inUse.variants.length > 1 && note(`${inUse.title} color: `
-            + ((inUse.variants.find((v) => v.id === inUse.variant) || {}).title || inUse.variant)),
+        // for one you added, ✕ (removes it). The theme in use, if it comes in
+        // several colors, has its color picker right under it.
+        ...(st ? st.skins : []).flatMap((t) => [
+            row(jsxs(DFL.Focusable, {
+                "flow-children": "horizontal",
+                style: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" },
+                children: [
+                    jsx(DFL.DialogButton, {
+                        onClick: () => use(t),
+                        style: { flex: 1, minWidth: 0, height: "40px", padding: "0 12px",
+                                 display: "flex", alignItems: "center", gap: "10px" },
+                        children: [
+                            jsx("span", { style: { width: "14px", color: "#1a9fff" }, children: st.current === t.name ? "✓" : "" }, "c"),
+                            jsx("span", { style: { flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t.title }, "t"),
+                        ],
+                    }),
+                    !t.builtin && jsx(DFL.DialogButton, {
+                        onClick: () => remove(t),
+                        style: { minWidth: "40px", width: "40px", height: "40px", padding: 0, flexShrink: 0 },
+                        children: "✕",
+                    }),
+                ],
+            })),
+            st.current === t.name && t.variants.length > 1 && row(jsx(DFL.Focusable, {
+                "flow-children": "horizontal",
+                style: { display: "flex", flexWrap: "wrap", margin: "4px -3px 0" },
+                children: t.variants.map((v) => swatch(t, v)),
+            })),
+            st.current === t.name && t.variants.length > 1 && note(`${t.title} color: `
+                + ((t.variants.find((v) => v.id === t.variant) || {}).title || t.variant)),
+        ]),
         msg && note(msg),
         row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: add,
             children: busy ? "Working…" : "Add a theme" })),
