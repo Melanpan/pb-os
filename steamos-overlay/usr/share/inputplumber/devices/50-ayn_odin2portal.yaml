@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# AYN Odin 2 Portal rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK
+# AYN Odin 2 Portal rsinput → a real Steam Deck controller (deck) + keyboard (OSK
 # haptic). The Portal is printed with Xbox positions (A at the bottom), so
 # its default map is the positional ayn_mcu_thor; sm8550-face-buttons can
 # switch it to ayn_mcu_nintendo. The back buttons M1/M2 are their own
@@ -9,7 +9,7 @@
 # replaces that file with an Odin 2-only one, so this is the Portal's one
 # config. Matched by model.
 #
-# Do not list USB/BT as ignore sources: deck-uhid is USB (VID 28de) and
+# Do not list USB/BT as ignore sources: the Deck controller is USB (VID 28de) and
 # matching it as a source restarts the composite in a loop (cursor, no Steam).
 # External HID is handled by sm8550-inputplumber-ext-hid (drop keyboard target).
 version: 1
@@ -44,5 +44,5 @@ options:
   auto_manage: true
 
 target_devices:
-  - deck-uhid
+  - deck
   - keyboard

@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# AYANEO Pocket S2 (SM8650) → virtual Steam Deck controller (deck-uhid; valid
+# AYANEO Pocket S2 (SM8650) → a real Steam Deck controller (deck; valid
 # in InputPlumber ≥ 0.70 even though the bundled JSON schema does not list it)
 # + keyboard (OSK, F13/F14 hotkeys).
 #
@@ -70,5 +70,5 @@ options:
   auto_manage: true
 
 target_devices:
-  - deck-uhid
+  - deck
   - keyboard

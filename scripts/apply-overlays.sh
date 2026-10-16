@@ -526,10 +526,10 @@ for s in plasmax11.desktop openbox.desktop openbox-kde.desktop; do
 done
 
 # ---------------------------------------------------------------------------
-# Native rsinput ±740, then InputPlumber deck-uhid + keyboard (OSK haptic).
+# Native rsinput ±740, then InputPlumber's Steam Deck controller + keyboard (OSK haptic).
 # USB/Bluetooth HID is ignored in the composite so it is not grabbed.
 # ---------------------------------------------------------------------------
-log "== gamepad (rsinput ±740 + InputPlumber deck-uhid)"
+log "== gamepad (rsinput ±740 + InputPlumber Steam Deck controller)"
 install_file "$OVL/usr/lib/steamos/sm8550-fixpad" \
   "$R/usr/lib/steamos/sm8550-fixpad" 0755
 install_file "$OVL/usr/lib/systemd/system/sm8550-fixpad.service" \
@@ -551,7 +551,7 @@ install_file "$OVL/etc/profile.d/sm8550-gamepad.sh" \
 "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" "$R"
 
 # ---------------------------------------------------------------------------
-# SM8650 device overlay: Pocket FIT pad (XInput → deck-uhid), APS2 UCM,
+# SM8650 device overlay: Pocket FIT pad (XInput → Steam Deck controller), APS2 UCM,
 # steamos-manager device, dual-SoC audio setup.
 # ---------------------------------------------------------------------------
 log "== SM8650 overlay (KONKR Pocket FIT / AYANEO Pocket S2)"
@@ -1372,7 +1372,7 @@ log "== summary"
   echo "lsfg:      $(ls -l "$R/usr/lib/liblsfg-vk-arm64.so" 2>/dev/null || echo missing)"
   echo "fixpad:    $(ls -l "$R/usr/lib/steamos/sm8550-fixpad" 2>/dev/null || echo missing)"
   echo "inputplumber: $(ls -l "$R/usr/bin/inputplumber" 2>/dev/null || echo missing)"
-  echo "deck-uhid: $(grep -A2 target_devices "$R/usr/share/inputplumber/devices/50-ayn_thor.yaml" 2>/dev/null || echo missing)"
+  echo "pad target: $(grep -A2 target_devices "$R/usr/share/inputplumber/devices/50-ayn_thor.yaml" 2>/dev/null || echo missing)"
   echo "Thor pad map: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_thor.yaml" 2>/dev/null || echo missing)"
   echo "Odin 2 pad maps: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_odin2.yaml" 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
   echo "Odin 2 Portal pad maps: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_odin2portal.yaml" 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"

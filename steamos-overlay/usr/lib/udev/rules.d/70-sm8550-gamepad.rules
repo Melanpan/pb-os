@@ -1,5 +1,5 @@
-# Native AYN / rsinput pad (kernel joystick) + Valve hidraw from deck-uhid.
-# InputPlumber: deck-uhid + keyboard (OSK haptic). USB/BT HID is ignored.
+# Native AYN / rsinput pad (kernel joystick) + Valve hidraw from InputPlumber's
+# Steam Deck controller. InputPlumber: deck + keyboard (OSK haptic). USB/BT HID is ignored.
 
 KERNEL=="uhid", MODE="0660", GROUP="input", TAG+="uaccess"
 SUBSYSTEM=="hidraw", KERNELS=="000[356]:28DE:*", MODE="0660", GROUP="input", TAG+="uaccess"

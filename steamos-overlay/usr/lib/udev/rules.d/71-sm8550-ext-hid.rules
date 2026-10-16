@@ -21,9 +21,12 @@ ACTION=="remove", SUBSYSTEM=="input", KERNEL=="event*", \
   ENV{ID_BUS}=="usb|bluetooth", ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", DEVPATH!="*/vhci_hcd*", \
   RUN+="/usr/bin/systemctl --no-block start sm8550-inputplumber-ext-hid.service"
 
-# InputPlumber's generic Steam controller (deck-uhid, a uhid device) has
-# appeared, for example after steamos-manager reset the composite at boot:
-# on the AYN Thor the helper switches it back to the real Steam Deck
-# controller (deck); elsewhere it only re-checks the keyboard, as above.
+# One of InputPlumber's Steam controllers appeared: the generic one
+# (deck-uhid, a uhid device; steamos-manager resets the composite to it at
+# boot) or a real Steam Deck one (deck, USB/IP on vhci_hcd). The helper keeps
+# the device at one controller, the real Steam Deck one. Its own switch only
+# runs it once more, to no change.
 ACTION=="add", SUBSYSTEM=="hidraw", KERNEL=="hidraw*", DEVPATH=="/devices/virtual/misc/uhid/0003:28DE:*", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="sm8550-inputplumber-ext-hid.service"
+ACTION=="add", SUBSYSTEM=="hidraw", KERNEL=="hidraw*", DEVPATH=="*/vhci_hcd*", KERNELS=="0003:28DE:*", \
   TAG+="systemd", ENV{SYSTEMD_WANTS}+="sm8550-inputplumber-ext-hid.service"

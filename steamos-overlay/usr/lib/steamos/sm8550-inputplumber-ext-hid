@@ -113,15 +113,28 @@ else
   want_kb=1
 fi
 
-# AYN Thor: the real Steam Deck controller (deck, a USB/IP device), so
-# Steam gives Barry Launcher's Deck controls their trackpads (the generic
-# deck-uhid one has none). steamos-manager resets the composite to deck-uhid
-# when it appears (71-sm8550-ext-hid.rules runs this then); put it back.
+# Every device: the real Steam Deck controller (deck, a USB/IP device):
+# Steam knows it as a Steam Deck (its trackpads, which Barry Launcher's Deck
+# controls on the AYN Thor use; emulator defaults bound to "Steam Deck
+# Controller"), where deck-uhid is a generic controller to it. steamos-manager
+# resets the composite to deck-uhid when it appears (71-sm8550-ext-hid.rules
+# runs this then); put it back. Without USB/IP in the kernel: as it is.
 want_pad=""
-if grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null \
-  && modinfo vhci-hcd >/dev/null 2>&1; then
+if modinfo vhci-hcd >/dev/null 2>&1; then
   want_pad=deck
 fi
+
+# One controller per device: InputPlumber's first composite (the built-in pad,
+# made at boot) is it. A second one (another config matching some of the same
+# hardware, a device made later) would be a second controller to Steam and
+# games; it keeps its devices (so they don't show raw) but gets the null
+# target. InputPlumber only manages built-in devices (ManageAllDevices off),
+# so a USB/Bluetooth controller someone plugs in is never touched.
+primary_composite() {
+  busctl --system get-property org.shadowblip.InputPlumber /org/shadowblip/InputPlumber/Manager \
+    org.shadowblip.InputManager GamepadOrder 2>/dev/null \
+    | grep -o 'CompositeDevice[0-9]*' | head -1 | sed 's/CompositeDevice//'
+}
 
 apply() {
   local id="$1" have_kb=0 pad=""
@@ -136,6 +149,14 @@ apply() {
     return 1
   fi
   local new_pad="${want_pad:-$pad}"
+  if [[ -n "$primary" && "$id" != "$primary" ]]; then
+    if [[ "$pad" != null ]]; then
+      logger -t sm8550-inputplumber-ext-hid "composite $id: a second controller; null target (composite $primary is the pad)"
+      set_targets "$id" null || true
+      return 1
+    fi
+    return 0
+  fi
   [[ "$want_kb" -eq "$have_kb" && "$new_pad" == "$pad" ]] && return 0
   if [[ "$want_kb" -eq 1 ]]; then
     logger -t sm8550-inputplumber-ext-hid "composite $id: $new_pad + keyboard"
@@ -151,6 +172,7 @@ apply() {
 # this one (it handles new composites asynchronously).
 for pass in 1 2 3; do
   changed=0
+  primary="$(primary_composite)"
   while read -r id; do
     [[ -n "$id" ]] || continue
     apply "$id" || changed=1

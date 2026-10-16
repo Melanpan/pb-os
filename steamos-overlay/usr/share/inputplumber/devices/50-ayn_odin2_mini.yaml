@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# AYN Odin 2 Mini rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK
+# AYN Odin 2 Mini rsinput → a real Steam Deck controller (deck) + keyboard (OSK
 # haptic). The Mini is printed with Xbox positions (A at the bottom), so its
 # default map is the positional ayn_mcu_thor, the same face-button table as
 # the stock file's ayn3; sm8550-face-buttons can switch it to
@@ -8,7 +8,7 @@
 # Installed over InputPlumber's own 50-ayn_odin2_mini.yaml so the Mini has
 # one config. Matched by model.
 #
-# Do not list USB/BT as ignore sources: deck-uhid is USB (VID 28de) and
+# Do not list USB/BT as ignore sources: the Deck controller is USB (VID 28de) and
 # matching it as a source restarts the composite in a loop (cursor, no Steam).
 # External HID is handled by sm8550-inputplumber-ext-hid (drop keyboard target).
 version: 1
@@ -36,5 +36,5 @@ options:
   auto_manage: true
 
 target_devices:
-  - deck-uhid
+  - deck
   - keyboard

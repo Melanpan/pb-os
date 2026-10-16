@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Install ShadowBlip InputPlumber + SM8550 deck-uhid composite into a SteamOS rootfs.
-# deck-uhid (Steam Deck controller) + keyboard target (touch OSK haptic).
+# Install ShadowBlip InputPlumber + SM8550 composites into a SteamOS rootfs:
+# a real Steam Deck controller (deck target, USB/IP) + keyboard target (touch
+# OSK haptic).
 # USB/Bluetooth HID is ignored in the composite so it is not grabbed.
 set -euo pipefail
 
@@ -175,6 +176,11 @@ install_odin_composite() {
     [[ "$(grep -c 'capability_map_id: rsinput1$' "${dev}/${f}")" == 2 ]] \
       || die "${f}: expected two rsinput1 sources; check the Nintendo layout override"
     sed -i 's/capability_map_id: rsinput1$/capability_map_id: rsinput_nintendo/' "${dev}/${f}"
+    # The real Steam Deck controller as their one pad, as on every device
+    # (InputPlumber's own files say xbox-elite; sm8550-inputplumber-ext-hid).
+    [[ "$(grep -cE '^ *- (xbox-elite|deck-uhid)$' "${dev}/${f}")" == 1 ]] \
+      || die "${f}: expected one gamepad target; check the Deck target override"
+    sed -i -E 's/^( *)- (xbox-elite|deck-uhid)$/\1- deck/' "${dev}/${f}"
   done
   # Earlier builds' second copies of these, in /etc and its overlay upper.
   for f in 02-ayn-odin.yaml 02-ayn-thor.yaml 50-ayn_thor.yaml 50-ayn_odin2.yaml \
@@ -249,5 +255,5 @@ install_tarball
 install_libiio
 install_odin_composite
 verify_needed
-log "Steam will see Valve Steam Deck Controller (deck-uhid)"
+log "Steam will see a real Steam Deck controller (deck target)"
 log "Keyboard target for OSK haptic; USB/BT HID disables that target"

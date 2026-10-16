@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
 # AYN Thor rsinput → virtual Steam Deck (deck: a real Deck controller, USB/IP)
 # + keyboard (OSK haptic). The real Deck (28de:1205), not deck-uhid's generic
-# 12f0, because Steam shows Barry Launcher's Deck trackpads only on it.
+# 12f0, as on every device; Steam shows Barry Launcher's Deck trackpads only
+# on it.
 # steamos-manager resets the composite to deck-uhid (its device file allows
 # no other); sm8550-inputplumber-ext-hid puts it back.
 # Same as 50-ayn_odin2.yaml (without the M1/M2 back buttons), with the Thor's Nintendo face buttons
