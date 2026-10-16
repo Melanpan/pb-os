@@ -158,10 +158,25 @@ def tree_digest(top):
     return h.hexdigest() if top.is_dir() else None
 
 
-def write_state(path, entries, android):
+# Decky Loader itself, in home like the plugins: full packages always carry it,
+# deltas when it differs from any release they install on (states from before
+# this have no 'decky', so the first deltas after it carry it). The updater
+# installs it only over an older Decky (manifest 'decky_loader').
+DECKY = 'home/steamos/homebrew/services'
+DECKY_FILES = ('PluginLoader', '.loader.version')
+
+
+def decky_state(top):
+    """The Decky Loader under top (a rootfs or the stage): version and checksum; None without one."""
+    d = top / DECKY
+    if not all((d / n).is_file() for n in DECKY_FILES): return None
+    return {'version': (d / '.loader.version').read_text().strip(), 'sha256': sha256(d / 'PluginLoader')}
+
+
+def write_state(path, entries, android, decky):
     with gzip.open(path, 'wt') as f:
         json.dump({'format': 1, 'version': version, 'base': release_base, 'image': image, 'kernel': sha256(a.kernel),
-                   'android': android, 'entries': entries}, f, separators=(',', ':'))
+                   'android': android, 'decky': decky, 'entries': entries}, f, separators=(',', ':'))
     print('state', path)
 
 
@@ -205,7 +220,7 @@ if a.state_only:
     keep = set(root_trim.kept(root))
     write_state(Path(a.output).resolve() if a.output else out_dir / f'pb-os-{version}-{image}.state.json.gz',
                 {rel: e for rel, e in tree_state(root).items() if not root_trim.left_out(rel, keep)},
-                tree_digest(root / ANDROID))
+                tree_digest(root / ANDROID), decky_state(root))
     raise SystemExit(0)
 
 output = (Path(a.output) if a.output else out_dir / f'pb-os-{version}-{image}.update.tar.gz').resolve()
@@ -271,6 +286,10 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         if not src.is_dir(): raise SystemExit(f'missing Decky plugin in rootfs home: {name}')
         copy(src, stage / 'home/steamos/homebrew/plugins' / name)
     if (root / ANDROID).is_dir(): copy(root / ANDROID, stage / ANDROID)
+    decky = decky_state(root)
+    if decky is None: raise SystemExit(f'missing Decky Loader in rootfs: {DECKY}')
+    (stage / DECKY).mkdir(parents=True)
+    for n in DECKY_FILES: subprocess.run(['cp', '-a', str(root / DECKY / n), str(stage / DECKY / n)], check=True)
     if a.soc == 'sm8650':
         # Updaters from before the PB-OS Control rename refuse a package without
         # konkr-control; an empty one empties the old plugin, pbosd removes it.
@@ -284,10 +303,10 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
     common = {'architecture': 'aarch64', 'devices': DEVICES, 'version': version, 'remove_plugins': REMOVE}
     new = tree_state(stage / 'root', files)
     android = tree_digest(stage / ANDROID)
-    write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new, android)
+    write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new, android, decky)
     # A patch release ships only its delta (feature releases bring the full system).
     if cumulative is None:
-        pack(stage, output, {'format': 1, **common, 'files': files}, ['root', 'home', 'boot'],
+        pack(stage, output, {'format': 1, **common, 'decky_loader': decky['version'], 'files': files}, ['root', 'home', 'boot'],
              ('thor',) * a.thor_bridge + ('rp6',) * a.rp6_bridge)
 
     def make_delta(olds):
@@ -323,6 +342,10 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
             copy(stage / 'home/steamos/homebrew/plugins' / name, delta / 'home/steamos/homebrew/plugins' / name)
         # States from before it moved to home have no checksum: it goes along.
         if android and any(o.get('android') != android for o in olds): copy(stage / ANDROID, delta / ANDROID)
+        with_decky = any(o.get('decky') != decky for o in olds)
+        if with_decky:
+            (delta / DECKY).mkdir(parents=True)
+            for n in DECKY_FILES: os.link(stage / DECKY / n, delta / DECKY / n)
         members = ['home']
         if (delta / 'root').exists(): members.insert(0, 'root')
         if kernel:
@@ -332,10 +355,12 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         name = f'pb-os-{version}-{image}.from-{base["version"]}.delta.tar.gz'
         also = [o['version'] for o in olds[1:]]
         print(f'delta from {base["version"]}{" (also " + ", ".join(also) + ")" if also else ""}: '
-              f'{len(changed)} changed, {len(deleted)} deleted, kernel {"yes" if kernel else "no"}')
+              f'{len(changed)} changed, {len(deleted)} deleted, kernel {"yes" if kernel else "no"}, '
+              f'Decky Loader {decky["version"] if with_decky else "no"}')
         # also_from: the patches it also installs on (updaters without it check `from` only).
         pack(delta, out_dir / name, {'format': 2, 'kind': 'delta', 'from': base['version'],
                                     **({'also_from': also} if also else {}), **common,
+                                    **({'decky_loader': decky['version']} if with_decky else {}),
                                     'delete': deleted, 'files': dfiles}, members, ('rp6',) * a.rp6_bridge)
 
     for base in bases: make_delta([base])

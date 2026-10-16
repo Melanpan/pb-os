@@ -19,7 +19,7 @@ It reads the releases of [pb-os-updates](https://github.com/project-barry/pb-os-
    Without internet in Game Mode, PB-OS Utils takes the update from a microSD card, a USB drive or the Downloads folder instead (below).
 2. Preparation runs before the restart, while Steam keeps running, with its progress in PB-OS Utils. It checks the archive and works out exactly what changes: for a full package it compares each file's header with the installed system and unpacks only what differs (a delta carries only what changed anyway). It checks those files against the manifest, backs up the `/usr` and `/opt` files it will replace, checks free space and copies a private recovery runtime to HOME. It saves the current boot image and installs the new one, which carries the recovery hook.
 3. On restart, the initramfs mounts the same root, boot and HOME filesystems, verifies their UUIDs, and runs the package's updater. It shows **Installing update** with a progress bar and pulsing dots on the screen, backs up the `/etc` files it will replace, then writes and deletes only the planned files. The restart step takes about as long as the change is big, not as long as the system is big.
-4. It installs the Decky plugins the package carries, removes the device plugins it lists for removal, checks every file it wrote, then boots SteamOS. Accounts, passwords, machine-id, hostname, fstab, SSH keys and network connections in `/etc` are kept.
+4. It installs the Decky plugins the package carries, removes the device plugins it lists for removal, installs the package's Decky Loader when the device has an older one (below), checks every file it wrote, then boots SteamOS. Accounts, passwords, machine-id, hostname, fstab, SSH keys and network connections in `/etc` are kept.
 5. An interrupted apply or rollback is recovered on the next boot. A failed apply restores the backup and reboots into the previous kernel. If recovery itself cannot finish, normal boot stops and the log is left on HOME.
 
 No partition table is changed and no filesystem is formatted. SD and internal installs use the same process. HOME needs room for the download plus about twice the size of the files that change. The root partition must also fit the new system.
@@ -27,6 +27,8 @@ No partition table is changed and no filesystem is formatted. SD and internal in
 A device knows its version (`/usr/share/pb-os/version`) and its feature release (`/usr/share/pb-os/base`; images from before have none and count as their own). A delta installs only on the versions its manifest lists. Updaters from before deltas (alpha v0.3 and v0.3a) don't see them and take the full package.
 
 The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
+
+**Decky Loader** (`~/homebrew/services/PluginLoader`, the version pinned in `scripts/apply-overlays.sh`) comes with updates too. A full package always carries it; a delta carries it when the pinned version differs from that of any release the delta installs on, so a device that skips releases still gets it. It is installed only over an older Decky Loader, never over the same or a newer one (Decky can also update itself from its own settings), owned by root like Decky's own updater leaves it. A rollback puts the previous one back.
 
 ## Cleaning up
 

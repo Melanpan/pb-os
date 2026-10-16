@@ -1062,6 +1062,79 @@ def plugin_dirs(work, manifest):
             [f'{PLUGINS}/{n}' for n in remove if n not in install] + gone)
 
 
+# Decky Loader itself: the image's homebrew/services/PluginLoader and its
+# version. Packages carry it (deltas when it changed). It goes in only over an
+# older Decky, never over the same or a newer one (Decky also updates itself
+# from its own settings). Decided once at the backup (backup/decky.json), so
+# the apply, its check and a rollback agree.
+DECKY = 'homebrew/services'
+DECKY_FILES = (('PluginLoader', 0o755), ('.loader.version', 0o644))
+
+
+def decky_version(v):
+    """'v3.2.10' -> (3, 2, 10, 1); a prerelease ('v3.2.11-pre1') sorts before
+    its release. None when unreadable."""
+    m = re.fullmatch(r'v?(\d+)\.(\d+)\.(\d+)(\S*)', (v or '').strip())
+    return (int(m[1]), int(m[2]), int(m[3]), 0 if m[4] else 1) if m else None
+
+
+def decky_install(home, work, manifest):
+    """Whether this update puts its Decky Loader on this device."""
+    new = decky_version(manifest.get('decky_loader'))
+    src = work / 'payload/home/steamos' / DECKY
+    if new is None or not all((src / name).is_file() for name, _ in DECKY_FILES): return False
+    try: old = decky_version((home / 'steamos' / DECKY / '.loader.version').read_text())
+    except OSError: old = None
+    return old is None or new > old
+
+
+def decky_decided(work):
+    """The backup's decision: install Decky Loader or not (False for backups from before it)."""
+    f = work / 'backup/decky.json'
+    return f.is_file() and json.loads(f.read_text()).get('install', False)
+
+
+def decky_backup(home, work, manifest):
+    backup = work / 'backup'
+    install = decky_install(home, work, manifest)
+    present = {}
+    if install:
+        for name, _ in DECKY_FILES:
+            src = home / 'steamos' / DECKY / name
+            present[name] = src.is_file()
+            if present[name]:
+                (backup / 'decky').mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, backup / 'decky' / name)
+    write_json(backup / 'decky.json', {'install': install, 'present': present})
+
+
+def decky_put(src, dst, mode):
+    """dst replaced by src in one step (a cut power leaves the old or the new file)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + '.pbos-new')
+    shutil.copyfile(src, tmp)
+    os.chown(tmp, 0, 0); os.chmod(tmp, mode)
+    with open(tmp, 'rb') as f: os.fsync(f.fileno())
+    os.replace(tmp, dst)
+
+
+def decky_apply(home, work):
+    if not decky_decided(work): return
+    for name, mode in DECKY_FILES:
+        decky_put(work / 'payload/home/steamos' / DECKY / name, home / 'steamos' / DECKY / name, mode)
+
+
+def decky_restore(home, work):
+    f = work / 'backup/decky.json'
+    if not f.is_file(): return
+    d = json.loads(f.read_text())
+    if not d.get('install'): return
+    for name, mode in DECKY_FILES:
+        dst = home / 'steamos' / DECKY / name
+        if d['present'].get(name): decky_put(work / 'backup/decky' / name, dst, mode)
+        else: dst.unlink(missing_ok=True)
+
+
 # ── The change plan ──────────────────────────────────────────────────────────
 # Every package, full or delta, is applied as a list of root paths to write and
 # a list to delete, worked out before the restart. The restart then backs up,
@@ -1301,7 +1374,7 @@ def apply_plan(root, work, plan, progress=None):
     if p.wait() != 0: raise ValueError(f'copying the new files failed (rsync {p.returncode})')
 
 
-def verify_written(root, home, manifest, plan, install, progress=None):
+def verify_written(root, home, manifest, plan, install, progress=None, decky=False):
     """Check every regular file the update wrote against the package manifest."""
     files = manifest['files']
     for rel in plan['write']:
@@ -1310,7 +1383,8 @@ def verify_written(root, home, manifest, plan, install, progress=None):
         if digest(root / rel) != sha: raise ValueError(f'installed checksum mismatch: root/{rel}')
         if progress: progress((root / rel).stat().st_size)
     for name, sha in files.items():
-        if any(name.startswith('home/steamos/' + rel + '/') for rel in install):
+        if (any(name.startswith('home/steamos/' + rel + '/') for rel in install)
+                or decky and name.startswith(f'home/steamos/{DECKY}/')):
             if digest(home / name[5:]) != sha: raise ValueError(f'installed checksum mismatch: {name}')
 
 
@@ -1337,6 +1411,7 @@ def snapshot(root, home, work, manifest, plan, progress=None):
         if src.exists(): copy_tree(src, backup / 'home/steamos' / rel)
     # Explicitly record absent directories so rollback removes newly introduced ones.
     write_json(backup / 'home-presence.json', {rel: (home / 'steamos' / rel).exists() for rel in install + remove})
+    decky_backup(home, work, manifest)
     local = home / 'steamos/.local/share/vulkan/implicit_layer.d'
     if local.exists(): copy_tree(local, backup / 'layers')
     write_json(backup / 'layers-presence.json', {'exists': local.exists()})
@@ -1359,6 +1434,7 @@ def restore(root, boot, home, work):
         dest = home / 'steamos' / rel
         if present[rel]: copy_tree(backup / 'home/steamos' / rel, dest, delete=True)
         elif dest.exists(): shutil.rmtree(dest)
+    decky_restore(home, work)
     layers = home / 'steamos/.local/share/vulkan/implicit_layer.d'
     if json.loads((backup / 'layers-presence.json').read_text())['exists']:
         copy_tree(backup / 'layers', layers, delete=True)
@@ -1581,6 +1657,7 @@ def apply(root, boot, home, work, manifest, plan, progress):
     # Plugins of other devices or older images (the snapshot restores them on rollback).
     for rel in remove:
         if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
+    decky_apply(home, work)
     # Old frame-gen layer manifests, but never one this package installs:
     # lsfg-vk 1.x ships /usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json.
     for prefix in (root / 'usr', root / 'usr/local', home / 'steamos/.local'):
@@ -1589,7 +1666,7 @@ def apply(root, boot, home, work, manifest, plan, progress):
             if layer.is_relative_to(root) and f'root/{layer.relative_to(root)}' in manifest['files']: continue
             layer.unlink(missing_ok=True)
     progress.phase('check')
-    verify_written(root, home, manifest, plan, install, progress.add)
+    verify_written(root, home, manifest, plan, install, progress.add, decky_decided(work))
     os.sync()
     install_kernel(work / 'next-KERNEL', boot)
 
