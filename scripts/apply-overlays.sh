@@ -1126,8 +1126,8 @@ rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-in
 # that most people never found. (PB-OS's own settings are the PB-OS tab,
 # pbos-qamd, without Decky; Decky stays for decky-lsfg-vk and the user's
 # own plugins.)
-DECKY_VERSION=v3.2.9
-DECKY_SHA256=0a5246db98f2df93a6685ac8230e0acfbfa6e91d99b41b8dbbf1f94c308dedce
+DECKY_VERSION=v3.2.10
+DECKY_SHA256=c2cf316a53e1c1d318c6dda8821c827e5db275922987f9097956d7a1576e8258
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then
   mkdir -p "${DECKY_LOADER%/*}"
