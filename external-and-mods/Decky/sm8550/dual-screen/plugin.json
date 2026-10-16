@@ -5,7 +5,7 @@
   "flags": [
     "root"
   ],
-  "version": "1.19.2",
+  "version": "1.20.0",
   "publish": {
     "tags": [
       "ayn",
@@ -14,7 +14,7 @@
       "dual-screen",
       "bottom-screen"
     ],
-    "description": "The AYN Thor's Barry Launcher settings, in tabs (LB/RB switch them): turn the bottom screen and its touch off and on, set the stick lights' dimmer; opens Barry Launcher's keyboard on the bottom screen in place of Steam's; sets melonDS, Azahar and Cemu to show their second screen there; shows, hides and orders Barry Launcher's home apps; picks Barry Launcher's theme, adds themes (from a USB drive or Downloads) and removes added ones.",
+    "description": "The AYN Thor's Barry Launcher settings, in tabs (LB/RB switch them): turn the bottom screen and its touch off and on, set the stick lights' dimmer; opens Barry Launcher's keyboard on the bottom screen in place of Steam's; sets melonDS, Azahar and Cemu to show their second screen there; shows, hides and orders Barry Launcher's home apps; picks Barry Launcher's theme and its keyboards' language, adds themes and language packs (from a USB drive or Downloads) and removes added ones.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
   }
 }

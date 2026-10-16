@@ -48,6 +48,12 @@ automounts ext4, so a FAT or exFAT stick is mounted read-only here for the
 pick, and unmounted after), unpacked safely into
 ~/.local/share/barry_launcher/skins as the user; and removing an added
 theme (the built-in ones stay, as the built-in apps do).
+
+Also the keyboards' language packs, the same way: the one in use (written
+to ~/.config/barry_launcher/keyboard.json, which Barry.Input watches),
+adding one (an archive, or a pack folder's keyboard.json; checked as
+Barry.Input reads it) into ~/.local/share/barry_launcher/keyboards as the
+user, and removing an added one.
 """
 from __future__ import annotations
 
@@ -648,12 +654,19 @@ def _usb_unmount() -> None:
                 pass
 
 
-def _skin_source(path: str, work: str) -> tuple[str, str]:
-    """The theme folder in what was picked (an archive, or a theme's
-    skin.json), unpacked into work if needed, and its name."""
-    import shutil, tarfile, zipfile
+# What install_theme and install_language add: a folder known by the file
+# at its top (MARKER), unpacked from an archive or picked by that file.
+THEME = {"noun": "theme", "marker": "skin.json", "name_max": 40}
+LANGUAGE = {"noun": "language", "marker": "keyboard.json", "name_max": 32}
+
+
+def _pack_source(path: str, work: str, kind: dict) -> tuple[str, str]:
+    """The folder in what was picked (an archive, or the kind's marker file
+    in a folder), unpacked into work if needed, and its name."""
+    import tarfile, zipfile
+    noun, marker = kind["noun"], kind["marker"]
     path = os.path.realpath(path)
-    if os.path.basename(path) == "skin.json":
+    if os.path.basename(path) == marker:
         src = os.path.dirname(path)
         return src, os.path.basename(src)
     base = os.path.basename(path)
@@ -672,7 +685,7 @@ def _skin_source(path: str, work: str) -> tuple[str, str]:
                 total += info.file_size
                 files += 1
                 if total > SKIN_BYTES_MAX or files > SKIN_FILES_MAX:
-                    raise ValueError("the archive is too big for a theme")
+                    raise ValueError(f"the archive is too big for a {noun}")
             z.extractall(out)
     elif tarfile.is_tarfile(path):
         with tarfile.open(path) as t:
@@ -685,60 +698,66 @@ def _skin_source(path: str, work: str) -> tuple[str, str]:
                 total += m.size
                 files += 1
                 if total > SKIN_BYTES_MAX or files > SKIN_FILES_MAX:
-                    raise ValueError("the archive is too big for a theme")
+                    raise ValueError(f"the archive is too big for a {noun}")
             t.extractall(out, members=members)
     else:
-        raise ValueError("pick a theme's .zip or .tar.gz, or the skin.json in a theme's folder")
-    # skin.json at the top, or in the one folder at the top.
-    if os.path.isfile(os.path.join(out, "skin.json")):
+        raise ValueError(f"pick a {noun}'s .zip or .tar.gz, or the {marker} in a {noun}'s folder")
+    # The marker at the top, or in the one folder at the top.
+    if os.path.isfile(os.path.join(out, marker)):
         return out, stem
     entries = [e for e in os.listdir(out) if not e.startswith(".") and e != "__MACOSX"]
-    if len(entries) == 1 and os.path.isfile(os.path.join(out, entries[0], "skin.json")):
+    if len(entries) == 1 and os.path.isfile(os.path.join(out, entries[0], marker)):
         return os.path.join(out, entries[0]), entries[0]
-    raise ValueError("no skin.json in it: not a Barry Launcher theme")
+    raise ValueError(f"no {marker} in it: not a Barry Launcher {noun}")
 
 
-def _check_skin_dir(src: str) -> dict[str, Any]:
+def _check_pack_dir(src: str, kind: dict) -> tuple[dict, bool]:
+    """The folder's marker file, read, and whether the folder has code in it
+    (QML or JavaScript, which runs as the user)."""
+    noun = kind["noun"]
     total = files = 0
     code = False
     for root, dirs, names in os.walk(src):
         for n in dirs + names:
             p = os.path.join(root, n)
             if os.path.islink(p):
-                raise ValueError("the theme has links in it")
+                raise ValueError(f"the {noun} has links in it")
         for n in names:
             p = os.path.join(root, n)
             if not os.path.isfile(p):
-                raise ValueError("the theme has special files in it")
+                raise ValueError(f"the {noun} has special files in it")
             total += os.path.getsize(p)
             files += 1
             code = code or n.endswith((".qml", ".js", ".mjs"))
     if total > SKIN_BYTES_MAX or files > SKIN_FILES_MAX:
-        raise ValueError("too big for a theme")
-    with open(os.path.join(src, "skin.json"), encoding="utf-8") as fh:
+        raise ValueError(f"too big for a {noun}")
+    with open(os.path.join(src, kind["marker"]), encoding="utf-8") as fh:
         meta = json.load(fh)
     if not isinstance(meta, dict):
-        raise ValueError("skin.json is not a theme's")
-    return {"title": str(meta.get("title") or ""), "author": str(meta.get("author") or ""), "code": code}
+        raise ValueError(f"{kind['marker']} is not a {noun}'s")
+    return meta, code
 
 
-def _install_skin(path: str, check_only: bool) -> dict[str, Any]:
+def _install_pack(path: str, check_only: bool, kind: dict, into: str,
+                  describe) -> dict[str, Any]:
+    """Unpack what was picked, check it (describe(meta, src) gives its
+    title, or raises), and put it in into/<name> as the user, in one move."""
     import shutil, tempfile
-    skins = _skins_dir()
-    _make_user_dirs(skins)
-    work = tempfile.mkdtemp(prefix=".install-", dir=skins)
+    noun = kind["noun"]
+    _make_user_dirs(into)
+    work = tempfile.mkdtemp(prefix=".install-", dir=into)
     try:
-        src, raw_name = _skin_source(path, work)
-        info = _check_skin_dir(src)
-        name = _skin_name(raw_name) or _skin_name(info["title"])
+        src, raw_name = _pack_source(path, work, kind)
+        meta, code = _check_pack_dir(src, kind)
+        info = describe(meta, src)
+        name = (_skin_name(raw_name) or _skin_name(info["title"]))[:kind["name_max"]].strip("-")
         if not name:
-            raise ValueError("the theme has no usable name")
-        title = info["title"] or name
-        dest = os.path.join(skins, name)
-        theme = {"name": name, "title": title, "author": info["author"], "code": info["code"],
-                 "replaces": os.path.isdir(dest)}
+            raise ValueError(f"the {noun} has no usable name")
+        dest = os.path.join(into, name)
+        pack = {**info, "name": name, "title": info["title"] or name, "code": code,
+                "replaces": os.path.isdir(dest)}
         if check_only:
-            return {"ok": True, "theme": theme}
+            return {"ok": True, noun: pack}
         stage = os.path.join(work, "stage")
         shutil.copytree(src, stage, symlinks=False)
         uid, gid = _owner()
@@ -751,11 +770,17 @@ def _install_skin(path: str, check_only: bool) -> dict[str, Any]:
         if os.path.isdir(dest):
             shutil.rmtree(dest)
         os.rename(stage, dest)
-        return {"ok": True, "theme": theme}
+        return {"ok": True, noun: pack}
     except (OSError, ValueError, EOFError) as err:
-        return {"ok": False, "error": f"Could not add the theme: {err}"}
+        return {"ok": False, "error": f"Could not add the {noun}: {err}"}
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _install_skin(path: str, check_only: bool) -> dict[str, Any]:
+    def describe(meta: dict, src: str) -> dict:
+        return {"title": str(meta.get("title") or ""), "author": str(meta.get("author") or "")}
+    return _install_pack(path, check_only, THEME, _skins_dir(), describe)
 
 
 def _remove_skin(name: str) -> dict[str, Any]:
@@ -771,6 +796,133 @@ def _remove_skin(name: str) -> dict[str, Any]:
         names = {t["name"] for t in state["skins"]} - {name}
         _statsd("POST", "/settings", {"skin": next((f for f in SKINS_FALLBACK if f in names), "ayn")})
     return {"ok": True, **_skins_state()}
+
+
+# Language packs (Barry Launcher keyboards) -----------------------------
+
+# Barry.Input's KeyboardLanguages reads the packs from these (the user's
+# winning over a shipped one with the same id) and the one in use from
+# LANGUAGE_CHOICE; it watches both, so a change here shows at once.
+LANGUAGES_SYSTEM = "/usr/share/barry_launcher/keyboards"
+LANGUAGE_CHOICE = ".config/barry_launcher/keyboard.json"
+LANGUAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+# As in keyboardlanguages.cpp: keys in a row, characters a key types, and
+# the names Barry gives its own keys.
+LANGUAGE_ROW_MAX = 14
+LANGUAGE_KEY_MAX = 8
+LANGUAGE_RESERVED = {"shift", "BackSpace", "space", "Return", "symbols", "keys", "abc", "hide",
+                     "lang", "ctrl", "alt", "super", "Escape", "Tab", "Home", "End", "Delete",
+                     "Left", "Right", "Up", "Down", "Prior", "Next", "copy", "paste", "cut",
+                     "selectall", "undo", "redo"}
+
+
+def _languages_dir() -> str:
+    return os.path.join(_user_home(), ".local/share/barry_launcher/keyboards")
+
+
+def _check_language(meta: dict, src: str) -> dict[str, Any]:
+    """keyboard.json read as Barry.Input reads it (keyboardlanguages.cpp
+    load()): a pack it would leave out is refused here, with the reason."""
+    name = str(meta.get("name") or "").strip()
+    if not name:
+        raise ValueError("keyboard.json needs a name")
+
+    def rows_ok(rows) -> bool:
+        return (isinstance(rows, list) and 3 <= len(rows) <= 4
+                and all(isinstance(r, list) and 1 <= len(r) <= LANGUAGE_ROW_MAX
+                        and all(isinstance(k, str) and 0 < len(k) <= LANGUAGE_KEY_MAX
+                                and k not in LANGUAGE_RESERVED for k in r) for r in rows))
+    rows = meta.get("rows")
+    if not rows_ok(rows):
+        raise ValueError(f"rows must be 3 or 4 lists of 1-{LANGUAGE_ROW_MAX} keys, each the text it types")
+    if "shiftRows" in meta:
+        shift = meta["shiftRows"]
+        if not rows_ok(shift) or [len(r) for r in shift] != [len(r) for r in rows]:
+            raise ValueError("shiftRows must have the same rows and keys as rows")
+    for key in ("words", "composer"):
+        rel = meta.get(key)
+        if rel:
+            p = os.path.realpath(os.path.join(src, str(rel)))
+            if not p.startswith(os.path.realpath(src) + "/") or not os.path.isfile(p):
+                raise ValueError(f"{rel} is not a file in the pack's folder")
+    label = str(meta.get("label") or "").strip()
+    return {"title": name, "label": label[:4]}
+
+
+def _language_choice() -> str:
+    try:
+        with open(os.path.join(_user_home(), LANGUAGE_CHOICE), encoding="utf-8") as fh:
+            return str(json.load(fh).get("language") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def _languages_state() -> dict[str, Any]:
+    """Every language pack Barry Launcher's keyboards can type in, and the
+    one in use (the one chosen; else English; else the first, as Barry)."""
+    found: dict[str, dict] = {}
+    for base, builtin in ((LANGUAGES_SYSTEM, True), (_languages_dir(), False)):
+        try:
+            ids = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for pid in ids:
+            d = os.path.join(base, pid)
+            if not LANGUAGE_ID.match(pid) or not os.path.isdir(d):
+                continue
+            try:
+                with open(os.path.join(d, "keyboard.json"), encoding="utf-8") as fh:
+                    meta = json.load(fh)
+                info = _check_language(meta if isinstance(meta, dict) else {}, d)
+            except (OSError, ValueError) as err:
+                decky.logger.warning(f"languages: {pid} ({base}) left out: {err}")
+                continue
+            found[pid] = {"name": pid, "title": info["title"],
+                          "label": info["label"] or pid[:3].upper(), "builtin": builtin,
+                          "added": 0 if builtin else _added_time(d)}
+    langs = sorted(found.values(), key=lambda t: (not t["builtin"], t["name"] != "en",
+                                                  t["added"], t["title"].lower()))
+    chosen = _language_choice()
+    current = next((c for c in (chosen, "en") if c in found), langs[0]["name"] if langs else "en")
+    return {"ok": True, "current": current, "languages": langs}
+
+
+def _set_language(name: str) -> dict[str, Any]:
+    """Write the choice where Barry.Input keeps it: both keyboards change."""
+    state = _languages_state()
+    if not any(t["name"] == name for t in state["languages"]):
+        return {"ok": False, "error": "That language isn't on this device."}
+    path = os.path.join(_user_home(), LANGUAGE_CHOICE)
+    _make_user_dirs(os.path.dirname(path))
+    uid, gid = _owner()
+    tmp = path + ".plugin-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"language": name}, fh, indent=4)
+        fh.write("\n")
+    os.chown(tmp, uid, gid)
+    os.chmod(tmp, 0o644)
+    os.rename(tmp, path)
+    return {**state, "current": name}
+
+
+def _install_language(path: str, check_only: bool) -> dict[str, Any]:
+    return _install_pack(path, check_only, LANGUAGE, _languages_dir(), _check_language)
+
+
+def _remove_language(name: str) -> dict[str, Any]:
+    """Delete a language pack the user added (never a shipped one); if it
+    was in use, the keyboards change to English (or the shipped pack with
+    its id, should there be one)."""
+    import shutil
+    state = _languages_state()
+    lang = next((t for t in state["languages"] if t["name"] == name), None)
+    if not lang or lang["builtin"]:
+        return {"ok": False, "error": "Only a language you added can be removed."}
+    shutil.rmtree(os.path.join(_languages_dir(), name))
+    after = _languages_state()
+    if state["current"] == name and not any(t["name"] == name for t in after["languages"]):
+        return _set_language(after["current"])
+    return after
 
 
 def _rgb_dimmer(state: dict | None) -> int | None:
@@ -911,7 +1063,7 @@ class Plugin:
             return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
 
     async def themes_folder(self, **_: Any) -> dict[str, Any]:
-        """Where the file picker starts: a USB drive when one is plugged in
+        """Where the file picker starts, for a theme or a language pack: a USB drive when one is plugged in
         (mounted read-only for the pick if SteamOS has not mounted it), else
         Downloads."""
         try:
@@ -941,6 +1093,32 @@ class Plugin:
             return await asyncio.to_thread(_remove_skin, str(name))
         except (OSError, ValueError, KeyError) as err:
             return {"ok": False, "error": f"Could not remove the theme ({err})."}
+
+    async def get_languages(self, **_: Any) -> dict[str, Any]:
+        """Barry Launcher's keyboard languages and the one in use."""
+        try:
+            return await asyncio.to_thread(_languages_state)
+        except OSError as err:
+            return {"ok": False, "error": f"Could not read the languages ({err})."}
+
+    async def set_language(self, name: str = "", **_: Any) -> dict[str, Any]:
+        """Use the language name; both of Barry Launcher's keyboards change."""
+        try:
+            return await asyncio.to_thread(_set_language, str(name))
+        except OSError as err:
+            return {"ok": False, "error": f"Could not change the language ({err})."}
+
+    async def check_language(self, path: str = "", **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(_install_language, str(path), True)
+
+    async def install_language(self, path: str = "", **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(_install_language, str(path), False)
+
+    async def remove_language(self, name: str = "", **_: Any) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(_remove_language, str(name))
+        except OSError as err:
+            return {"ok": False, "error": f"Could not remove the language ({err})."}
 
     async def get_game_links(self, **_: Any) -> dict[str, Any]:
         try:

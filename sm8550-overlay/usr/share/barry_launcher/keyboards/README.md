@@ -10,6 +10,14 @@ Add your own in:
 `<id>` is the folder's name: letters, digits, `-` or `_` (`de`, `fr-azerty`,
 `ru`). A pack of yours with the same id as a shipped one takes its place.
 
+The Barry Launcher Decky plugin's Languages tab (the globe) does this for
+you: "Add a language" opens a USB drive when one is plugged in, otherwise
+Downloads. Pick the pack's `.zip` (or `.tar.gz`), with `keyboard.json` at
+its top or in one folder at its top, or the `keyboard.json` in a pack's
+folder. The id is that folder's name (or the archive's), in lowercase. The
+tab also picks the language in use and removes packs you added. A pack with
+a composer asks before it is added, since its code runs as you.
+
 Barry picks a pack up as soon as it is copied in, changed or removed. No
 restart is needed. With two or more packs, the keyboard gets a language key
 (it shows the pack's label) next to Fn: tap it for the next language. The

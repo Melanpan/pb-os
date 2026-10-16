@@ -180,6 +180,9 @@ def key_positions(rows: list) -> dict:
     return {key: (x + (widest - len(row)) / 2, y)
             for y, row in enumerate(rows) for x, key in enumerate(row) if len(key) == 1}
 COST_NEAR, COST_FAR, COST_SWAP, COST_EXTRA, COST_DOUBLE, COST_MISSING = 0.45, 1.0, 0.6, 0.9, 0.4, 0.9
+# A letter typed for its held-key form ("e" for "é"): the commonest slip in
+# languages with accents, so cheaper than a neighboring key.
+COST_ACCENT = 0.15
 # Tuned on simulated typos against rarer real words (SCOWL 50) left as
 # typed: about 4 in 5 typos fixed, under 1 in 25 such words changed.
 MAX_COST = 0.9  # the most a correction may cost
@@ -201,15 +204,18 @@ INFLECTIONS = (("s", ("",)), ("es", ("", "e")), ("ies", ("y",)), ("ied", ("y",))
                ("ly", ("",)), ("ness", ("",)), ("able", ("", "e")))
 
 
-def sub_cost(a: str, b: str, positions: dict = QWERTY) -> float:
+def sub_cost(a: str, b: str, positions: dict = QWERTY, fold: dict | None = None) -> float:
+    if fold and fold.get(a, a) == fold.get(b, b):
+        return COST_ACCENT
     pa, pb = positions.get(a), positions.get(b)
     if pa and pb and math.dist(pa, pb) <= NEIGHBOUR:
         return COST_NEAR
     return COST_FAR
 
 
-def typo_cost(typed: str, word: str, positions: dict = QWERTY) -> float:
-    """Damerau-Levenshtein with keyboard-aware costs."""
+def typo_cost(typed: str, word: str, positions: dict = QWERTY, fold: dict | None = None) -> float:
+    """Damerau-Levenshtein with keyboard-aware costs; fold maps a held key's
+    letter to its key's ("é" -> "e")."""
     n, m = len(typed), len(word)
     d = [[0.0] * (m + 1) for _ in range(n + 1)]
     for i in range(1, n + 1):
@@ -219,7 +225,7 @@ def typo_cost(typed: str, word: str, positions: dict = QWERTY) -> float:
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             a, b = typed[i - 1], word[j - 1]
-            best = d[i - 1][j - 1] + (0.0 if a == b else sub_cost(a, b, positions))
+            best = d[i - 1][j - 1] + (0.0 if a == b else sub_cost(a, b, positions, fold))
             # An extra letter: a doubled one, or a slip that hit two keys.
             extra = COST_DOUBLE if (i > 1 and typed[i - 2] == a) or (j and word[j - 1] == a) else COST_EXTRA
             best = min(best, d[i - 1][j] + extra)
@@ -247,10 +253,17 @@ class Corrector:
         self.english = decoder.english
         self.positions = key_positions(rows) if rows else QWERTY
         self.alphabet = None
+        # A held key's letter and its key's ("é": "e"), for words typed
+        # without their accents (not English: it has none).
+        self.fold: dict[str, str] = {}
         if not self.english:
             self.alphabet = {c for c in self.positions if c.isalpha()}
             for alts in (more or {}).values():
                 self.alphabet.update(c.lower() for alt in alts for c in alt if c.isalpha())
+            for base, alts in (more or {}).items():
+                for alt in alts:
+                    if len(base) == 1 and base.isalpha() and len(alt) == 1 and alt.isalpha() and alt != base:
+                        self.fold.setdefault(alt.lower(), base.lower())
         self.level: dict[str, int] = {}
         self.typed: dict[str, str] = {}  # lower-case -> as typed ("steamos" -> "SteamOS")
         for word, _letters, level in decoder.words:
@@ -274,7 +287,7 @@ class Corrector:
         for plain in self.level:
             if "'" in plain:
                 continue
-            for key in deletes(plain) | {plain}:
+            for key in deletes(plain) | {plain, self.plain(plain)}:
                 self.index.setdefault(key, []).append(plain)
         self.sorted = sorted(self.level)
         self.personal_path = personal_path
@@ -285,6 +298,11 @@ class Corrector:
                     self.personal = {l.strip().lower() for l in fh if l.strip()}
             except OSError:
                 pass
+
+    def plain(self, word: str) -> str:
+        """The word with each held key's letter as its key's ("teléfono" ->
+        "telefono"), so one typed without accents finds it."""
+        return "".join(self.fold.get(c, c) for c in word) if self.fold else word
 
     def known(self, word: str) -> bool:
         w = word.lower()
@@ -329,11 +347,11 @@ class Corrector:
         if len(word) < 3 or self.known(word):
             return None
         candidates = set()
-        for key in deletes(plain) | {plain}:
+        for key in deletes(plain) | {plain, self.plain(plain)}:
             candidates.update(self.index.get(key, ()))
         scored = []
         for cand in candidates:
-            cost = typo_cost(plain, cand, self.positions)
+            cost = typo_cost(plain, cand, self.positions, self.fold)
             if cost <= MAX_COST:
                 scored.append((-COST_WEIGHT * cost + LEVEL_PRIOR.get(self.level[cand], -3.0), cand))
         if not scored:
@@ -355,12 +373,12 @@ class Corrector:
         if len(plain) < 2 or not plain.isalpha():
             return []
         candidates = set()
-        for key in deletes(plain) | {plain}:
+        for key in deletes(plain) | {plain, self.plain(plain)}:
             candidates.update(self.index.get(key, ()))
         candidates.discard(plain)
         scored = []
         for cand in candidates:
-            cost = typo_cost(plain, cand, self.positions)
+            cost = typo_cost(plain, cand, self.positions, self.fold)
             if cost <= MAX_COST:
                 scored.append((-COST_WEIGHT * cost + LEVEL_PRIOR.get(self.level[cand], -3.0), cand))
         scored.sort(reverse=True)

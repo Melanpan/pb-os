@@ -47,6 +47,11 @@ const themesDone = callable("themes_done");
 const checkTheme = callable("check_theme");
 const installTheme = callable("install_theme");
 const removeTheme = callable("remove_theme");
+const getLanguages = callable("get_languages");
+const setLanguage = callable("set_language");
+const checkLanguage = callable("check_language");
+const installLanguage = callable("install_language");
+const removeLanguage = callable("remove_language");
 // Decky's file browser (select 0: a file), as @decky/api's openFilePicker.
 const ARCHIVE_EXTENSIONS = ["zip", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tar"];
 
@@ -267,6 +272,13 @@ const ThemesIcon = () => svg([
     jsx("circle", { cx: 17.2, cy: 10, r: 1.2, fill: "currentColor", stroke: "none" }, "d"),
 ]);
 
+// A globe: the keyboards' languages.
+const LanguagesIcon = () => svg([
+    jsx("circle", { cx: 12, cy: 12, r: 9 }, "o"),
+    jsx("path", { d: "M3 12h18" }, "e"),
+    jsx("path", { d: "M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" }, "m"),
+]);
+
 // LB and RB: the controller's bumpers, in Steam's button numbering.
 const GB = DFL.GamepadButton || {};
 const BUMPER_LEFT = GB.BUMPER_LEFT != null ? GB.BUMPER_LEFT : 5;
@@ -485,6 +497,94 @@ function AppsSection() {
     ] });
 }
 
+// Adding a theme or a language pack: the file picker opens on a USB drive
+// when one is plugged in (mounted read-only for the pick), else Downloads;
+// what is picked is checked, then added. One with code in it (QML) is asked
+// first, with code(pack) as the reason.
+async function addPack({ noun, extensions, check, install, code, setBusy, setErr, setMsg, load }) {
+    setErr(""); setMsg("");
+    let start;
+    try {
+        setBusy(true);
+        start = await themesFolder();
+    } catch (e) {
+        start = null;
+    }
+    setBusy(false);
+    if (!start || !start.ok) {
+        setErr((start && start.error) || "Could not open the folder.");
+        return;
+    }
+    let picked;
+    try {
+        picked = await api.openFilePicker(0, start.path, true, true, undefined, extensions, false, true);
+    } catch (e) {
+        themesDone().catch(() => {});
+        return;  // closed without a file
+    }
+    const path = picked && (picked.realpath || picked.path);
+    if (!path) { themesDone().catch(() => {}); return; }
+    const doInstall = async () => {
+        setBusy(true);
+        try {
+            const r = await install(path);
+            if (r && r.ok) {
+                setMsg(`${r[noun].replaces ? "Updated" : "Added"} ${r[noun].title}.`);
+                load();
+            } else setErr((r && r.error) || `Could not add the ${noun}.`);
+        } catch (e) {
+            setErr(`Could not add the ${noun}.`);
+        }
+        setBusy(false);
+        themesDone().catch(() => {});
+    };
+    let c;
+    try {
+        setBusy(true);
+        c = await check(path);
+    } catch (e) {
+        c = null;
+    }
+    setBusy(false);
+    if (!c || !c.ok) {
+        setErr((c && c.error) || `Could not read the ${noun}.`);
+        themesDone().catch(() => {});
+        return;
+    }
+    const pack = c[noun];
+    if (!pack.code) { doInstall(); return; }
+    DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: `Add ${pack.title}?`,
+        strDescription: code(pack),
+        strOKButtonText: "Add",
+        onOK: doInstall,
+        onCancel: () => themesDone().catch(() => {}),
+    }));
+}
+
+// A row of a list of themes or languages: its name (picks it; ✓ = in use)
+// and, for one you added, ✕ (removes it).
+const pickRow = ({ title, on, onPick, onRemove }) => row(jsxs(DFL.Focusable, {
+    "flow-children": "horizontal",
+    style: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" },
+    children: [
+        jsx(DFL.DialogButton, {
+            onClick: onPick,
+            style: { flex: 1, minWidth: 0, height: "40px", padding: "0 12px",
+                     display: "flex", alignItems: "center", gap: "10px" },
+            children: [
+                jsx("span", { style: { width: "14px", color: "#1a9fff" }, children: on ? "✓" : "" }, "c"),
+                jsx("span", { style: { flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: title }, "t"),
+            ],
+        }),
+        onRemove && jsx(DFL.DialogButton, {
+            onClick: onRemove,
+            style: { minWidth: "40px", width: "40px", height: "40px", padding: 0, flexShrink: 0 },
+            children: "✕",
+        }),
+    ],
+}));
+
 // Barry Launcher's themes: the one in use (picked here, it changes at once),
 // adding one (from a USB drive when one is plugged in, else Downloads), and
 // removing one you added, as with apps (the built-in ones stay).
@@ -510,66 +610,12 @@ function ThemesSection() {
     };
     // A theme's .zip or .tar.gz, or the skin.json in its folder. One with its
     // own screens (QML) is asked first.
-    const add = async () => {
-        setErr(""); setMsg("");
-        let start;
-        try {
-            setBusy(true);
-            start = await themesFolder();
-        } catch (e) {
-            start = null;
-        }
-        setBusy(false);
-        if (!start || !start.ok) {
-            setErr((start && start.error) || "Could not open the folder.");
-            return;
-        }
-        let picked;
-        try {
-            picked = await api.openFilePicker(0, start.path, true, true, undefined, THEME_EXTENSIONS, false, true);
-        } catch (e) {
-            themesDone().catch(() => {});
-            return;  // closed without a file
-        }
-        const path = picked && (picked.realpath || picked.path);
-        if (!path) { themesDone().catch(() => {}); return; }
-        const doInstall = async () => {
-            setBusy(true);
-            try {
-                const r = await installTheme(path);
-                if (r && r.ok) {
-                    setMsg(`${r.theme.replaces ? "Updated" : "Added"} ${r.theme.title}.`);
-                    load();
-                } else setErr((r && r.error) || "Could not add the theme.");
-            } catch (e) {
-                setErr("Could not add the theme.");
-            }
-            setBusy(false);
-            themesDone().catch(() => {});
-        };
-        let c;
-        try {
-            setBusy(true);
-            c = await checkTheme(path);
-        } catch (e) {
-            c = null;
-        }
-        setBusy(false);
-        if (!c || !c.ok) {
-            setErr((c && c.error) || "Could not read the theme.");
-            themesDone().catch(() => {});
-            return;
-        }
-        if (!c.theme.code) { doInstall(); return; }
-        DFL.showModal(jsx(DFL.ConfirmModal, {
-            strTitle: `Add ${c.theme.title}?`,
-            strDescription: `${c.theme.title} draws Barry Launcher's screens with its own code, which runs on this device `
-                + "as you. Add it only if you trust where it came from.",
-            strOKButtonText: "Add",
-            onOK: doInstall,
-            onCancel: () => themesDone().catch(() => {}),
-        }));
-    };
+    const add = () => addPack({
+        noun: "theme", extensions: THEME_EXTENSIONS, check: checkTheme, install: installTheme,
+        code: (t) => `${t.title} draws Barry Launcher's screens with its own code, which runs on this device `
+            + "as you. Add it only if you trust where it came from.",
+        setBusy, setErr, setMsg, load,
+    });
     // A color of the theme in use (its skin.json "variants").
     const recolor = (t, v) => {
         setErr(""); setMsg("");
@@ -615,26 +661,8 @@ function ThemesSection() {
         // for one you added, ✕ (removes it). The theme in use, if it comes in
         // several colors, has its color picker right under it.
         ...(st ? st.skins : []).flatMap((t) => [
-            row(jsxs(DFL.Focusable, {
-                "flow-children": "horizontal",
-                style: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" },
-                children: [
-                    jsx(DFL.DialogButton, {
-                        onClick: () => use(t),
-                        style: { flex: 1, minWidth: 0, height: "40px", padding: "0 12px",
-                                 display: "flex", alignItems: "center", gap: "10px" },
-                        children: [
-                            jsx("span", { style: { width: "14px", color: "#1a9fff" }, children: st.current === t.name ? "✓" : "" }, "c"),
-                            jsx("span", { style: { flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t.title }, "t"),
-                        ],
-                    }),
-                    !t.builtin && jsx(DFL.DialogButton, {
-                        onClick: () => remove(t),
-                        style: { minWidth: "40px", width: "40px", height: "40px", padding: 0, flexShrink: 0 },
-                        children: "✕",
-                    }),
-                ],
-            })),
+            pickRow({ title: t.title, on: st.current === t.name, onPick: () => use(t),
+                      onRemove: !t.builtin && (() => remove(t)) }),
             st.current === t.name && t.variants.length > 1 && row(jsx(DFL.Focusable, {
                 "flow-children": "horizontal",
                 style: { display: "flex", flexWrap: "wrap", margin: "4px -3px 0" },
@@ -647,6 +675,65 @@ function ThemesSection() {
         row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: add,
             children: busy ? "Working…" : "Add a theme" })),
         note("A theme comes as a .zip (or .tar.gz), or as a folder: pick the skin.json in it. "
+            + "With a USB drive plugged in, the files open there; otherwise in Downloads."),
+    ] });
+}
+
+// The keyboards' languages: the one in use (picked here, both of Barry
+// Launcher's keyboards change at once), adding a language pack the way a
+// theme is added, and removing one you added (the shipped ones stay).
+const LANGUAGE_EXTENSIONS = [...ARCHIVE_EXTENSIONS, "json"];
+
+function LanguagesSection() {
+    const [st, setSt] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState("");
+    const [msg, setMsg] = useState("");
+    const load = useCallback(() => {
+        getLanguages().then((r) => {
+            if (r && r.ok) { setSt(r); setErr(""); }
+            else setErr((r && r.error) || "Could not read the languages.");
+        }).catch(() => setErr("Could not read the languages."));
+    }, []);
+    useEffect(load, [load]);
+    const use = (l) => {
+        setErr(""); setMsg("");
+        setLanguage(l.name).then((r) => {
+            if (r && r.ok) setSt(r); else setErr((r && r.error) || "Could not change the language.");
+        }).catch(() => setErr("Could not change the language."));
+    };
+    // A pack's .zip or .tar.gz, or the keyboard.json in its folder. One with
+    // a composer (QML) is asked first.
+    const add = () => addPack({
+        noun: "language", extensions: LANGUAGE_EXTENSIONS, check: checkLanguage, install: installLanguage,
+        code: (l) => `${l.title} has its own code for typing (a composer), which runs on this device `
+            + "as you. Add it only if you trust where it came from.",
+        setBusy, setErr, setMsg, load,
+    });
+    const remove = (l) => DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: `Remove ${l.title}?`,
+        strDescription: "The language pack is deleted."
+            + (st && st.current === l.name ? " The keyboards change to English." : ""),
+        strOKButtonText: "Remove",
+        onOK: () => {
+            setErr(""); setMsg("");
+            removeLanguage(l.name).then((r) => {
+                if (r && r.ok) { setSt(r); setMsg(`Removed ${l.title}.`); }
+                else setErr((r && r.error) || "Could not remove the language.");
+            }).catch(() => setErr("Could not remove the language."));
+        },
+    }));
+    return jsxs(DFL.PanelSection, { title: "Keyboard Languages", children: [
+        err && note(err),
+        ...(st ? st.languages : []).map((l) => pickRow({
+            title: `${l.title} (${l.label})`, on: st.current === l.name, onPick: () => use(l),
+            onRemove: !l.builtin && (() => remove(l)),
+        })),
+        st && st.languages.length > 1 && note("On the keyboard, the language key next to Fn changes it too."),
+        msg && note(msg),
+        row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: add,
+            children: busy ? "Working…" : "Add a language" })),
+        note("A language pack comes as a .zip (or .tar.gz), or as a folder: pick the keyboard.json in it. "
             + "With a USB drive plugged in, the files open there; otherwise in Downloads."),
     ] });
 }
@@ -775,6 +862,7 @@ function Content() {
         { id: "screens", icon: ThorIcon },
         { id: "apps", icon: AppsIcon },
         { id: "themes", icon: ThemesIcon },
+        { id: "languages", icon: LanguagesIcon },
         { id: "games", icon: GamesIcon },
         ...(st.rgbDimmer != null ? [{ id: "lights", icon: RgbIcon }] : []),
         { id: "emulators", icon: HandheldIcon },
@@ -817,6 +905,7 @@ function Content() {
     ] }),
     shown === "apps" && jsx(AppsSection, {}),
     shown === "themes" && jsx(ThemesSection, {}),
+    shown === "languages" && jsx(LanguagesSection, {}),
     shown === "games" && jsx(GamesSection, {}),
     shown === "emulators" && jsx(TwoScreenSection, {}),
     ] });
