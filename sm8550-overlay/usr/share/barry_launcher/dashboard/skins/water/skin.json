@@ -1,0 +1,29 @@
+{
+  "title": "Water",
+  "author": "PB-OS",
+  "api": 1,
+  "colors": {
+    "background": "#061a2e",
+    "surface": "#0a243d",
+    "panel": "#0d2c4a",
+    "raised": "#143b5f",
+    "pressed": "#1d4f7a",
+    "border": "#1f4a70",
+    "borderQuiet": "#16395a",
+    "text": "#e4f6ff",
+    "accent": "#3fd0f0",
+    "accentFill": "#0f3f5c",
+    "lit": "#1fa8d6",
+    "litText": "#ffffff",
+    "key": "#123a5e",
+    "keyText": "#bdeeff",
+    "keySpecial": "#0e5f6e",
+    "keySpecialText": "#d8fbff",
+    "keyAction": "#1fa8d6",
+    "keyActionText": "#ffffff",
+    "keyShadow": "#071c30",
+    "icon": "#5fdcf5",
+    "danger": "#ff6b6b",
+    "cover": "#061a2e"
+  }
+}
