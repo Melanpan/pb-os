@@ -17,7 +17,7 @@ Rectangle {
     radius: 28 * s
 
     readonly property var fanNames: ({ eco: "Quiet", balanced: "Balanced", performance: "Performance", max: "Max" })
-    // Colour slider: white at its left end, then the hues round to red again.
+    // Color slider: white at its left end, then the hues round to red again.
     readonly property real whiteEnd: 0.07
 
     function colorAt(p) {
@@ -112,7 +112,7 @@ Rectangle {
             }
         }
 
-        // Stick lighting: colour slider, on/off, brightness
+        // Stick lighting: color slider, on/off, brightness
         RowLayout {
             visible: !!qc.light
             Layout.fillWidth: true

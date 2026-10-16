@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 // SteamOS: the dashboard drawn the way SteamOS's own Game Mode draws
 // (Steam's CSS) on true black (pixels off on the AMOLED): Steam's #23262e
-// panels, flat tiles with small corners, grey uppercase labels, and the current FPS on Steam's blue
+// panels, flat tiles with small corners, gray uppercase labels, and the current FPS on Steam's blue
 // gradient (#47bfff to #1a44c2). The same layout as the built-in dashboard
 // (status bar, current FPS, temperature, fan, gauges, quick controls); the
 // colors are skin.json's (Barry.Input's Skin), which the keyboards,

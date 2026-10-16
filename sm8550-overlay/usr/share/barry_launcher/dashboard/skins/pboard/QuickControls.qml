@@ -112,7 +112,7 @@ Rectangle {
             }
         }
 
-        // Stick lighting: colour slider, on/off, brightness
+        // Stick lighting: color slider, on/off, brightness
         RowLayout {
             visible: !!qc.light
             Layout.fillWidth: true

@@ -162,7 +162,7 @@ Rectangle {
         Grid {
             id: grid
             anchors.horizontalCenter: parent.horizontalCenter
-            // Centred on the screen when there is room, as high as needed
+            // Centered on the screen when there is room, as high as needed
             // when not.
             y: Math.max(20 * home.s, Math.min((flick.height - height) / 2 + 35 * home.s,
                                               flick.height - height - 20 * home.s))

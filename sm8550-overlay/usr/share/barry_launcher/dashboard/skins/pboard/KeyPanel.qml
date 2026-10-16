@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
 // The Pboard skin's keys: the built-in keyboard (shell/KeyPanel.qml), whose
 // behavior this keeps, drawn as a modern phone keyboard in its dark theme:
-// flat rounded keys on a near-black panel, the letters a soft grey, Shift,
-// Backspace, comma, period and Enter a blue-grey, ?123 and Enter as pills,
+// flat rounded keys on a near-black panel, the letters a soft gray, Shift,
+// Backspace, comma, period and Enter a blue-gray, ?123 and Enter as pills,
 // space a plain letter key, and a key lighter while pressed. The built-in
 // file's notes follow.
 //
@@ -236,7 +236,7 @@ Rectangle {
         readonly property bool special: panel.controller.isNamed(k)
         // Enter only: space stays a letter key here.
         readonly property bool action: k === "Return"
-        // Blue-grey: the named keys but space, and comma and period.
+        // Blue-gray: the named keys but space, and comma and period.
         readonly property bool tinted: (special && k !== "space") || k === "," || k === "."
         // What it types now (Shift's character while shifted).
         readonly property string out: { panel.controller.shifted; return panel.controller.output(k) }
