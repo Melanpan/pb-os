@@ -18,7 +18,7 @@ const BINDING = "__pbosQamCall";
 const QAM_TAB_KEY = 998; // Decky's own tab is 999 (QuickAccessTab.Decky)
 const GROUPS = { tools: "PB-OS Tools", barry: "Barry Launcher" };
 
-const status = { tabPatched: false, tabRendered: 0, toaster: "", sections: [], errors: [] };
+const status = { dfl: "", tabPatched: false, tabRendered: 0, toaster: "", sections: [], errors: [] };
 
 function note(msg) {
     try {
@@ -121,6 +121,24 @@ function reactGlobals(webpack) {
         window.SP_JSX = jsxModule && jsxModule.jsxs ? jsxModule
             : { jsx: jsxModule && jsxModule.jsx, jsxs: jsxModule && jsxModule.jsx, Fragment: window.SP_REACT && window.SP_REACT.Fragment };
     }
+}
+
+// @decky/ui: Decky's own (window.DFL) whenever Decky is installed. Starting
+// our bundled copy in a page where Decky's already runs (its webpack module
+// cache alone was enough) made Steam's UI die a second later (React #31,
+// then Steam quit): an AYN Thor on 0.5.4.4, Decky loaded first as it is at
+// every boot, 2026-10-16. Ours only without Decky, or if Decky's never comes.
+const DECKY_WAIT_S = 90;
+async function deckyUI() {
+    if (BOOT.decky) for (let i = 0; i < DECKY_WAIT_S * 10 && !window.DFL; i++) await sleep(100);
+    if (window.DFL) {
+        status.dfl = "decky";
+        return window.DFL;
+    }
+    if (BOOT.decky) note(`Decky's @decky/ui never came (${DECKY_WAIT_S} s): using our own`);
+    status.dfl = "own";
+    reactGlobals(require("@decky/ui/dist/webpack"));
+    return require("@decky/ui");
 }
 
 // ------------------------------------------------------------ the icon ---
@@ -470,7 +488,7 @@ async function probe(DFL) {
     item("webpack chunks", !!window.webpackChunksteamui, "window.webpackChunksteamui");
     item("React", !!window.SP_REACT, window.SP_REACTDOM && window.SP_REACTDOM.version);
     item("JSX runtime", !!(window.SP_JSX && window.SP_JSX.jsx));
-    item("@decky/ui", !!DFL);
+    item("@decky/ui", !!DFL, status.dfl === "decky" ? "Decky's (window.DFL)" : "our own copy");
     {
         const find = (f) => { try { return f(); } catch (e) { return null; } };
         const qam = find(() => DFL.findModuleByExport((e) => e && e.type && e.type.toString && e.type.toString().includes("QuickAccessMenuBrowserView")));
@@ -524,12 +542,10 @@ async function start() {
     const queued = [];
     window.__pbosQam = { ...bridge, section: (name, fn) => queued.push([name, fn]) };
     await waitForSteam();
-    const webpack = require("@decky/ui/dist/webpack");
-    reactGlobals(webpack);
-    const DFL = require("@decky/ui");
-    // pbos-qamd --check runs this in the running tab, with its own @decky/ui:
-    // loading a second copy into Steam's page made Steam quit (seen in the
-    // Thor VM, 2026-10-16).
+    const DFL = await deckyUI();
+    // pbos-qamd --check runs this in the running tab, with the @decky/ui in
+    // use: loading another copy into Steam's page made Steam quit (seen in
+    // the Thor VM, 2026-10-16).
     // A toast as the sections send them (tests: pbos-qamd's probe).
     window.__pbosQam.toast = (t) => toast(DFL, t);
     window.__pbosQam.probe = () => probe(DFL).catch((e) => ({

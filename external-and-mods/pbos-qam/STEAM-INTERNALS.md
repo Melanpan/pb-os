@@ -120,3 +120,14 @@ So with Decky installed (pbos-qamd checks `plugin_loader.service`), PB-OS
 toasts go through Decky's toaster, and the PB-OS tab only uses its own
 toaster when Decky is not installed. The check's "toast renderer" item
 matters for that case.
+
+@decky/ui is Decky's own (`window.DFL`) too: with Decky installed the tab
+waits for it (up to 90 s) and never starts its bundled copy. Our copy
+started in a page where Decky's already ran (its webpack module cache was
+enough) made Steam's UI die about a second later (React error #31, then
+Steam quit; black top screen on an AYN Thor on 0.5.4.4, 2026-10-16). The VM
+missed it because there the tab happened to load before Decky. The check's
+"@decky/ui" item says which copy is in use; with Decky installed it must
+say Decky's. Before a release, test on a device where Decky has loaded
+first: restart Steam, wait until `window.DeckyPluginLoader` exists, then
+start pbos-qamd.
