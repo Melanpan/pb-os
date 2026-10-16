@@ -1,0 +1,28 @@
+{
+  "title": "SteamOS",
+  "author": "PB-OS",
+  "api": 1,
+  "colors": {
+    "background": "#000000",
+    "surface": "#000000",
+    "panel": "#23262e",
+    "raised": "#3d4450",
+    "pressed": "#ffffff",
+    "border": "#3d4450",
+    "borderQuiet": "#23262e",
+    "text": "#dcdedf",
+    "accent": "#1a9fff",
+    "accentFill": "#15456b",
+    "lit": "#1a9fff",
+    "litText": "#ffffff",
+    "key": "#23262e",
+    "keyText": "#ffffff",
+    "keySpecial": "#3d4450",
+    "keySpecialText": "#ffffff",
+    "keyAction": "#1a9fff",
+    "keyActionText": "#ffffff",
+    "icon": "#dcdedf",
+    "danger": "#de3618",
+    "cover": "#000000"
+  }
+}

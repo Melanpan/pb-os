@@ -26,7 +26,6 @@ fi
 if ! $in_unit; then
   exec systemctl --user start barry_launcher_desktop.service
 fi
-systemctl --user start barry_launcher_inputd.service
 # The bottom touchscreen is KWin's: Barry's trackpad takes it while open and
 # could not give it back if the session ended meanwhile, which KWin then
 # keeps across logins (kcminputrc), leaving Barry deaf to touch.
@@ -54,8 +53,8 @@ if [[ ",$rules," != *",$rule,"* ]]; then
   kwriteconfig6 --file kwinrulesrc --group General --key rules "$rules"
   kwriteconfig6 --file kwinrulesrc --group General --key count "$(tr , "\n" <<<"$rules" | grep -c .)"
 fi
-kwriteconfig6 --file kwinrulesrc --group "$rule" --key Description "Barry Launcher: keyboard and trackpad windows never take focus"
-kwriteconfig6 --file kwinrulesrc --group "$rule" --key title "^Barry Launcher (Keyboard|Trackpad|Top Keyboard)$"
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key Description "Barry Launcher: keyboard, trackpad and Deck windows never take focus"
+kwriteconfig6 --file kwinrulesrc --group "$rule" --key title "^Barry Launcher (Keyboard|Trackpad|Top Keyboard|Deck)$"
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key titlematch 3
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocus false
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocusrule 2

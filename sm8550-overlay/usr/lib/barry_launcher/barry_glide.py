@@ -12,6 +12,11 @@ Python: the filters leave a few hundred words to score.
 
 Coordinates are the keyboard's own (any unit); keys maps each letter to its
 key centre and key_size is a key's width in the same unit.
+
+Any language: a keyboard pack's words.txt is a Decoder's dictionary, and its
+rows place the keys for the Corrector's typo costs. English (the default)
+also gets the rules only it has: "i" as "I", contractions without their
+apostrophe, common slips ("teh") and word endings ("hoping").
 """
 from __future__ import annotations
 
@@ -77,7 +82,8 @@ def display(word: str) -> str:
 
 
 class Decoder:
-    def __init__(self, words_path: str) -> None:
+    def __init__(self, words_path: str, english: bool = True) -> None:
+        self.english = english
         self.words: list[tuple[str, str, int]] = []  # (word, its letter keys, level)
         self.by_ends: dict[tuple[str, str], list[int]] = {}
         with open(words_path, encoding="utf-8") as fh:
@@ -103,12 +109,18 @@ class Decoder:
             self._ideal[(layout, letters)] = cached
         return cached
 
-    def decode(self, path: list, keys: dict, key_size: float, limit: int = 4) -> list[str]:
-        """The likeliest words for a glide, best first; [] for a tap or no match."""
+    def decode(self, path: list, keys: dict, key_size: float, limit: int = 4,
+               fold: dict | None = None) -> list[str]:
+        """The likeliest words for a glide, best first; [] for a tap or no match.
+        fold: letters typed with a held key ("é") and the key they are on
+        ("e"), so words with them can be glided too."""
         path = [tuple(p) for p in path]
         if len(path) < 2 or path_length(path) < 0.8 * key_size:
             return []
         keys = {c: tuple(xy) for c, xy in keys.items() if len(c) == 1 and c.isalpha()}
+        for alt, base in (fold or {}).items():
+            if base in keys and alt not in keys:
+                keys[alt] = keys[base]
         layout = tuple(sorted(keys.items()))
         if len(self._ideal) > 20000:
             self._ideal.clear()
@@ -143,7 +155,7 @@ class Decoder:
         scored.sort(reverse=True)
         out = []
         for _, word in scored:
-            w = display(word)
+            w = display(word) if self.english else word
             if w not in out:
                 out.append(w)
             if len(out) == limit:
@@ -158,6 +170,15 @@ class Decoder:
 QWERTY = {c: (x + off, y) for y, (row, off) in enumerate((("qwertyuiop", 0.0), ("asdfghjkl", 0.5), ("zxcvbnm", 1.5)))
           for x, c in enumerate(row)}
 NEIGHBOUR = 1.5  # key widths: a slip onto a neighbouring key
+
+
+def key_positions(rows: list) -> dict:
+    """Key centres in key widths for a pack's letter rows, centred under
+    one another as the keyboard draws them (QWERTY's rows: offsets 0, 0.5,
+    1.5)."""
+    widest = max((len(r) for r in rows), default=0)
+    return {key: (x + (widest - len(row)) / 2, y)
+            for y, row in enumerate(rows) for x, key in enumerate(row) if len(key) == 1}
 COST_NEAR, COST_FAR, COST_SWAP, COST_EXTRA, COST_DOUBLE, COST_MISSING = 0.45, 1.0, 0.6, 0.9, 0.4, 0.9
 # Tuned on simulated typos against rarer real words (SCOWL 50) left as
 # typed: about 4 in 5 typos fixed, under 1 in 25 such words changed.
@@ -180,14 +201,14 @@ INFLECTIONS = (("s", ("",)), ("es", ("", "e")), ("ies", ("y",)), ("ied", ("y",))
                ("ly", ("",)), ("ness", ("",)), ("able", ("", "e")))
 
 
-def sub_cost(a: str, b: str) -> float:
-    pa, pb = QWERTY.get(a), QWERTY.get(b)
+def sub_cost(a: str, b: str, positions: dict = QWERTY) -> float:
+    pa, pb = positions.get(a), positions.get(b)
     if pa and pb and math.dist(pa, pb) <= NEIGHBOUR:
         return COST_NEAR
     return COST_FAR
 
 
-def typo_cost(typed: str, word: str) -> float:
+def typo_cost(typed: str, word: str, positions: dict = QWERTY) -> float:
     """Damerau-Levenshtein with keyboard-aware costs."""
     n, m = len(typed), len(word)
     d = [[0.0] * (m + 1) for _ in range(n + 1)]
@@ -198,7 +219,7 @@ def typo_cost(typed: str, word: str) -> float:
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             a, b = typed[i - 1], word[j - 1]
-            best = d[i - 1][j - 1] + (0.0 if a == b else sub_cost(a, b))
+            best = d[i - 1][j - 1] + (0.0 if a == b else sub_cost(a, b, positions))
             # An extra letter: a doubled one, or a slip that hit two keys.
             extra = COST_DOUBLE if (i > 1 and typed[i - 2] == a) or (j and word[j - 1] == a) else COST_EXTRA
             best = min(best, d[i - 1][j] + extra)
@@ -218,20 +239,31 @@ class Corrector:
     """Corrections and completions for tapped words. Words the user keeps
     (by undoing a correction) count as known from then on."""
 
-    def __init__(self, decoder: Decoder, personal_path: str | None = None) -> None:
+    def __init__(self, decoder: Decoder, personal_path: str | None = None, rows: list | None = None,
+                 more: dict | None = None) -> None:
+        """rows: a keyboard pack's letter rows (lower case), for typo costs;
+        QWERTY's without. With more (its held keys' letters), the letters a
+        correctable word is made of; English keeps to plain ASCII."""
+        self.english = decoder.english
+        self.positions = key_positions(rows) if rows else QWERTY
+        self.alphabet = None
+        if not self.english:
+            self.alphabet = {c for c in self.positions if c.isalpha()}
+            for alts in (more or {}).values():
+                self.alphabet.update(c.lower() for alt in alts for c in alt if c.isalpha())
         self.level: dict[str, int] = {}
         self.typed: dict[str, str] = {}  # lower-case -> as typed ("steamos" -> "SteamOS")
         for word, _letters, level in decoder.words:
             plain = word.lower()
             self.level.setdefault(plain, level)
             self.typed.setdefault(plain, word)
-        for w, typed in (("a", "a"), ("i", "I")):
+        for w, typed in (("a", "a"), ("i", "I")) if self.english else ():
             self.level.setdefault(w, 10)
             self.typed.setdefault(w, typed)
         # Contractions typed without the apostrophe ("dont"), unless that is
         # a word itself ("cant", "wont", "its", "well").
         self.contractions = {}
-        for plain, typed in self.typed.items():
+        for plain, typed in self.typed.items() if self.english else ():
             if "'" in plain:
                 bare = plain.replace("'", "")
                 if bare not in self.level:
@@ -259,7 +291,7 @@ class Corrector:
         if w in self.level or w.replace("'", "") in self.level or w in self.personal:
             return True
         # Forms the list leaves out ("couplings"): a known word plus an ending.
-        for end, back in INFLECTIONS:
+        for end, back in INFLECTIONS if self.english else ():
             if w.endswith(end) and len(w) - len(end) >= 3:
                 stem = w[: len(w) - len(end)]
                 if any(stem + b in self.level for b in back):
@@ -283,12 +315,15 @@ class Corrector:
 
         Leaves alone: known words, words of one or two letters, and anything
         with digits, symbols or capitals past the first letter."""
-        if not word.isalpha() or not word.isascii() or any(c.isupper() for c in word[1:]):
+        if not word.isalpha() or any(c.isupper() for c in word[1:]):
             return None
         plain = word.lower()
+        # Only words of the keyboard's own letters (English: plain ASCII).
+        if (not word.isascii()) if self.alphabet is None else any(c not in self.alphabet for c in plain):
+            return None
         if plain in self.personal:
             return None
-        fixed = FIXED.get(plain) or self.contractions.get(plain)
+        fixed = (FIXED.get(plain) if self.english else None) or self.contractions.get(plain)
         if fixed:
             return fixed[0].upper() + fixed[1:] if word[0].isupper() else fixed
         if len(word) < 3 or self.known(word):
@@ -298,7 +333,7 @@ class Corrector:
             candidates.update(self.index.get(key, ()))
         scored = []
         for cand in candidates:
-            cost = typo_cost(plain, cand)
+            cost = typo_cost(plain, cand, self.positions)
             if cost <= MAX_COST:
                 scored.append((-COST_WEIGHT * cost + LEVEL_PRIOR.get(self.level[cand], -3.0), cand))
         if not scored:
@@ -325,7 +360,7 @@ class Corrector:
         candidates.discard(plain)
         scored = []
         for cand in candidates:
-            cost = typo_cost(plain, cand)
+            cost = typo_cost(plain, cand, self.positions)
             if cost <= MAX_COST:
                 scored.append((-COST_WEIGHT * cost + LEVEL_PRIOR.get(self.level[cand], -3.0), cand))
         scored.sort(reverse=True)

@@ -4,8 +4,10 @@ pragma ComponentBehavior: Bound
 // Trackpad and Keyboard, which close by themselves on Home); holding the
 // AYN button comes back here from any app. Trackpad and Keyboard open the
 // same app (TopInputApp.qml), the top screen's trackpad and keyboard:
-// Keyboard with the keys up.
+// Keyboard with the keys up. Colors are the skin's; a skin can also
+// replace this file (SkinView.qml), keeping these properties and signals.
 import QtQuick
+import Barry.Input
 
 Rectangle {
     id: home
@@ -27,7 +29,7 @@ Rectangle {
     signal launch(string app)
     signal close(string app)
 
-    color: "black"
+    color: Skin.colors.background
 
     component Tile: Item {
         id: tile
@@ -48,8 +50,8 @@ Rectangle {
             width: 260 * home.ts
             height: 260 * home.ts
             radius: 56 * home.ts
-            color: tap.pressed ? "#2d3140" : "#1b1d24"
-            border.color: tile.isRunning || tile.statusText ? "#8a5cf0" : "#3a3e4d"
+            color: tap.pressed ? Skin.colors.raised : Skin.colors.panel
+            border.color: tile.isRunning || tile.statusText ? Skin.colors.accent : Skin.colors.border
             border.width: 3 * home.ts
 
             SequentialAnimation on opacity {
@@ -66,7 +68,7 @@ Rectangle {
                 width: 150 * home.ts
                 height: 150 * home.ts
                 kind: tile.imageIcon ? "" : tile.iconKind
-                color: "#cfe0ff"
+                color: Skin.colors.icon
                 lineWidth: 9 * home.ts
             }
             // A user app's own icon (barry_apps): a picture file.
@@ -109,15 +111,15 @@ Rectangle {
             width: 76 * home.ts
             height: 76 * home.ts
             radius: width / 2
-            color: closeTap.pressed ? "#5a2020" : "#3a3e4d"
-            border.color: "black"
+            color: closeTap.pressed ? Skin.colors.danger : Skin.colors.border
+            border.color: Skin.colors.background
             border.width: 4 * home.ts
             Icon {
                 anchors.centerIn: parent
                 width: 40 * home.ts
                 height: 40 * home.ts
                 kind: "close"
-                color: "#eef0f4"
+                color: Skin.colors.text
                 lineWidth: 6 * home.ts
             }
         }
@@ -133,8 +135,8 @@ Rectangle {
             minimumPixelSize: 26 * home.ts
             elide: Text.ElideRight
             text: tile.statusText || tile.name
-            color: "#eef0f4"
-            font { family: "Noto Sans"; pixelSize: 40 * home.ts; weight: Font.DemiBold }
+            color: Skin.colors.text
+            font { family: Skin.font; pixelSize: 40 * home.ts; weight: Font.DemiBold }
         }
     }
 
@@ -180,9 +182,9 @@ Rectangle {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         text: "All apps are hidden: Quick Access → Barry Launcher → Apps shows them again."
-        color: "#eef0f4"
+        color: Skin.colors.text
         opacity: 0.6
-        font { family: "Noto Sans"; pixelSize: 36 * home.s }
+        font { family: Skin.font; pixelSize: 36 * home.s }
     }
 
     Text {
@@ -190,8 +192,8 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30 * home.s
         text: "AYN: performance dashboard  ·  hold AYN: home"
-        color: "#eef0f4"
+        color: Skin.colors.text
         opacity: 0.4
-        font { family: "Noto Sans"; pixelSize: 24 * home.s }
+        font { family: Skin.font; pixelSize: 24 * home.s }
     }
 }

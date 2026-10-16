@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
 // The bottom screen as the top screen's trackpad and keyboard. Moves a
-// virtual mouse and keyboard through barry_launcher_inputd, which only the
-// top screen sees. Used by the Trackpad app (TopInputApp.qml) and the
-// Desktop Mode window (Desktop.qml).
+// virtual mouse and keyboard (Barry.Input: uinput devices of this process,
+// called directly), which only the top screen sees. Used by the Trackpad app
+// (TopInputApp.qml) and the Desktop Mode window (Desktop.qml).
 //
 // Trackpad: one finger moves the pointer (faster strokes go further), a tap
 // clicks, a two-finger tap right-clicks, a three-finger tap middle-clicks,
@@ -14,7 +14,12 @@ pragma ComponentBehavior: Bound
 // fills the screen again. The app's keyboard button between the click buttons
 // brings them back, and so does barry_launcher_shelld when a click lands in
 // a top-screen text field (followShelld).
+//
+// Only the layout and its look: the pad's gestures (TrackpadArea, and
+// Desktop Mode's TouchTrackpad), the click buttons (PressArea) and the keys
+// (KeyboardController) are Barry.Input's; the colors are the skin's.
 import QtQuick
+import Barry.Input
 
 Rectangle {
     id: ti
@@ -30,19 +35,43 @@ Rectangle {
     property real speed: 1.6
     signal closeRequested()
 
-    readonly property string api: "http://127.0.0.1:47825"
+    VirtualMouse { id: vmouse }
+    VirtualKeyboard { id: vkeys }
+    // Text goes through the uinput keyboard (games read it) while the
+    // keyboard pack's letters are all on the US layout; else to the focused
+    // window itself: XTest on the top screen's X server in Game Mode, KWin's
+    // input method in Desktop Mode.
+    Typer {
+        id: textTyper
+        desktop: ti.desktop
+        display: ti.desktop ? "" : "$BARRY_TOP_DISPLAY"
+    }
+    KeyboardController {
+        id: keyLogic
+        typer: textTyper
+        keyboard: vkeys
+        preferKeyboard: true
+        // Put away: the trackpad fills the screen.
+        onHideRequested: ti.mode = "trackpad"
+    }
+    // barry_launcher_shelld's asks to bring the keyboard up (a click in a
+    // top-screen text field) or down.
+    KeyboardState {
+        followTop: ti.followShelld && ti.visible
+        onTopKeyboardAsked: function (up) { ti.mode = up ? "keyboard" : "trackpad" }
+    }
 
     // Desktop Mode's trackpad: KWin would take the pad's touches while it
-    // moves a window, so barry_launcher_inputd reads the touchscreen itself
-    // (barry_trackpad) while this says, every 250 ms, that it is up and
-    // where its pad and buttons are. This only draws.
+    // moves a window, so the engine reads the touchscreen itself (on a
+    // thread of its own) while the pad is up, told where its pad and buttons
+    // are. This only draws.
     property bool desktop: false
     readonly property bool engine: desktop && mode === "trackpad" && visible
-    property bool engineTouching: false
-    property var engineHeld: ({})  // the Left and Right click buttons, as the engine sees them
-    property var enginePresses: null  // null until the engine first answers
-    property int dismissSeen: -1
+    readonly property bool engineTouching: engineTp.reading && engineTp.touching
+    readonly property var engineHeld: engineTp.held  // the Left and Right click buttons, as the engine sees them
+    readonly property var enginePresses: engineTp.reading ? engineTp.presses : null
     property real desktopSpeed: 1.6
+    property bool built: false  // set as the page is complete (below)
 
     function frac(item) {
         const p = item.mapToItem(ti, 0, 0)
@@ -59,35 +88,18 @@ Rectangle {
         return r
     }
 
-    function engineBeat(active) {
-        const x = new XMLHttpRequest()
-        x.onreadystatechange = function () {
-            if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
-                return
-            let st = null
-            try { st = JSON.parse(x.responseText) } catch (e) { return }
-            ti.engineTouching = st.touching === true
-            ti.engineHeld = st.held || {}
-            ti.enginePresses = st.presses || {}
-            if (ti.dismissSeen >= 0 && st.dismiss > ti.dismissSeen)
-                ti.middleTapped()
-            ti.dismissSeen = st.dismiss
-        }
-        x.open("POST", api + "/trackpad")
-        x.setRequestHeader("Content-Type", "application/json")
-        x.send(JSON.stringify(active ? { active: true, regions: engineRegions(), speed: desktopSpeed }
-                                     : { active: false }))
+    TouchTrackpad {
+        id: engineTp
+        mouse: vmouse
+        active: ti.engine
+        speed: ti.desktopSpeed
+        // Again whenever the layout moves: the arguments are only there to
+        // make the binding follow them. Not before the page is built: the
+        // click buttons, half made, cannot be mapped yet.
+        regions: ti.engine && ti.built ? ti.engineRegions(ti.width, ti.height, ti.kb, padFace.height, buttons.y) : ({})
+        onDismissTapped: ti.middleTapped()
     }
-
-    Timer {
-        interval: 100  // often enough to light the click buttons as they are pressed
-        running: ti.engine
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: ti.engineBeat(true)
-    }
-    onEngineChanged: if (!engine) engineBeat(false)
-    color: "black"
+    color: Skin.colors.background
 
     // How far the keyboard is up: 0 down (full trackpad), 1 up; a little
     // past either end as it springs into place.
@@ -111,10 +123,14 @@ Rectangle {
     onModeChanged: {
         slideKeyboard()
         if (mode !== "keyboard")
-            keys.reset()  // no shift or Ctrl left on for next time
+            keyLogic.reset()  // no shift or Ctrl left on for next time
     }
     // Opened with the keyboard up: it rises as the window appears.
-    Component.onCompleted: if (mode === "keyboard") slideKeyboard()
+    Component.onCompleted: {
+        built = true
+        if (mode === "keyboard")
+            slideKeyboard()
+    }
 
     // The middle button (apps): the keyboard. Desktop Mode's window has tabs
     // for that and its middle region closes it.
@@ -125,80 +141,8 @@ Rectangle {
             mode = "keyboard"
     }
 
-    property int shelldSerial: -1
-    Timer {
-        interval: 100
-        running: ti.followShelld && ti.visible
-        repeat: true
-        onTriggered: {
-            const x = new XMLHttpRequest()
-            x.onreadystatechange = function () {
-                if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
-                    return
-                let st = null
-                try { st = JSON.parse(x.responseText) } catch (e) { return }
-                // Only asks made while open: the one that opened the app
-                // came as its argument.
-                if (ti.shelldSerial >= 0 && st.serial !== ti.shelldSerial)
-                    ti.mode = st.visible ? "keyboard" : "trackpad"
-                ti.shelldSerial = st.serial
-            }
-            x.open("GET", "http://127.0.0.1:47824/top-keyboard")
-            x.send()
-        }
-    }
-
-    function post(path, body) {
-        const x = new XMLHttpRequest()
-        x.open("POST", api + path)
-        x.setRequestHeader("Content-Type", "application/json")
-        x.send(JSON.stringify(body))
-    }
-
-    // Moves and scrolls go out at most once a frame, one request at a time.
-    property real pendingX: 0
-    property real pendingY: 0
-    property real pendingScrollX: 0
-    property real pendingScrollY: 0
-    property bool sending: false
-
-    function flush() {
-        if (sending)
-            return
-        let path = "", body = null
-        // Scrolls first: pointer moves left over from a touch's first frames
-        // must not hold a two-finger scroll back.
-        if (pendingScrollX !== 0 || pendingScrollY !== 0) {
-            path = "/scroll"
-            body = { dx: pendingScrollX, dy: pendingScrollY }
-            pendingScrollX = 0; pendingScrollY = 0
-        } else if (pendingX !== 0 || pendingY !== 0) {
-            path = "/pointer"
-            body = { dx: pendingX, dy: pendingY }
-            pendingX = 0; pendingY = 0
-        } else {
-            return
-        }
-        sending = true
-        const x = new XMLHttpRequest()
-        x.onreadystatechange = function () {
-            if (x.readyState === XMLHttpRequest.DONE)
-                ti.sending = false
-        }
-        x.open("POST", api + path)
-        x.setRequestHeader("Content-Type", "application/json")
-        x.send(JSON.stringify(body))
-    }
-
-    Timer {
-        interval: 16
-        running: true
-        repeat: true
-        onTriggered: ti.flush()
-    }
-
     // Nothing stays held when the page goes away.
-    onVisibleChanged: if (!visible) { pad.reset(); post("/release", {}) }
+    onVisibleChanged: if (!visible) { vmouse.releaseAll(); vkeys.releaseAll() }
 
     component Button: Rectangle {
         id: btn
@@ -208,15 +152,15 @@ Rectangle {
         height: 96 * ti.s
         width: Math.max(170 * ti.s, lbl.implicitWidth + 60 * ti.s)
         radius: 24 * ti.s
-        color: tap.pressed ? "#4a4f60" : active ? "#6b2fb3" : "#1b1d24"
-        border.color: "#3a3e4d"
+        color: tap.pressed ? Skin.colors.pressed : active ? Skin.colors.lit : Skin.colors.panel
+        border.color: Skin.colors.border
         border.width: active ? 0 : 2 * ti.s
         Text {
             id: lbl
             anchors.centerIn: parent
             text: btn.label
-            color: "#eef0f4"
-            font { family: "Noto Sans"; pixelSize: 32 * ti.s; weight: Font.DemiBold }
+            color: btn.active ? Skin.colors.litText : Skin.colors.text
+            font { family: Skin.font; pixelSize: 32 * ti.s; weight: Font.DemiBold }
         }
         TapHandler {
             id: tap
@@ -269,158 +213,29 @@ Rectangle {
         }
         height: ti.padBottomDown + ti.kb * (ti.padBottomUp - ti.padBottomDown) - 20 * ti.s - y
         radius: 36 * ti.s
-        color: "#101117"
-        border.color: pad.touching || ti.engineTouching ? "#8a5cf0" : "#2d3140"
+        color: Skin.colors.surface
+        border.color: pad.touching || ti.engineTouching ? Skin.colors.accent : Skin.colors.borderQuiet
         border.width: 3 * ti.s
 
-        Text {
-            anchors.centerIn: parent
-            visible: !pad.touching && !ti.engineTouching
-            text: ti.mode === "keyboard" ? "Trackpad" : "Trackpad for the top screen\ntap: click · two fingers: scroll, tap: right-click\ntap, then touch and move: drag"
-                  + (ti.showTabs ? "" : "\nclick a text field, or the middle button, for the keyboard")
-            horizontalAlignment: Text.AlignHCenter
-            color: "#eef0f4"
-            opacity: 0.35
-            lineHeight: 1.3
-            font { family: "Noto Sans"; pixelSize: 28 * ti.s }
+        // Where fingers have been, when the skin has the thermochromic trail.
+        HeatTrail {
+            id: heat
+            anchors.fill: parent
+            anchors.margins: parent.border.width
+            visible: Skin.trackpadHeat.length > 1
+            source: pad
+            colors: Skin.trackpadHeat
+            radius: parent.radius - parent.border.width
+            fingerSize: 110 * ti.s
         }
 
-        MultiPointTouchArea {
+
+        TrackpadArea {
             id: pad
             anchors.fill: parent
-            mouseEnabled: true
-            minimumTouchPoints: 1
-            maximumTouchPoints: 3
-            touchPoints: [TouchPoint {}, TouchPoint {}, TouchPoint {}]
-
-            property bool touching: false
-            property int fingers: 0  // most fingers down at once in this touch
-            property real moved: 0   // pixels moved in this touch
-            property double startedAt: 0
-            property double lastMoveAt: 0
-            property bool dragging: false  // tap, then touch: left button held
-            property bool dragMoved: false
-            // Two fingers never land at once: the pointer waits this long at
-            // the start of a touch, so a second finger turns it into a clean
-            // scroll instead of a pointer jump followed by a scroll.
-            property real heldX: 0
-            property real heldY: 0
-
-            readonly property real tapSlop: 14 * ti.s
-            readonly property int tapMs: 220
-            readonly property int settleMs: 70
-
-            function down() {
-                let n = 0
-                for (let i = 0; i < touchPoints.length; i++)
-                    if (touchPoints[i].pressed)
-                        n++
-                return n
-            }
-
-            function reset() {
-                if (dragging)
-                    ti.post("/button", { button: "left", state: "up" })
-                dragging = false
-                touching = false
-                clickLater.stop()
-            }
-
-            // A tap's click waits a moment: a touch right after it is a drag.
-            Timer {
-                id: clickLater
-                interval: pad.tapMs
-                onTriggered: ti.post("/button", { button: "left", state: "click" })
-            }
-
-            onPressed: function (points) {
-                // Only the fingers just pressed are down: a new touch, even
-                // when the last one's release went missing (it then stayed
-                // "touching" with two fingers, and one finger only scrolled).
-                if (!touching || down() === points.length) {
-                    if (touching && dragging) {
-                        ti.post("/button", { button: "left", state: "up" })
-                        dragging = false
-                    }
-                    touching = true
-                    fingers = 0
-                    moved = 0
-                    startedAt = Date.now()
-                    lastMoveAt = startedAt
-                    heldX = 0; heldY = 0
-                    if (clickLater.running) {
-                        clickLater.stop()
-                        dragging = true
-                        dragMoved = false
-                        ti.post("/button", { button: "left", state: "down" })
-                    }
-                }
-                fingers = Math.max(fingers, down())
-                if (fingers >= 2) {
-                    heldX = 0; heldY = 0
-                }
-            }
-
-            onUpdated: function (points) {
-                const now = Date.now()
-                const dt = Math.max(1, now - lastMoveAt)
-                lastMoveAt = now
-                let dx = 0, dy = 0, n = 0
-                for (let i = 0; i < touchPoints.length; i++) {
-                    const p = touchPoints[i]
-                    if (!p.pressed)
-                        continue
-                    dx += p.x - p.previousX
-                    dy += p.y - p.previousY
-                    n++
-                }
-                if (n === 0)
-                    return
-                dx /= n; dy /= n
-                const dist = Math.sqrt(dx * dx + dy * dy)
-                moved += dist
-                if (dragging && dist > 0)
-                    dragMoved = true
-                if (fingers >= 2 && !dragging) {
-                    // Two fingers scroll, the content following them.
-                    ti.pendingScrollX -= dx / (70 * ti.s)
-                    ti.pendingScrollY -= dy / (70 * ti.s)
-                    return
-                }
-                // Pointer acceleration: pixels per millisecond of finger
-                // speed raise the gain up to 3.5x.
-                const gain = ti.speed * (1 + 1.25 * Math.min(2, dist / dt)) / ti.s
-                if (!dragging && now - startedAt < settleMs) {
-                    heldX += dx * gain
-                    heldY += dy * gain
-                    return
-                }
-                ti.pendingX += heldX + dx * gain
-                ti.pendingY += heldY + dy * gain
-                heldX = 0; heldY = 0
-            }
-
-            onReleased: function (points) {
-                if (down() > 0)
-                    return
-                touching = false
-                if (dragging) {
-                    dragging = false
-                    ti.post("/button", { button: "left", state: "up" })
-                    // Tap, tap: a double click.
-                    if (!dragMoved && Date.now() - startedAt < tapMs)
-                        ti.post("/button", { button: "left", state: "click" })
-                    return
-                }
-                if (moved > tapSlop || Date.now() - startedAt > 300)
-                    return
-                if (fingers === 1)
-                    clickLater.restart()
-                else
-                    ti.post("/button", { button: fingers === 2 ? "right" : "middle", state: "click" })
-            }
-
-            onCanceled: function (points) { reset() }
+            mouse: vmouse
+            s: ti.s
+            speed: ti.speed
         }
     }
 
@@ -437,7 +252,7 @@ Rectangle {
         height: ti.buttonsHeight
         spacing: 20 * ti.s
         // Apps: a keyboard button between the two (the region keeps the
-        // name "dismiss" for barry_trackpad).
+        // name "dismiss" for the engine's TouchTrackpad).
         readonly property real dismissWidth: ti.showTabs ? 0 : 160 * ti.s
         Repeater {
             model: ti.showTabs ? ["left", "right"] : ["left", "dismiss", "right"]
@@ -451,6 +266,7 @@ Rectangle {
                 radius: 36 * ti.s
                 // Lit while pressed, and a moment after, so a quick click shows.
                 readonly property bool lit: !dismiss && (hold.pressed || ti.engineHeld[modelData] === true || flash.running)
+                readonly property bool down: hold.pressed || dismissTap.pressed
                 readonly property int presses: ti.enginePresses ? (ti.enginePresses[modelData] || 0) : -1
                 property int lastPresses: -1
                 onPressesChanged: {
@@ -459,8 +275,8 @@ Rectangle {
                     lastPresses = presses
                 }
                 Timer { id: flash; interval: 200 }
-                color: lit ? "#2a2140" : hold.pressed ? "#4a4f60" : "#1b1d24"
-                border.color: lit ? "#8a5cf0" : "#3a3e4d"
+                color: lit ? Skin.colors.accentFill : down ? Skin.colors.pressed : Skin.colors.panel
+                border.color: lit ? Skin.colors.accent : Skin.colors.border
                 border.width: (lit ? 3 : 2) * ti.s
                 Icon {
                     anchors.centerIn: parent
@@ -468,22 +284,22 @@ Rectangle {
                     width: 80 * ti.s
                     height: 80 * ti.s
                     kind: "keyboard"
-                    color: "#eef0f4"
+                    color: Skin.colors.text
                     lineWidth: 6 * ti.s
                 }
-                Text {
-                    anchors.centerIn: parent
+                // Left and Right click: held while a finger is on them.
+                PressArea {
+                    id: hold
+                    anchors.fill: parent
                     visible: !mb.dismiss
-                    text: mb.modelData === "left" ? "Left click" : "Right click"
-                    color: "#eef0f4"
-                    opacity: 0.8
-                    font { family: "Noto Sans"; pixelSize: 30 * ti.s; weight: Font.DemiBold }
+                    mouse: vmouse
+                    button: mb.modelData
                 }
                 TapHandler {
-                    id: hold
-                    gesturePolicy: mb.dismiss ? TapHandler.ReleaseWithinBounds : TapHandler.WithinBounds
-                    onPressedChanged: if (!mb.dismiss) ti.post("/button", { button: mb.modelData, state: pressed ? "down" : "up" })
-                    onTapped: if (mb.dismiss) ti.middleTapped()
+                    id: dismissTap
+                    enabled: mb.dismiss
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                    onTapped: ti.middleTapped()
                 }
             }
         }
@@ -494,24 +310,20 @@ Rectangle {
         visible: keys.visible
         anchors { left: parent.left; right: parent.right; top: keys.bottom }
         height: 120 * ti.s
-        color: keys.color
+        color: keys.item && keys.item.color !== undefined ? keys.item.color : Skin.colors.panel
     }
 
-    KeyPanel {
+    // KeyPanel.qml, or the skin's.
+    SkinView {
         id: keys
+        file: "KeyPanel.qml"
+        props: ({ controller: keyLogic })
         visible: ti.kb > 0.001
         enabled: ti.mode === "keyboard"  // no keys typed as they slide away
         x: 0
         width: parent.width
         y: parent.height - ti.kb * implicitHeight
         height: implicitHeight
-        s: ti.s
-        asciiOnly: true
-        onTyped: function (text) { ti.post("/key", { text: text }) }
-        onKey: function (name) { ti.post("/key", { key: name }) }
-        onReplace: function (back, text) { ti.post("/key", { back: back, text: text }) }
-        onCombo: function (keys) { ti.post("/key", { combo: keys }) }
-        // Put away: the trackpad fills the screen.
-        onHideRequested: ti.mode = "trackpad"
     }
+    Binding { target: keys.item; property: "s"; value: ti.s }
 }

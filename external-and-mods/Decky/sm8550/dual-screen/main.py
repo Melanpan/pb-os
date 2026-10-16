@@ -40,6 +40,14 @@ barry_launcher_shelld (as the user, into ~/.local/share/barry_launcher/apps),
 and a user app can be removed. And apps that open with games: the
 frontend watches Steam's running games (Steam's and non-Steam ones alike,
 by appid) and tells barry_launcher_shelld, which keeps the links.
+
+Also Barry Launcher's themes (skins, barry_launcher_statsd lists them): the
+one in use; adding one (an archive, or a theme folder's skin.json) from a
+USB drive when one is plugged in, else from Downloads (SteamOS only
+automounts ext4, so a FAT or exFAT stick is mounted read-only here for the
+pick, and unmounted after), unpacked safely into
+~/.local/share/barry_launcher/skins as the user; and removing an added
+theme (the built-in ones stay, as the built-in apps do).
 """
 from __future__ import annotations
 
@@ -506,6 +514,251 @@ def _keep_two_screen() -> list[str]:
     return changed
 
 
+# Themes (Barry Launcher skins) -----------------------------------------
+
+STATSD = "http://127.0.0.1:47823"
+# Used when the theme in use is removed: SteamOS, else Barry Launcher's own.
+SKINS_FALLBACK = ("steamos", "ayn")
+SKIN_FILES_MAX = 400
+SKIN_BYTES_MAX = 64 * 1024 * 1024
+USB_MOUNTS = "/run/barry-launcher/usb"
+
+
+def _skins_dir() -> str:
+    return os.path.join(_user_home(), ".local/share/barry_launcher/skins")
+
+
+def _owner() -> tuple[int, int]:
+    st = os.stat(_user_home())
+    return st.st_uid, st.st_gid
+
+
+def _make_user_dirs(path: str) -> None:
+    """Make path and any missing parents under the user's home, theirs."""
+    uid, gid = _owner()
+    missing = []
+    p = path
+    while not os.path.isdir(p):
+        missing.append(p)
+        p = os.path.dirname(p)
+    for d in reversed(missing):
+        os.mkdir(d, 0o755)
+        os.chown(d, uid, gid)
+
+
+def _statsd(method: str, path: str, body: dict | None = None) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{STATSD}{path}", data=data, method=method,
+                                 headers={"Content-Type": "application/json"} if data else {})
+    with urllib.request.urlopen(req, timeout=2) as r:
+        return json.load(r)
+
+
+def _skins_state() -> dict[str, Any]:
+    """Every theme Barry Launcher has (barry_launcher_statsd lists them), the
+    one in use, and each theme's color variants with the one chosen (the
+    first when none is)."""
+    listed = _statsd("GET", "/skins")
+    chosen = _statsd("GET", "/settings").get("skinVariants") or {}
+    current = (listed.get("current") or {}).get("name") or ""
+    skins = []
+    for s in listed.get("skins", []):
+        builtin = not str(s.get("dir", "")).startswith(_skins_dir() + "/")
+        variants = [v for v in s.get("variants") or [] if isinstance(v, dict) and v.get("id")]
+        ids = [v["id"] for v in variants]
+        skins.append({"name": s["name"], "title": s.get("title") or s["name"],
+                      "author": s.get("author", ""), "builtin": builtin,
+                      "variants": variants,
+                      "variant": chosen.get(s["name"]) if chosen.get(s["name"]) in ids else (ids[0] if ids else "")})
+    return {"ok": True, "current": current, "skins": skins}
+
+
+def _skin_name(raw: str) -> str:
+    name = re.sub(r"[^a-z0-9_-]+", "-", raw.lower()).strip("-")
+    return name[:40]
+
+
+def _usb_partitions() -> list[dict]:
+    """Partitions on USB drives: lsblk's PATH, FSTYPE, LABEL, MOUNTPOINTS."""
+    out = subprocess.run(["lsblk", "-J", "-o", "PATH,TRAN,FSTYPE,LABEL,MOUNTPOINTS,TYPE"],
+                         capture_output=True, text=True, timeout=10, check=True).stdout
+    found = []
+
+    def walk(devs, tran):
+        for d in devs or []:
+            t = d.get("tran") or tran
+            if t == "usb" and d.get("type") == "part" and d.get("fstype"):
+                found.append(d)
+            walk(d.get("children"), t)
+    walk(json.loads(out).get("blockdevices"), None)
+    # A whole USB disk with a file system and no partitions.
+    if not found:
+        for d in json.loads(out).get("blockdevices") or []:
+            if d.get("tran") == "usb" and d.get("fstype") and not d.get("children"):
+                found.append(d)
+    return found
+
+
+def _usb_mount() -> dict[str, Any]:
+    """A folder to pick a theme from on the USB drive: where it is mounted
+    already, or mounted read-only here for the pick (_usb_unmount after)."""
+    parts = _usb_partitions()
+    if not parts:
+        return {"ok": False, "error": "No USB drive found. Plug one in, then try again."}
+    for p in parts:
+        points = [m for m in (p.get("mountpoints") or []) if m]
+        if points:
+            return {"ok": True, "path": points[0]}
+    p = parts[0]
+    point = os.path.join(USB_MOUNTS, _skin_name(p.get("label") or os.path.basename(p["path"])) or "usb")
+    os.makedirs(point, exist_ok=True)
+    r = subprocess.run(["mount", "-o", "ro,nosuid,nodev,noexec", p["path"], point],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        return {"ok": False, "error": f"Could not open the USB drive ({r.stderr.strip() or r.returncode})."}
+    return {"ok": True, "path": point}
+
+
+def _usb_unmount() -> None:
+    """Unmount and remove what _usb_mount mounted (never other mounts)."""
+    if not os.path.isdir(USB_MOUNTS):
+        return
+    for name in os.listdir(USB_MOUNTS):
+        point = os.path.join(USB_MOUNTS, name)
+        if os.path.ismount(point):
+            subprocess.run(["umount", point], capture_output=True, timeout=30)
+        if not os.path.ismount(point):
+            try:
+                os.rmdir(point)
+            except OSError:
+                pass
+
+
+def _skin_source(path: str, work: str) -> tuple[str, str]:
+    """The theme folder in what was picked (an archive, or a theme's
+    skin.json), unpacked into work if needed, and its name."""
+    import shutil, tarfile, zipfile
+    path = os.path.realpath(path)
+    if os.path.basename(path) == "skin.json":
+        src = os.path.dirname(path)
+        return src, os.path.basename(src)
+    base = os.path.basename(path)
+    stem = re.sub(r"(\.tar)?\.[^.]+$", "", base)
+    out = os.path.join(work, "x")
+    os.mkdir(out)
+    total = files = 0
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as z:
+            for info in z.infolist():
+                name = info.filename
+                if name.startswith("/") or ".." in name.split("/"):
+                    raise ValueError(f"unsafe path in the archive: {name}")
+                if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise ValueError("the archive has links in it")
+                total += info.file_size
+                files += 1
+                if total > SKIN_BYTES_MAX or files > SKIN_FILES_MAX:
+                    raise ValueError("the archive is too big for a theme")
+            z.extractall(out)
+    elif tarfile.is_tarfile(path):
+        with tarfile.open(path) as t:
+            members = t.getmembers()
+            for m in members:
+                if m.name.startswith("/") or ".." in m.name.split("/"):
+                    raise ValueError(f"unsafe path in the archive: {m.name}")
+                if not (m.isfile() or m.isdir()):
+                    raise ValueError("the archive has links or special files in it")
+                total += m.size
+                files += 1
+                if total > SKIN_BYTES_MAX or files > SKIN_FILES_MAX:
+                    raise ValueError("the archive is too big for a theme")
+            t.extractall(out, members=members)
+    else:
+        raise ValueError("pick a theme's .zip or .tar.gz, or the skin.json in a theme's folder")
+    # skin.json at the top, or in the one folder at the top.
+    if os.path.isfile(os.path.join(out, "skin.json")):
+        return out, stem
+    entries = [e for e in os.listdir(out) if not e.startswith(".") and e != "__MACOSX"]
+    if len(entries) == 1 and os.path.isfile(os.path.join(out, entries[0], "skin.json")):
+        return os.path.join(out, entries[0]), entries[0]
+    raise ValueError("no skin.json in it: not a Barry Launcher theme")
+
+
+def _check_skin_dir(src: str) -> dict[str, Any]:
+    total = files = 0
+    code = False
+    for root, dirs, names in os.walk(src):
+        for n in dirs + names:
+            p = os.path.join(root, n)
+            if os.path.islink(p):
+                raise ValueError("the theme has links in it")
+        for n in names:
+            p = os.path.join(root, n)
+            if not os.path.isfile(p):
+                raise ValueError("the theme has special files in it")
+            total += os.path.getsize(p)
+            files += 1
+            code = code or n.endswith((".qml", ".js", ".mjs"))
+    if total > SKIN_BYTES_MAX or files > SKIN_FILES_MAX:
+        raise ValueError("too big for a theme")
+    with open(os.path.join(src, "skin.json"), encoding="utf-8") as fh:
+        meta = json.load(fh)
+    if not isinstance(meta, dict):
+        raise ValueError("skin.json is not a theme's")
+    return {"title": str(meta.get("title") or ""), "author": str(meta.get("author") or ""), "code": code}
+
+
+def _install_skin(path: str, check_only: bool) -> dict[str, Any]:
+    import shutil, tempfile
+    skins = _skins_dir()
+    _make_user_dirs(skins)
+    work = tempfile.mkdtemp(prefix=".install-", dir=skins)
+    try:
+        src, raw_name = _skin_source(path, work)
+        info = _check_skin_dir(src)
+        name = _skin_name(raw_name) or _skin_name(info["title"])
+        if not name:
+            raise ValueError("the theme has no usable name")
+        title = info["title"] or name
+        dest = os.path.join(skins, name)
+        theme = {"name": name, "title": title, "author": info["author"], "code": info["code"],
+                 "replaces": os.path.isdir(dest)}
+        if check_only:
+            return {"ok": True, "theme": theme}
+        stage = os.path.join(work, "stage")
+        shutil.copytree(src, stage, symlinks=False)
+        uid, gid = _owner()
+        for root, dirs, names in os.walk(stage):
+            os.chown(root, uid, gid)
+            os.chmod(root, 0o755)
+            for n in names:
+                os.chown(os.path.join(root, n), uid, gid)
+                os.chmod(os.path.join(root, n), 0o644)
+        if os.path.isdir(dest):
+            shutil.rmtree(dest)
+        os.rename(stage, dest)
+        return {"ok": True, "theme": theme}
+    except (OSError, ValueError, EOFError) as err:
+        return {"ok": False, "error": f"Could not add the theme: {err}"}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _remove_skin(name: str) -> dict[str, Any]:
+    """Delete a theme the user added (never a built-in one); if it was in
+    use, Barry Launcher changes to SKINS_FALLBACK."""
+    import shutil
+    state = _skins_state()
+    theme = next((t for t in state["skins"] if t["name"] == name), None)
+    if not theme or theme["builtin"]:
+        return {"ok": False, "error": "Only a theme you added can be removed."}
+    shutil.rmtree(os.path.join(_skins_dir(), name))
+    if state["current"] == name:
+        names = {t["name"] for t in state["skins"]} - {name}
+        _statsd("POST", "/settings", {"skin": next((f for f in SKINS_FALLBACK if f in names), "ayn")})
+    return {"ok": True, **_skins_state()}
+
+
 def _rgb_dimmer(state: dict | None) -> int | None:
     light = state.get("lighting") if state else None
     return light.get("dimmer", 100) if light else None
@@ -617,6 +870,63 @@ class Plugin:
             return await asyncio.to_thread(_shelld_answer, "/apps/remove", {"app": str(app)}, 10)
         except (OSError, ValueError) as err:
             return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def get_themes(self, **_: Any) -> dict[str, Any]:
+        """Barry Launcher's themes (skins) and the one in use."""
+        try:
+            return await asyncio.to_thread(_skins_state)
+        except (OSError, ValueError, KeyError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def set_theme(self, name: str = "", **_: Any) -> dict[str, Any]:
+        """Use the theme name; Barry Launcher changes its look at once."""
+        try:
+            await asyncio.to_thread(_statsd, "POST", "/settings", {"skin": str(name)})
+            return await asyncio.to_thread(_skins_state)
+        except (OSError, ValueError, KeyError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def set_theme_color(self, name: str = "", variant: str = "", **_: Any) -> dict[str, Any]:
+        """Use the theme's color variant; Barry Launcher recolors at once."""
+        try:
+            await asyncio.to_thread(_statsd, "POST", "/settings", {"skinVariants": {str(name): str(variant)}})
+            return await asyncio.to_thread(_skins_state)
+        except urllib.error.HTTPError as err:
+            return {"ok": False, "error": f"That color isn't in the theme ({err.code})."}
+        except (OSError, ValueError, KeyError) as err:
+            return {"ok": False, "error": f"Barry Launcher isn't answering ({err})."}
+
+    async def themes_folder(self, **_: Any) -> dict[str, Any]:
+        """Where the file picker starts: a USB drive when one is plugged in
+        (mounted read-only for the pick if SteamOS has not mounted it), else
+        Downloads."""
+        try:
+            usb = await asyncio.to_thread(_usb_mount)
+            if usb.get("ok"):
+                return usb
+            if not str(usb.get("error", "")).startswith("No USB drive"):
+                decky.logger.warning(f"themes: {usb.get('error')}")
+        except (OSError, ValueError, subprocess.SubprocessError) as err:
+            decky.logger.warning(f"themes: cannot look for a USB drive: {err}")
+        home = _user_home()
+        downloads = os.path.join(home, "Downloads")
+        return {"ok": True, "path": downloads if os.path.isdir(downloads) else home}
+
+    async def themes_done(self, **_: Any) -> None:
+        """The pick is over: unmount the USB drive if this mounted it."""
+        await asyncio.to_thread(_usb_unmount)
+
+    async def check_theme(self, path: str = "", **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(_install_skin, str(path), True)
+
+    async def install_theme(self, path: str = "", **_: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(_install_skin, str(path), False)
+
+    async def remove_theme(self, name: str = "", **_: Any) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(_remove_skin, str(name))
+        except (OSError, ValueError, KeyError) as err:
+            return {"ok": False, "error": f"Could not remove the theme ({err})."}
 
     async def get_game_links(self, **_: Any) -> dict[str, Any]:
         try:

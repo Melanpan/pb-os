@@ -137,7 +137,8 @@ install_odin_composite() {
   local f
   # ayn_mcu_thor is the Thor's "Xbox positions" map (sm8550-face-buttons);
   # the RP6 and Nova use InputPlumber's own rsinput1 for that.
-  for f in ayn_mcu.yaml ayn_mcu_nintendo.yaml ayn_mcu_thor.yaml rsinput_nintendo.yaml; do
+  # barry_deck_buttons: Barry Launcher's Deck controls on the Thor.
+  for f in ayn_mcu.yaml ayn_mcu_nintendo.yaml ayn_mcu_thor.yaml rsinput_nintendo.yaml barry_deck_buttons.yaml; do
     install -m0644 "${OVL}/etc/inputplumber/capability_maps.d/${f}" \
       "${R}/etc/inputplumber/capability_maps.d/${f}"
     install -m0644 "${OVL}/etc/inputplumber/capability_maps.d/${f}" \

@@ -1,0 +1,29 @@
+{
+  "title": "Sage",
+  "author": "PB-OS",
+  "api": 1,
+  "colors": {
+    "background": "#f1efe6",
+    "surface": "#faf9f4",
+    "panel": "#e6e2d1",
+    "raised": "#d9d5c2",
+    "pressed": "#cfd9d0",
+    "border": "#d0cbb6",
+    "borderQuiet": "#dedac8",
+    "text": "#3d4a42",
+    "accent": "#5e8f74",
+    "accentFill": "#dbe8df",
+    "lit": "#4a7a61",
+    "litText": "#ffffff",
+    "key": "#f8f8f4",
+    "keyText": "#3c3f3c",
+    "keySpecial": "#5e8f74",
+    "keySpecialText": "#f4f7f2",
+    "keyAction": "#a9c6c3",
+    "keyActionText": "#3f6a5a",
+    "keyShadow": "#bdb8a3",
+    "icon": "#5e8f74",
+    "danger": "#d98b7a",
+    "cover": "#f1efe6"
+  }
+}

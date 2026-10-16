@@ -5,6 +5,7 @@
 // drives the top screen: a trackpad, with a keyboard that slides up below it.
 import QtQuick
 import QtQuick.Window
+import Barry.Input
 
 Window {
     id: win
@@ -13,20 +14,25 @@ Window {
     // Desktop Mode: one seat for both screens, so this window must never
     // take focus from the top screen's window it types into.
     flags: Qt.application.arguments.indexOf("desktop") >= 0 ? Qt.WindowDoesNotAcceptFocus : Qt.Window
-    color: "black"
+    color: Skin.colors.background
     visibility: Window.FullScreen
     visible: true
 
     readonly property real s: Math.min(width / 1240, height / 1080)
 
-    TopInput {
+    // TopInput.qml, or the skin's. Set as it is made: desktop picks the
+    // trackpad's engine, mode how it opens.
+    SkinView {
+        id: input
+        file: "TopInput.qml"
         anchors.fill: parent
-        s: win.s
-        mode: win.keyboard ? "keyboard" : "trackpad"
-        showTabs: false
-        followShelld: true
-        desktop: Qt.application.arguments.indexOf("desktop") >= 0
+        props: ({ mode: win.keyboard ? "keyboard" : "trackpad", showTabs: false, followShelld: true,
+                  desktop: Qt.application.arguments.indexOf("desktop") >= 0 })
+    }
+    Binding { target: input.item; property: "s"; value: win.s }
+    Connections {
+        target: input.item
         // Closed by going home (barry_launcher_shelld).
-        onCloseRequested: Qt.quit()
+        function onCloseRequested() { Qt.quit() }
     }
 }

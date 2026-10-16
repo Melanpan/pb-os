@@ -9,11 +9,15 @@ and its skins, so a skin is plain QML with no Python of its own:
                   once per MIN_SAMPLE_S, so nothing runs while nobody asks
   GET  /overlay   {"shown": bool}: the AYN button's flag (OVERLAY)
   POST /overlay   {"shown": false} hides the dashboard (idle timeout)
-  GET  /skins     {"skins": [{name, title, author, dir}]}; dir is the
-                  current skin's folder under "current"
-  GET  /settings  {"skin": name, "idleSeconds": n}
+  GET  /skins     {"skins": [{name, title, author, dir, variants}]}; dir is
+                  the current skin's folder under "current"; variants: the
+                  skin's color variants [{id, title, swatch: [colors]}]
+                  (the first the default), [] for none
+  GET  /settings  {"skin": name, "idleSeconds": n, "skinVariants": {skin: id}}
   POST /settings  any of those keys; skin applies from the next opening,
-                  idleSeconds 0 keeps the dashboard up until the next press
+                  idleSeconds 0 keeps the dashboard up until the next press;
+                  skinVariants is merged into the saved ones (Barry's
+                  keyboards and pads change at once)
   GET  /controls  the quick controls:
                   {"fan": {"profile": "balanced", "profiles": [...]} or null,
                    "lighting": {"enabled", "color": "rrggbb", "brightness",
@@ -72,7 +76,7 @@ SKIN_DIRS = [
     "/usr/share/barry_launcher/dashboard/skins",
 ]
 SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
-DEFAULTS = {"skin": "ayn", "idleSeconds": 0}
+DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "skinVariants": {}}
 
 
 def read(path: str, default: str = "") -> str:
@@ -211,8 +215,8 @@ class Stats:
 def skins() -> list[dict]:
     found: dict[str, dict] = {}
     for base in SKIN_DIRS:
-        for qml in sorted(glob.glob(f"{base}/*/Skin.qml")):
-            d = os.path.dirname(qml)
+        # A dashboard (Skin.qml), or only the shell's look (skin.json).
+        for d in sorted({os.path.dirname(f) for f in glob.glob(f"{base}/*/Skin.qml") + glob.glob(f"{base}/*/skin.json")}):
             name = os.path.basename(d)
             if name in found:
                 continue
@@ -226,8 +230,26 @@ def skins() -> list[dict]:
                 "title": str(meta.get("title", name)),
                 "author": str(meta.get("author", "")),
                 "dir": d,
+                "variants": variants(meta),
             }
     return list(found.values())
+
+
+def variants(meta: dict) -> list[dict]:
+    """A skin.json's color variants, for picking one: id, title and the
+    swatch colors (Barry.Input's Skin applies their colors)."""
+    out = []
+    raw = meta.get("variants") if isinstance(meta, dict) else None
+    for v in raw if isinstance(raw, list) else []:
+        if not isinstance(v, dict) or not isinstance(v.get("id"), str) or not v["id"]:
+            continue
+        swatch = v.get("swatch")
+        out.append({
+            "id": v["id"],
+            "title": str(v.get("title", v["id"])),
+            "swatch": [str(c) for c in swatch][:4] if isinstance(swatch, list) else [],
+        })
+    return out
 
 
 def settings() -> dict:
@@ -238,20 +260,28 @@ def settings() -> dict:
         saved = {}
     out = dict(DEFAULTS)
     if isinstance(saved, dict):
-        out.update(clean(saved))
+        out.update(clean(saved, strict=False))
     if not any(s["name"] == out["skin"] for s in skins()):
         out["skin"] = DEFAULTS["skin"]
     return out
 
 
-def clean(new: dict) -> dict:
-    """Keep only known settings with sane values."""
+def clean(new: dict, strict: bool = True) -> dict:
+    """Keep only known settings with sane values (strict: a skinVariants
+    with any bad entry is dropped whole; else only those entries are)."""
     out = {}
     if isinstance(new.get("skin"), str) and any(s["name"] == new["skin"] for s in skins()):
         out["skin"] = new["skin"]
     idle = new.get("idleSeconds")
     if isinstance(idle, (int, float)) and not isinstance(idle, bool) and 0 <= idle <= 3600:
         out["idleSeconds"] = int(idle)
+    # {skin: variant id}, only skins that have that variant.
+    chosen = new.get("skinVariants")
+    if isinstance(chosen, dict):
+        ids = {s["name"]: {v["id"] for v in s["variants"]} for s in skins()}
+        good = {k: v for k, v in chosen.items() if isinstance(v, str) and v in ids.get(k, ())}
+        if not strict or len(good) == len(chosen):
+            out["skinVariants"] = good
     return out
 
 
@@ -377,7 +407,10 @@ class Handler(BaseHTTPRequestHandler):
             if set(body) - set(new):
                 self._json(400, {"error": f"bad settings: {sorted(set(body) - set(new))}"})
                 return
-            merged = {**settings(), **new}
+            old = settings()
+            merged = {**old, **new}
+            if "skinVariants" in new:
+                merged["skinVariants"] = {**old["skinVariants"], **new["skinVariants"]}
             os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
             tmp = SETTINGS + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:

@@ -23,7 +23,9 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /keyboard  {"visible": bool}: show or hide by hand
   GET  /top-keyboard {"serial": n, "visible": bool}: the Trackpad app's
                   keyboard, asked up (or down) each time serial counts on
-  POST /type      {"text": "..."} or {"key": "BackSpace"|"Return"|...}
+  POST /type      {"text": "...", "correct": word, ...}: autocorrect's plan
+                  for Keyboard.qml, which types it ({"back": n, "text": s,
+                  "key": k}: backspaces, then text, then a key)
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin:
 the apps here include a web browser, and a web page must not type.
@@ -37,8 +39,9 @@ finger on the bottom touchscreen, which this reads alongside gamescope. A
 tap on the focused field itself also brings back a keyboard hidden by hand:
 there the caret may not move at all.
 Apps focusing their own fields as they open or come back stay keyboard-
-free. Keys go to the focused
-window through XTest (xdotool). The keyboard window is a gamescope overlay
+free. The keyboard types into the focused window itself (Barry.Input,
+XTest; KWin's input method in Desktop Mode); here it only asks how to
+correct a word. The keyboard window is a gamescope overlay
 (STEAM_OVERLAY), and while shown it has STEAM_INPUT_FOCUS=2, as Steam's own
 keyboard does: it takes the touches, but X keyboard focus stays on the app
 underneath. Like Steam's overlay it stays mapped and hides by opacity:
@@ -50,8 +53,9 @@ Most apps are Firefox instances, each with its own profile under
 ~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
 mode (no address bar or tabs). Signal has no web app: it is
 Signal Desktop from Flathub, installed for the user on its first start.
-Trackpad drives the top screen instead (shell/TopInputApp.qml, through
-barry_launcher_inputd), in a window of its own like the rest: a trackpad
+Trackpad drives the top screen instead (shell/TopInputApp.qml, with
+Barry.Input's virtual mouse and keyboard), in a window of its own like the
+rest: a trackpad
 with a keyboard below it that slides away and back. A click on a top-screen
 text field (focus over AT-SPI, within TOP_CLICK_S of a trackpad click or a
 finger on the top screen) brings its keyboard up; so does a launch of
@@ -76,6 +80,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -83,7 +88,6 @@ import sys
 import threading
 import time
 import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import gi
@@ -111,7 +115,11 @@ INSET_PROP = "GAMESCOPE_FOCUS_BOTTOM_INSET"
 # How long going home waits for the home screen to get ready to slide in.
 HOME_READY_S = 0.15
 # Glide typing's dictionary (barry_glide).
-GLIDE_WORDS = "/usr/share/barry_launcher/glide/words.txt"
+# Keyboard packs (Barry.Input's KeyboardLanguages reads the same folders):
+# their words.txt is glide typing's, suggestions' and autocorrect's
+# dictionary. A user's pack takes a shipped one's place.
+KEYBOARDS_DIR = "/usr/share/barry_launcher/keyboards"
+LANG_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 HOME_TITLE = "Barry Launcher"
 DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
 # "1" while the Trackpad app is open: it works the top screen from here, so sm8550-thor-backlightd has Steam's gamescope hand the bottom
@@ -161,7 +169,12 @@ APPS = {
     # closes by itself on Home, so its tile has no close badge. Never hidden:
     # with the top screen's touch it is the way to reach the top screen.
     "trackpad": {"name": "Trackpad", "icon": "trackpad", "closable": False, "hideable": False,
-                 "qml": "trackpad", "window": "^Barry Launcher Trackpad$"},
+                 "qml": "trackpad", "window": "^Barry Launcher Trackpad$", "tool": True},
+    # The Steam Deck's trackpads and back buttons, on the controller Steam
+    # sees (InputPlumber's virtual Steam Deck). A tool like the trackpad:
+    # Home closes it.
+    "deck": {"name": "Deck", "icon": "deck", "closable": False, "qmlfile": "DeckApp.qml",
+             "window": "^Barry Launcher Deck$", "tool": True},
     # A tile of its own for the same app, opening it with the keyboard up
     # (launch).
     TOP_KEYBOARD: {"name": "Keyboard", "icon": "keyboard", "closable": False, "hideable": False},
@@ -255,7 +268,6 @@ def set_layout(body: dict) -> tuple[int, dict]:
 SHELL_DIR = "/usr/share/barry_launcher/shell"
 TOP_INPUT_QML = f"{SHELL_DIR}/TopInputApp.qml"
 APP_HOST_QML = f"{SHELL_DIR}/AppHost.qml"
-INPUTD = "http://127.0.0.1:47825"
 
 FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 FIREFOX_PREFS = {
@@ -328,7 +340,7 @@ HOME_SWIPE_S = 0.8
 EV_SYN, EV_KEY, EV_ABS, BTN_TOUCH = 0, 1, 3, 0x14A
 BTN_LEFT, BTN_RIGHT = 0x110, 0x111
 # Presses that count as clicks on the top screen (TOP_CLICK_S): a finger on
-# it, and barry_launcher_inputd's mouse buttons.
+# it, and the Trackpad app's mouse buttons (its Barry.Input VirtualMouse).
 TOP_PRESS_DEVICES = (("top_touchscreen", (BTN_TOUCH,)), ("Barry Launcher Trackpad", (BTN_LEFT, BTN_RIGHT)))
 ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x2F, 0x35, 0x36, 0x39
 INPUT_EVENT = struct.Struct("llHHi")
@@ -344,11 +356,6 @@ WARM_DELAY_S = 60.0
 WARM_RUNTIME_DIRS = ("lib/aarch64-linux-gnu", "lib/locale", "share/fonts")
 KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space",
         "Home", "End", "Prior", "Next"}
-MODIFIERS = {"ctrl", "alt", "shift", "super"}
-# xdotool's names for the keys a combo may end on that are not letters,
-# digits or KEYS.
-XDO_SYMBOLS = {"/": "slash", "\\": "backslash", "-": "minus", "=": "equal", ".": "period", ",": "comma",
-               ";": "semicolon", "'": "apostrophe", "`": "grave", "[": "bracketleft", "]": "bracketright"}
 
 
 def log(msg: str) -> None:
@@ -529,10 +536,10 @@ def go_home() -> None:
         STATE.home_ready.clear()
     STATE.home_ready.wait(HOME_READY_S)
     STATE.set_keyboard(False)
-    # The trackpad is a tool, not an app to come back to: leaving it closes
-    # it. Their exit lets go of anything held on top (watch).
+    # The trackpad and the Deck controls are tools, not apps to come back
+    # to: leaving one closes it. Their exit lets go of anything they held.
     for app, spec in APPS.items():
-        if "qml" in spec and running(app):
+        if spec.get("tool") and running(app):
             close(app)
     if not bring_forward(None):
         log("cannot find the home screen window")
@@ -699,11 +706,14 @@ def launch(app: str) -> tuple[int, dict]:
         if keyboard:
             cmd.append("keyboard")  # opens with its keyboard up
         extra = {}
-        if DESKTOP and "qml" in spec:
-            # The top screen's trackpad and keyboard must never take focus
+        if DESKTOP and spec.get("tool"):
+            # The trackpad, keyboard and Deck controls must never take focus
             # from the top screen's window: a KWin rule (barry_launcher_desktop)
             # says so, so they can be Wayland windows, with proper multitouch.
-            cmd.insert(cmd.index("--") + 1, "desktop")
+            if "--" in cmd:
+                cmd.insert(cmd.index("--") + 1, "desktop")
+            else:
+                cmd += ["--", "desktop"]
             extra["QT_QPA_PLATFORM"] = "wayland"
         STATE.apps[app] = subprocess.Popen(
             cmd,
@@ -1047,19 +1057,6 @@ def setup_bundled_apps() -> None:
                 break
 
 
-def release_top_input() -> None:
-    """Let go of anything the trackpad or keyboard held on the top screen,
-    and (Desktop Mode) give KWin the bottom touchscreen back at once."""
-    for path, body in (("/release", b"{}"), ("/trackpad", b'{"active": false}')):
-        req = urllib.request.Request(f"{INPUTD}{path}", body, {"Content-Type": "application/json"})
-        try:
-            urllib.request.urlopen(req, timeout=1).close()
-        except OSError:
-            pass
-
-
-TYPE_LOCK = threading.Lock()  # one typing request at a time, in the order they came
-
 
 def caret_holder(acc):
     """The object that holds the caret's text. A rich text field (Signal's,
@@ -1116,8 +1113,9 @@ def ends_with_word(word: str) -> bool:
 
 
 def type_input(body: dict) -> tuple[int, dict]:
-    # "back": backspaces first, in the same request, so a glided word can be
-    # swapped for another without the two racing.
+    """Autocorrect's plan for what Keyboard.qml types: it types it, in the
+    order its keys came, and waits for this before typing on."""
+    # "back": backspaces first, so a glided word can be swapped for another.
     # "expect": only if the field's text before the caret ends with it
     # (checked over AT-SPI), else nothing is typed.
     # "correct": the word just typed; autocorrect swaps it for the word
@@ -1126,104 +1124,104 @@ def type_input(body: dict) -> tuple[int, dict]:
     back = body.get("back", 0)
     if not isinstance(back, int) or not 0 <= back <= 100:
         return 400, {"error": "back must be 0-100"}
-    if "combo" in body:
-        return type_combo(body["combo"])
-    with TYPE_LOCK:
-        cmds = []
-        reply: dict = {"ok": True}
-        expect = body.get("expect")
-        if isinstance(expect, str) and expect and not ends_with_word(expect):
-            return 409, {"error": "the field does not end with the expected text"}
-        if isinstance(body.get("keep"), str):
-            with GLIDE["lock"]:
-                corrector().keep(body["keep"])
-        word = body.get("correct")
-        if isinstance(word, str) and word and not back:
-            with GLIDE["lock"]:
-                fixed = corrector().correct(word)
-            if fixed and ends_with_word(word):
-                cmds.append(["xdotool", "key", "--delay", "0", "--repeat", str(len(word)), "BackSpace"])
-                cmds.append(["xdotool", "type", "--delay", "0", "--", fixed])
-                reply["corrected"] = fixed
-                log(f"autocorrect: {word} -> {fixed}")
-        if back:
-            cmds.append(["xdotool", "key", "--delay", "0", "--repeat", str(back), "BackSpace"])
-        if isinstance(body.get("text"), str) and body["text"]:
-            cmds.append(["xdotool", "type", "--delay", "0", "--", body["text"]])
-        elif body.get("key") in KEYS:
-            cmds.append(["xdotool", "key", "--", body["key"]])
-        elif not back and "keep" not in body:
-            return 400, {"error": "need text, a known key or back"}
-        im = STATE.im
-        if im is not None and im.active:
-            # Desktop Mode: into the active field through KWin's input method.
-            return type_through_im(im, cmds, reply)
-        for cmd in cmds:
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            if r.returncode != 0:
-                return 500, {"error": r.stderr.strip()}
-        return 200, reply
-
-
-def type_combo(keys) -> tuple[int, dict]:
-    """Modifiers and a key (["ctrl", "c"]): xdotool in Game Mode; in Desktop
-    Mode barry_launcher_inputd's keyboard, a real one to KWin, so the
-    focused window gets the modifiers."""
-    if not (isinstance(keys, list) and 1 <= len(keys) <= 4 and all(isinstance(k, str) for k in keys)
-            and all(k in MODIFIERS for k in keys[:-1])):
-        return 400, {"error": "combo: modifiers, then a key"}
-    last = keys[-1]
-    if not (last in KEYS or (len(last) == 1 and (last.isalnum() or last in XDO_SYMBOLS))):
-        return 400, {"error": f"combo: no key {last!r}"}
-    with TYPE_LOCK:
-        if DESKTOP:
-            req = urllib.request.Request(f"{INPUTD}/key", json.dumps({"combo": keys}).encode(),
-                                         {"Content-Type": "application/json"})
-            try:
-                urllib.request.urlopen(req, timeout=2).close()
-            except OSError as err:
-                return 500, {"error": f"barry_launcher_inputd: {err}"}
-            return 200, {"ok": True}
-        name = "+".join(keys[:-1] + [XDO_SYMBOLS.get(last, last)])
-        r = subprocess.run(["xdotool", "key", "--", name], capture_output=True, text=True)
-        if r.returncode != 0:
-            return 500, {"error": r.stderr.strip()}
-        return 200, {"ok": True}
-
-
-def type_through_im(im, cmds: list, reply: dict) -> tuple[int, dict]:
-    """type_input's xdotool commands, sent through barry_launcher_imd."""
-    for cmd in cmds:
-        if cmd[1] == "type":
-            ok = im.commit(cmd[-1])
-        elif "--repeat" in cmd:
-            ok = im.back(int(cmd[cmd.index("--repeat") + 1]))
-        else:
-            ok = im.key(cmd[-1])
-        if not ok:
-            return 500, {"error": "the input method went away"}
+    text = body.get("text") if isinstance(body.get("text"), str) else ""
+    key = body.get("key") if body.get("key") in KEYS else None
+    if not (back or text or key or "keep" in body):
+        return 400, {"error": "need text, a known key or back"}
+    expect = body.get("expect")
+    if isinstance(expect, str) and expect and not ends_with_word(expect):
+        return 409, {"error": "the field does not end with the expected text"}
+    lang = body.get("lang", "en")
+    if isinstance(body.get("keep"), str):
+        with GLIDE["lock"]:
+            d = dictionary(lang)
+            if d:
+                d["corrector"].keep(body["keep"])
+    reply: dict = {"ok": True, "back": back, "text": text}
+    if key:
+        reply["key"] = key
+    word = body.get("correct")
+    if isinstance(word, str) and word and not back:
+        with GLIDE["lock"]:
+            d = dictionary(lang)
+            fixed = d["corrector"].correct(word) if d else None
+        if fixed and ends_with_word(word):
+            reply.update(back=len(word), text=fixed + text, corrected=fixed)
+            log(f"autocorrect: {word} -> {fixed}")
     return 200, reply
 
 
-GLIDE = {"decoder": None, "corrector": None, "lock": threading.Lock()}
+GLIDE = {"packs": {}, "lock": threading.Lock()}  # lang -> its dictionary
 
 
-def decoder() -> barry_glide.Decoder:
-    """The dictionary, loaded on first use (call with GLIDE["lock"] held)."""
-    if GLIDE["decoder"] is None:
-        GLIDE["decoder"] = barry_glide.Decoder(GLIDE_WORDS)
-    return GLIDE["decoder"]
+def keyboard_dirs() -> list[str]:
+    env = os.environ.get("BARRY_KEYBOARDS_DIRS")
+    if env:
+        return [d for d in env.split(":") if d]
+    return [KEYBOARDS_DIR, os.path.join(DATA, "keyboards")]
 
 
-def corrector() -> barry_glide.Corrector:
-    if GLIDE["corrector"] is None:
-        GLIDE["corrector"] = barry_glide.Corrector(decoder(), os.path.join(DATA, "personal-words.txt"))
-    return GLIDE["corrector"]
+def keyboard_pack(lang: str) -> dict | None:
+    """A keyboard pack's rows, held keys' letters and words file (a path
+    inside its folder, or None): the user's, else the shipped one."""
+    if not isinstance(lang, str) or not LANG_ID.match(lang):
+        return None
+    for base in reversed(keyboard_dirs()):
+        folder = os.path.join(base, lang)
+        try:
+            with open(os.path.join(folder, "keyboard.json"), encoding="utf-8") as fh:
+                pack = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(pack, dict):
+            continue
+        words = None
+        if isinstance(pack.get("words"), str) and pack["words"]:
+            path = os.path.realpath(os.path.join(folder, pack["words"]))
+            if path.startswith(os.path.realpath(folder) + os.sep) and os.path.isfile(path):
+                words = path
+        rows = [[k for k in r if isinstance(k, str)] for r in pack.get("rows", []) if isinstance(r, list)]
+        more = pack.get("more") if isinstance(pack.get("more"), dict) else {}
+        more = {k: [a for a in v if isinstance(a, str)] for k, v in more.items() if isinstance(v, list)}
+        return {"folder": folder, "words": words, "rows": rows, "more": more}
+    return None
+
+
+def dictionary(lang: str) -> dict | None:
+    """A pack's dictionary ({"decoder", "corrector", "fold"}), loaded on
+    first use and again when its files change; None for a pack without
+    words (call with GLIDE["lock"] held)."""
+    pack = keyboard_pack(lang)
+    if pack is None or pack["words"] is None:
+        return None
+    try:
+        stamp = (pack["words"], os.stat(pack["words"]).st_mtime_ns,
+                 os.stat(os.path.join(pack["folder"], "keyboard.json")).st_mtime_ns)
+    except OSError:
+        return None
+    cached = GLIDE["packs"].get(lang)
+    if cached and cached["stamp"] == stamp:
+        return cached
+    english = lang == "en"
+    try:
+        decoder = barry_glide.Decoder(pack["words"], english)
+    except (OSError, ValueError) as err:
+        log(f"keyboard {lang}: cannot read {pack['words']}: {err}")
+        return None
+    personal = os.path.join(DATA, "personal-words.txt" if english else f"personal-words-{lang}.txt")
+    entry = {"stamp": stamp, "decoder": decoder,
+             "corrector": barry_glide.Corrector(decoder, personal, pack["rows"], pack["more"]),
+             # A held key's letter ("é") glides over the key it is on ("e").
+             "fold": {a.lower(): base.lower() for base, alts in pack["more"].items() if len(base) == 1
+                      for a in alts if len(a) == 1}}
+    GLIDE["packs"][lang] = entry
+    log(f"keyboard {lang}: {len(decoder.words)} words")
+    return entry
 
 
 def load_dictionary() -> None:
     with GLIDE["lock"]:
-        corrector()
+        dictionary("en")
 
 
 def suggest(body: dict) -> tuple[int, dict]:
@@ -1232,7 +1230,8 @@ def suggest(body: dict) -> tuple[int, dict]:
     if not isinstance(prefix, str) or len(prefix) > 40:
         return 400, {"error": "need prefix"}
     with GLIDE["lock"]:
-        return 200, {"words": corrector().suggest(prefix)}
+        d = dictionary(body.get("lang", "en"))
+        return 200, {"words": d["corrector"].suggest(prefix) if d else []}
 
 
 def glide(body: dict) -> tuple[int, dict]:
@@ -1245,10 +1244,17 @@ def glide(body: dict) -> tuple[int, dict]:
             and isinstance(size, (int, float)) and size > 0):
         return 400, {"error": "need path, keys and size"}
     with GLIDE["lock"]:
-        return 200, {"words": decoder().decode(path, keys, float(size))}
+        d = dictionary(body.get("lang", "en"))
+        return 200, {"words": d["decoder"].decode(path, keys, float(size), fold=d["fold"]) if d else []}
 
 
 class Handler(BaseHTTPRequestHandler):
+    # One connection for a stream of requests, each reply sent at once: with
+    # Nagle's algorithm on, the body written after the headers waits for an
+    # ACK the client delays (tens of ms a reply).
+    protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
+
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
@@ -1261,6 +1267,9 @@ class Handler(BaseHTTPRequestHandler):
     def _body(self) -> dict:
         try:
             n = int(self.headers.get("Content-Length", "0"))
+            if n > 4096:
+                # Left unread, it would be taken for the next request.
+                self.close_connection = True
             data = json.loads(self.rfile.read(n) if 0 < n <= 4096 else b"{}")
             return data if isinstance(data, dict) else {}
         except ValueError:
@@ -1766,8 +1775,8 @@ def watch_presses(name: str, codes: tuple, attr: str = "last_touch", retry: bool
     clicks) is noted in STATE.attr (several, space-separated): Desktop Mode
     counts it as a touch for showing a keyboard and as a click on the top
     screen; Game Mode as a click for the Trackpad app's. With
-    retry, a device not there yet (barry_launcher_inputd makes the trackpad's)
-    is looked for again, and again after it goes away."""
+    retry, a device not there yet (the Trackpad app makes the trackpad's
+    as it opens) is looked for again, and again after it goes away."""
     while True:
         found = watch_presses_once(name, codes, attr)
         if not retry:
@@ -1800,7 +1809,7 @@ def watch_presses_once(name: str, codes: tuple, attr: str) -> bool:
                     if TIMING and etype == EV_KEY and code in codes and value in (0, 1):
                         log(f"timing: {name} {'press' if value else 'release'} {time.monotonic():.3f}")
         except OSError:
-            return True  # the device went away (inputd restarted)
+            return True  # the device went away (the Trackpad app ended)
     return False
 
 
@@ -1866,8 +1875,6 @@ def main() -> None:
                 if name in STATE.services:
                     threading.Thread(target=barry_apps.stop_service, args=(STATE.services.pop(name),),
                                      daemon=True).start()
-                if "qml" in APPS.get(name, {}):
-                    threading.Thread(target=release_top_input, daemon=True).start()
                 STATE.set_keyboard(False)
         # AYN held: home.
         stamp = home_request_stamp()

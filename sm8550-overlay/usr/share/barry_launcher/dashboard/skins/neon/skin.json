@@ -1,0 +1,30 @@
+{
+  "title": "Neon",
+  "author": "PB-OS",
+  "api": 1,
+  "colors": {
+    "background": "#05040a",
+    "surface": "#0a0814",
+    "panel": "#100c1e",
+    "raised": "#1b1532",
+    "pressed": "#2c1f52",
+    "border": "#2a2252",
+    "borderQuiet": "#1c1738",
+    "text": "#e8ecff",
+    "accent": "#c32af7",
+    "accentFill": "#2a0f3d",
+    "lit": "#0a1ef8",
+    "litText": "#ffffff",
+    "key": "#161229",
+    "keyText": "#7cfca8",
+    "keySpecial": "#1e1742",
+    "keySpecialText": "#52b4fa",
+    "keyAction": "#a924f2",
+    "keyActionText": "#ffffff",
+    "keyShadow": "#0a1ef8",
+    "icon": "#52b4fa",
+    "danger": "#ff3b6b",
+    "cover": "#05040a"
+  },
+  "trackpadHeat": ["#7cfca8", "#52b4fa", "#0a1ef8", "#a924f2", "#c32af7"]
+}

@@ -691,7 +691,8 @@ remove_old_bottom_session() {
 # reused from an SM8550 build keeps none of them.
 remove_thor_bottom_screen() {
   remove_old_bottom_session
-  rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
+  rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher" "$R/usr/lib/qt6/qml/Barry"
+  rm -f "$R/usr/lib/udev/rules.d/72-barry-deck.rules"
   rm -f "$R/usr/bin/barry-app" \
     "$R/usr/lib/steamos-sm8550/sm8550-run-bottom" \
     "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
@@ -749,12 +750,12 @@ if [[ "$SOC" != sm8650 ]]; then
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
   for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
-    barry_launcher_inputd barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
+    barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
   # (barry_apps, also barry-app's), imported by barry_launcher_shelld.
-  for f in barry_glide.py barry_desktop.py barry_trackpad.py barry_apps.py; do
+  for f in barry_glide.py barry_desktop.py barry_apps.py; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
   done
   # barry-app: install and make Barry Launcher apps from a terminal.
@@ -763,6 +764,15 @@ if [[ "$SOC" != sm8650 ]]; then
   # client built here against the rootfs's libwayland.
   "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \
     || die "cannot build barry_launcher_imd (the rootfs needs gcc, wayland-scanner and wayland-protocols)"
+  # Barry.Input: the keyboards and trackpad, a QML module the shell's QML
+  # calls straight into (uinput, XTest, the input method), built here
+  # against the rootfs's Qt.
+  "${ROOT}/external-and-mods/barry-launcher-input/build.sh" "$R" "$R/usr/lib/qt6/qml/Barry/Input" \
+    || die "cannot build Barry.Input (the rootfs needs cmake, g++, ninja, Qt 6 and libXtst)"
+  # The Deck controls' devices are InputPlumber's alone; the motor is the
+  # seat user's, for Barry's haptics.
+  install_file "$SM8550_OVL/usr/lib/udev/rules.d/72-barry-deck.rules" \
+    "$R/usr/lib/udev/rules.d/72-barry-deck.rules" 0644
   cp -r "$SM8550_OVL/usr/share/barry_launcher" "$R/usr/share/"
   chmod -R u=rwX,go=rX "$R/usr/share/barry_launcher"
   install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher.service" \
@@ -770,12 +780,9 @@ if [[ "$SOC" != sm8650 ]]; then
   mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
   ln -sfn ../barry_launcher.service \
     "$R/usr/lib/systemd/user/gamescope-session.target.wants/barry_launcher.service"
-  # The top screen's trackpad and keyboard (uinput), in Game Mode and
-  # Desktop Mode; the Desktop Mode window starts from the applications menu.
-  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_inputd.service" \
-    "$R/usr/lib/systemd/user/barry_launcher_inputd.service" 0644
-  mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
-  ln -sfn ../barry_launcher_inputd.service \
+  # The top screen's trackpad and keyboard were a daemon of their own
+  # (barry_launcher_inputd) before Barry.Input: gone from a reused rootfs.
+  rm -f "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
   install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
     "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644

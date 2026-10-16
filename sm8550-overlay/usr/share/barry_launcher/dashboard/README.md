@@ -41,6 +41,33 @@ up until the next AYN press. Changes apply the next time the dashboard opens
 | `dashboard.poke()` | count as activity for the idle timeout (touches count already) |
 | `dashboard.request(method, path, body, callback)` | raw call to the stats service |
 
+### Color variants
+
+A skin can come in several colors, picked in the Barry Launcher plugin's
+Themes tab (a row of swatches under the list, for the theme in use). In
+`skin.json`:
+
+```json
+"variants": [
+  {"id": "default-dark", "title": "Default Dark",
+   "swatch": ["#1e1f20", "#444746", "#a8c7fa"],
+   "colors": {"background": "#1e1f20", "key": "#444746", "keyAction": "#a8c7fa"}},
+  {"id": "red", "title": "Red",
+   "swatch": ["#c62828", "#df8888", "#f44336"],
+   "colors": {"background": "#c62828", "key": "#df8888", "keyAction": "#f44336"}}
+]
+```
+
+- The first is the default. A variant's `colors` go over the skin's own
+  `colors` (same roles), so it lists only what changes.
+- `swatch` is what the picker draws: background, a key, the accent.
+- The choice is kept per skin in `settings.json` as
+  `"skinVariants": {"<skin>": "<id>"}` (statsd `POST /settings`), and
+  Barry's keyboards, pads and dashboard change color at once.
+- QML in the skin reads the result through `Skin.colors` as usual
+  (`Skin.variant` is the id in use); colors written into the QML itself
+  stay the same in every variant.
+
 ### `dashboard.stats` (api 1)
 
 ```json

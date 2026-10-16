@@ -1,0 +1,183 @@
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index 714d121..1482c0d 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -307,6 +307,11 @@ pub struct TouchscreenConfig {
+     /// instead of the size advertised by the device itself.
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub override_source_size: Option<bool>,
++    /// Use the touchscreen as a trackpad instead: its first touch becomes that
++    /// trackpad's touch. Can be one of: ["left", "right"]. Other touches are
++    /// ignored.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub trackpad: Option<String>,
+ }
+ 
+ #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+diff --git a/src/input/manager.rs b/src/input/manager.rs
+index 1696f67..a7b9d5d 100644
+--- a/src/input/manager.rs
++++ b/src/input/manager.rs
+@@ -58,6 +58,11 @@ const VIRT_DEVICE_WHITELIST: &[&str] = &[
+     "Sunshine gamepad (virtual) motion sensors",
+     "Sunshine Nintendo (virtual) pad",
+     "MSI WMI hotkeys",
++    // Barry Launcher (AYN Thor): the Steam Deck trackpads and back buttons
++    // it draws on the bottom screen, as sources of the virtual Steam Deck.
++    "Barry Deck Left Pad",
++    "Barry Deck Right Pad",
++    "Barry Deck Buttons",
+ ];
+ 
+ #[derive(Error, Debug)]
+diff --git a/src/input/source/evdev.rs b/src/input/source/evdev.rs
+index 2db1cad..844bfbd 100644
+--- a/src/input/source/evdev.rs
++++ b/src/input/source/evdev.rs
+@@ -115,7 +115,18 @@ impl EventDevice {
+         conf: Option<config::SourceDevice>,
+     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+         let is_blocked = conf.as_ref().and_then(|c| c.blocked).unwrap_or(false);
+-        let driver_type = EventDevice::get_driver_type(&device_info, is_blocked);
++        let mut driver_type = EventDevice::get_driver_type(&device_info, is_blocked);
++        // A touchscreen configured as a trackpad is one whatever udev says: a
++        // virtual one made while running (Barry Launcher's Deck pads) is
++        // found before udev has tagged it ID_INPUT_TOUCHSCREEN.
++        let as_trackpad = conf
++            .as_ref()
++            .and_then(|c| c.config.as_ref())
++            .and_then(|c| c.touchscreen.as_ref())
++            .is_some_and(|t| t.trackpad.is_some());
++        if as_trackpad && !matches!(driver_type, DriverType::Blocked) {
++            driver_type = DriverType::Touchscreen;
++        }
+ 
+         // Check to see if a capability map was set for this device
+         let mut capability_map = None;
+diff --git a/src/input/source/evdev/touchscreen.rs b/src/input/source/evdev/touchscreen.rs
+index ae8d8b5..ff7e22f 100644
+--- a/src/input/source/evdev/touchscreen.rs
++++ b/src/input/source/evdev/touchscreen.rs
+@@ -11,7 +11,7 @@ use nix::fcntl::{FcntlArg, OFlag};
+ 
+ use crate::config::capability_map::CapabilityMapConfigV2;
+ use crate::config::TouchscreenConfig;
+-use crate::input::capability::Touch;
++use crate::input::capability::{Touch, Touchpad};
+ use crate::input::event::evdev::translator::EventTranslator;
+ use crate::input::event::value::InputValue;
+ use crate::{
+@@ -93,8 +93,34 @@ impl TouchState {
+     }
+ 
+     /// Convert the touch into an InputPlumber event with the given touch index
+-    fn to_native_event(&self, idx: u8) -> NativeEvent {
+-        NativeEvent::new(Capability::Touchscreen(Touch::Motion), self.to_value(idx))
++    fn to_native_event(&self, idx: u8, trackpad: Option<Trackpad>) -> NativeEvent {
++        NativeEvent::new(touch_capability(trackpad), self.to_value(idx))
++    }
++}
++
++/// The trackpad a touchscreen stands in for (TouchscreenConfig.trackpad)
++#[derive(Debug, Clone, Copy)]
++enum Trackpad {
++    Left,
++    Right,
++}
++
++impl Trackpad {
++    fn from_config(value: &str) -> Option<Self> {
++        match value {
++            "left" => Some(Self::Left),
++            "right" => Some(Self::Right),
++            _ => None,
++        }
++    }
++}
++
++/// The capability a touch is sent as: a touchscreen's, or a trackpad's
++fn touch_capability(trackpad: Option<Trackpad>) -> Capability {
++    match trackpad {
++        None => Capability::Touchscreen(Touch::Motion),
++        Some(Trackpad::Left) => Capability::Touchpad(Touchpad::LeftPad(Touch::Motion)),
++        Some(Trackpad::Right) => Capability::Touchpad(Touchpad::RightPad(Touch::Motion)),
+     }
+ }
+ 
+@@ -104,6 +130,7 @@ pub struct TouchscreenEventDevice {
+     device: Device,
+     translator: Option<EventTranslator>,
+     orientation: Orientation,
++    trackpad: Option<Trackpad>,
+     axes_info: HashMap<AbsoluteAxisCode, AbsInfo>,
+     touch_state: [TouchState; 10], // NOTE: Max of 10 touch inputs
+     dirty_states: HashSet<usize>,
+@@ -182,12 +209,22 @@ impl TouchscreenEventDevice {
+             };
+         log::debug!("Configured touchscreen orientation: {orientation:?}");
+ 
++        // A touchscreen standing in for a trackpad
++        let trackpad = config
++            .as_ref()
++            .and_then(|c| c.trackpad.as_deref())
++            .and_then(Trackpad::from_config);
++        if trackpad.is_some() {
++            log::debug!("Touchscreen used as trackpad: {trackpad:?}");
++        }
++
+         // Create an event translator if a capability map was given
+         let translator = capability_map.map(|map| EventTranslator::new(&map, axes_info.clone()));
+ 
+         Ok(Self {
+             device,
+             orientation,
++            trackpad,
+             translator,
+             axes_info,
+             touch_state: Default::default(),
+@@ -211,13 +248,17 @@ impl TouchscreenEventDevice {
+ 
+                 // Send events for any dirty touch states
+                 for idx in self.dirty_states.drain() {
++                    // A trackpad has one touch: the first.
++                    if self.trackpad.is_some() && idx != 0 {
++                        continue;
++                    }
+                     let Some(touch) = self.touch_state.get_mut(idx) else {
+                         continue;
+                     };
+ 
+                     // Rotate values based on config
+                     let rotated_touch = touch.rotate(self.orientation);
+-                    let event = rotated_touch.to_native_event(idx as u8);
++                    let event = rotated_touch.to_native_event(idx as u8, self.trackpad);
+                     events.push(event);
+                 }
+ 
+@@ -251,6 +292,17 @@ impl TouchscreenEventDevice {
+                     self.dirty_states.insert(self.last_touch_idx);
+                 }
+             }
++            // A new touch. A trackpad counts it as touching at once: the kernel
++            // leaves out positions that did not change, so a touch where the
++            // last one lifted brings none.
++            EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_MT_TRACKING_ID, _)
++                if self.trackpad.is_some() =>
++            {
++                if let Some(touch) = self.touch_state.get_mut(self.last_touch_idx) {
++                    touch.is_touching = true;
++                    self.dirty_states.insert(self.last_touch_idx);
++                }
++            }
+             // Emitted whenever touch motion is detected for the X axis
+             EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_MT_POSITION_X, value) => {
+                 // Get the axis information so the value can be normalized
+@@ -377,7 +429,7 @@ impl SourceInputDevice for TouchscreenEventDevice {
+ 
+     /// Returns the possible input events this device is capable of emitting
+     fn get_capabilities(&self) -> Result<Vec<Capability>, InputError> {
+-        Ok(vec![Capability::Touchscreen(Touch::Motion)])
++        Ok(vec![touch_capability(self.trackpad)])
+     }
+ }
+ 

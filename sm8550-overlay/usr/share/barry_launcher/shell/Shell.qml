@@ -12,11 +12,12 @@
 // says so (/home-ready), and then it is brought forward.
 import QtQuick
 import QtQuick.Window
+import Barry.Input
 
 Window {
     id: win
     title: "Barry Launcher"
-    color: "black"
+    color: Skin.colors.background
     visibility: Window.FullScreen
     visible: true
 
@@ -46,8 +47,8 @@ Window {
                     r[name] = apps[name].running
                     st[name] = apps[name].status || ""
                 }
-                home.running = r
-                home.status = st
+                win.running = r
+                win.status = st
                 // Only when it changed: a new model rebuilds the tiles.
                 const tiles = Object.keys(apps)
                     .filter(name => apps[name].name !== undefined && !apps[name].hidden)
@@ -55,21 +56,38 @@ Window {
                     .map(name => ({ app: name, name: apps[name].name, icon: apps[name].icon,
                                     closable: apps[name].closable !== false }))
                 if (tiles.length || Object.keys(apps).some(name => apps[name].hidden))
-                    if (JSON.stringify(tiles) !== JSON.stringify(home.tiles))
-                        home.tiles = tiles
+                    if (JSON.stringify(tiles) !== JSON.stringify(win.tiles))
+                        win.tiles = tiles
             } catch (e) {}
         }
         x.open("GET", api + "/apps")
         x.send()
     }
 
-    Home {
+    // What Home shows (shelld's /apps); null: Home's own until it answers.
+    property var running: ({})
+    property var status: ({})
+    property var tiles: null
+
+    // Home.qml, or the skin's.
+    SkinView {
         id: home
+        file: "Home.qml"
         anchors.fill: parent
-        s: win.s
-        onLaunch: function (app) { win.post("/launch", { app: app }) }
-        onClose: function (app) { win.post("/close", { app: app }) }
         transform: Translate { id: homeShift }
+        onLoaded: if (win.tiles !== null) item.tiles = win.tiles
+    }
+    Binding { target: home.item; property: "s"; value: win.s }
+    Binding { target: home.item; property: "running"; value: win.running }
+    Binding { target: home.item; property: "status"; value: win.status }
+    // Only once shelld has answered: until then Home keeps its own list (a
+    // Binding with "when" still writes null into a view loaded later).
+    onTilesChanged: if (tiles !== null && home.item) home.item.tiles = tiles
+    Connections {
+        target: home.item
+        ignoreUnknownSignals: true
+        function onLaunch(app) { win.post("/launch", { app: app }) }
+        function onClose(app) { win.post("/close", { app: app }) }
     }
 
     property int homeSerial: -1  // the last trip home seen; -1: none yet

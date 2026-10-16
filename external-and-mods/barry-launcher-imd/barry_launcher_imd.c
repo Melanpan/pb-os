@@ -9,7 +9,9 @@
  * cursor; this types into that field. Barry Launcher's keyboard is its own
  * window on the bottom screen that never takes focus, so it drives this
  * over a local socket ($XDG_RUNTIME_DIR/barry_launcher_im.sock), one line
- * per message.
+ * per message. Two connect: barry_launcher_shelld, which shows the keyboard
+ * for a field and reads the text before the caret, and the keyboard itself,
+ * which types (Barry.Input).
  *
  * To Barry (JSON, one per line):
  *   {"event":"activate"}  {"event":"deactivate"}  {"event":"reset"}
@@ -20,8 +22,8 @@
  *   BACK <n>[ <text>]  delete n characters before the cursor, then type text
  *   KEY <name>         Return BackSpace Tab Escape Left Right Up Down Home
  *                      End Delete space
- * A new connection replaces the old one; on connecting it is told whether a
- * field is active.
+ * Every client is told every event, and on connecting whether a field is
+ * active. Past MAX_CLIENTS, a new connection replaces the oldest.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -46,19 +48,39 @@ static struct zwp_input_method_context_v1 *context;
 static uint32_t serial;
 static char *surrounding;  /* last surrounding text, NULL if none */
 static uint32_t cursor_pos;
-static int listen_fd = -1, client_fd = -1;
-static char line[8192];
-static size_t line_len;
+static int listen_fd = -1;
+
+#define MAX_CLIENTS 4
+static struct client {
+	int fd;
+	char line[8192];
+	size_t line_len;
+} clients[MAX_CLIENTS];
+static int n_clients;
+
+static void drop_client(int i)
+{
+	close(clients[i].fd);
+	n_clients--;
+	memmove(&clients[i], &clients[i + 1], (size_t)(n_clients - i) * sizeof clients[0]);
+}
+
+/* Returns 0 if client i failed and is gone. */
+static int say_to(int i, const char *json)
+{
+	size_t len = strlen(json);
+	if (write(clients[i].fd, json, len) != (ssize_t)len || write(clients[i].fd, "\n", 1) != 1) {
+		drop_client(i);
+		return 0;
+	}
+	return 1;
+}
 
 static void say(const char *json)
 {
-	if (client_fd < 0)
-		return;
-	size_t len = strlen(json);
-	if (write(client_fd, json, len) != (ssize_t)len || write(client_fd, "\n", 1) != 1) {
-		close(client_fd);
-		client_fd = -1;
-	}
+	/* Newest down: dropping one moves none still to be told. */
+	for (int i = n_clients - 1; i >= 0; i--)
+		say_to(i, json);
 }
 
 /* text as a JSON string, quotes included */
@@ -84,7 +106,8 @@ static char *json_string(const char *text)
 	return out;
 }
 
-static void say_surrounding(void)
+/* To client i, or to all with -1. */
+static void say_surrounding(int to)
 {
 	if (!surrounding)
 		return;
@@ -94,7 +117,10 @@ static void say_surrounding(void)
 	char *msg;
 	if (asprintf(&msg, "{\"event\":\"surrounding\",\"text\":%s,\"cursor\":%u,\"anchor\":%u}",
 		     s, cursor_pos, cursor_pos) >= 0) {
-		say(msg);
+		if (to < 0)
+			say(msg);
+		else
+			say_to(to, msg);
 		free(msg);
 	}
 	free(s);
@@ -107,7 +133,7 @@ static void ctx_surrounding_text(void *data, struct zwp_input_method_context_v1 
 	free(surrounding);
 	surrounding = strdup(text);
 	cursor_pos = cursor <= strlen(text) ? cursor : strlen(text);
-	say_surrounding();
+	say_surrounding(-1);
 }
 
 static void ctx_reset(void *data, struct zwp_input_method_context_v1 *c)
@@ -286,23 +312,22 @@ static void command(char *cmd)
 	wl_display_flush(display);
 }
 
-static void read_client(void)
+static void read_client(int c)
 {
+	struct client *cl = &clients[c];
 	char buf[4096];
-	ssize_t n = read(client_fd, buf, sizeof buf);
+	ssize_t n = read(cl->fd, buf, sizeof buf);
 	if (n <= 0) {
-		close(client_fd);
-		client_fd = -1;
-		line_len = 0;
+		drop_client(c);
 		return;
 	}
 	for (ssize_t i = 0; i < n; i++) {
 		if (buf[i] == '\n') {
-			line[line_len] = 0;
-			command(line);
-			line_len = 0;
-		} else if (line_len < sizeof line - 1) {
-			line[line_len++] = buf[i];
+			cl->line[cl->line_len] = 0;
+			command(cl->line);
+			cl->line_len = 0;
+		} else if (cl->line_len < sizeof cl->line - 1) {
+			cl->line[cl->line_len++] = buf[i];
 		}
 	}
 }
@@ -319,7 +344,7 @@ static int open_socket(void)
 	if (fd < 0)
 		return -1;
 	mode_t old = umask(0077);
-	int ok = bind(fd, (struct sockaddr *)&addr, sizeof addr) == 0 && listen(fd, 2) == 0;
+	int ok = bind(fd, (struct sockaddr *)&addr, sizeof addr) == 0 && listen(fd, MAX_CLIENTS) == 0;
 	umask(old);
 	if (!ok) {
 		close(fd);
@@ -354,12 +379,14 @@ int main(void)
 		while (wl_display_prepare_read(display) != 0)
 			wl_display_dispatch_pending(display);
 		wl_display_flush(display);
-		struct pollfd fds[3] = {
+		struct pollfd fds[2 + MAX_CLIENTS] = {
 			{ .fd = wl_display_get_fd(display), .events = POLLIN },
 			{ .fd = listen_fd, .events = POLLIN },
-			{ .fd = client_fd, .events = POLLIN },
 		};
-		if (poll(fds, client_fd >= 0 ? 3 : 2, -1) < 0) {
+		int polled = n_clients;
+		for (int i = 0; i < polled; i++)
+			fds[2 + i] = (struct pollfd){ .fd = clients[i].fd, .events = POLLIN };
+		if (poll(fds, (nfds_t)(2 + polled), -1) < 0) {
 			wl_display_cancel_read(display);
 			if (errno == EINTR)
 				continue;
@@ -375,18 +402,29 @@ int main(void)
 			return 1;
 		if (fds[0].revents & (POLLERR | POLLHUP))
 			return 1;
+		/* Events said above may have dropped clients, so each polled fd is
+		 * looked up again rather than taken by its slot. */
+		for (int i = 0; i < polled; i++) {
+			if (!(fds[2 + i].revents & (POLLIN | POLLHUP | POLLERR)))
+				continue;
+			for (int c = 0; c < n_clients; c++) {
+				if (clients[c].fd == fds[2 + i].fd) {
+					read_client(c);
+					break;
+				}
+			}
+		}
 		if (fds[1].revents & POLLIN) {
 			int fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
 			if (fd >= 0) {
-				if (client_fd >= 0)
-					close(client_fd);
-				client_fd = fd;
-				line_len = 0;
-				say(context ? "{\"event\":\"activate\"}" : "{\"event\":\"deactivate\"}");
-				say_surrounding();
+				if (n_clients == MAX_CLIENTS)
+					drop_client(0);
+				int c = n_clients++;
+				clients[c].fd = fd;
+				clients[c].line_len = 0;
+				if (say_to(c, context ? "{\"event\":\"activate\"}" : "{\"event\":\"deactivate\"}"))
+					say_surrounding(c);
 			}
 		}
-		if (client_fd >= 0 && (fds[2].revents & (POLLIN | POLLHUP | POLLERR)))
-			read_client();
 	}
 }

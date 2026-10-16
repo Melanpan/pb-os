@@ -18,6 +18,9 @@ shift
 sock="${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}"
 [[ -S "$sock" ]] || fail "no lease socket at $sock (is Game Mode running?)"
 
+# The top screen's X server, for Barry's top-screen keyboard (letters off
+# the US layout go there through XTest).
+export BARRY_TOP_DISPLAY="${DISPLAY:-}"
 unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
 exec gamescope \
   --backend drm \

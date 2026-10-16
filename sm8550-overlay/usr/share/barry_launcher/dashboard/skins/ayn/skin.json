@@ -1,5 +1,8 @@
 {
-  "title": "AYN",
+  "title": "Thor",
   "author": "SteamOS-ARM",
-  "api": 1
+  "api": 1,
+  "colors": {
+    "surface": "#1b1d24"
+  }
 }

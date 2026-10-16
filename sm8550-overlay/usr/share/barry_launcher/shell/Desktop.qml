@@ -6,12 +6,13 @@
 // under it gets the clicks.
 import QtQuick
 import QtQuick.Window
+import Barry.Input
 
 Window {
     id: win
     title: "Barry Launcher Trackpad"
     flags: Qt.WindowDoesNotAcceptFocus
-    color: "black"
+    color: Skin.colors.background
 
     readonly property real s: Math.min(width / 1240, height / 1080)
 
@@ -41,10 +42,16 @@ Window {
         win.showFullScreen()
     }
 
-    TopInput {
+    // TopInput.qml, or the skin's.
+    SkinView {
+        id: input
+        file: "TopInput.qml"
         anchors.fill: parent
-        s: win.s
-        closeLabel: "✕ Close"
-        onCloseRequested: Qt.quit()
+        props: ({ closeLabel: "✕ Close" })
+    }
+    Binding { target: input.item; property: "s"; value: win.s }
+    Connections {
+        target: input.item
+        function onCloseRequested() { Qt.quit() }
     }
 }

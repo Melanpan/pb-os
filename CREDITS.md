@@ -110,7 +110,8 @@ Inherited from **SteamOS-Ubuntu**. See
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk | Vulkan frame generation |
 | **ptitSeb / box64** | https://github.com/ptitSeb/box64 | x86_64 for Decky PluginLoader |
 | **thorch-os/thorch** | https://github.com/thorch-os/thorch | AYN Thor dual-screen / touch extras |
-| **Tabler Icons** (MIT) | https://github.com/tabler/tabler-icons | Outline Firefox, Discord and Signal logos on Barry Launcher's home screen (`shell/Icon.qml`) |
+| **Tabler Icons** (MIT) | https://github.com/tabler/tabler-icons | Outline Firefox, Discord and Signal logos on Barry Launcher's home screen (`shell/Icon.qml`); the cloud outline in the Cloud theme's mark (`dashboard/skins/cloud/Cloud.qml`) |
+| **Figtree** (SIL OFL 1.1), The Figtree Project Authors | https://github.com/erikdkennedy/figtree | The SteamOS theme's keyboard font (`dashboard/skins/steamos/fonts/`, with its license) |
 | **Chrome Dinosaur Game (Google)**: Sebastien Gabriel, Alan Bettes, Edward Jung | https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/ | The original of Barry Launcher's Dino app (`apps/dino/main.qml`), a new QML version drawn after it; no Chromium code or sprites |
 
 ---

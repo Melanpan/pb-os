@@ -1,0 +1,29 @@
+{
+  "title": "Cloud",
+  "author": "PB-OS",
+  "api": 1,
+  "colors": {
+    "background": "#dfe6f6",
+    "surface": "#f4f6fc",
+    "panel": "#c6d3ef",
+    "raised": "#b4c3ea",
+    "pressed": "#9fb0e0",
+    "border": "#aab9e4",
+    "borderQuiet": "#c3cfee",
+    "text": "#34507f",
+    "accent": "#8b78e6",
+    "accentFill": "#e2dafc",
+    "lit": "#8b78e6",
+    "litText": "#ffffff",
+    "key": "#f9fafd",
+    "keyText": "#3f97c2",
+    "keySpecial": "#a6b5e8",
+    "keySpecialText": "#ffffff",
+    "keyAction": "#9a87ea",
+    "keyActionText": "#ffffff",
+    "keyShadow": "#97a6d6",
+    "icon": "#7a6ae0",
+    "danger": "#e58a9a",
+    "cover": "#dfe6f6"
+  }
+}

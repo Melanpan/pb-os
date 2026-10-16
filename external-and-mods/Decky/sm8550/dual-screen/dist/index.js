@@ -39,6 +39,14 @@ const removeBarryApp = callable("remove_barry_app");
 const getGameLinks = callable("get_game_links");
 const setGameLinks = callable("set_game_links");
 const gameEvent = callable("game_event");
+const getThemes = callable("get_themes");
+const setTheme = callable("set_theme");
+const setThemeColor = callable("set_theme_color");
+const themesFolder = callable("themes_folder");
+const themesDone = callable("themes_done");
+const checkTheme = callable("check_theme");
+const installTheme = callable("install_theme");
+const removeTheme = callable("remove_theme");
 // Decky's file browser (select 0: a file), as @decky/api's openFilePicker.
 const ARCHIVE_EXTENSIONS = ["zip", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tar"];
 
@@ -248,6 +256,15 @@ const AppsIcon = () => svg([
     jsx("rect", { x: 13.5, y: 3, width: 7.5, height: 7.5, rx: 2 }, "b"),
     jsx("rect", { x: 3, y: 13.5, width: 7.5, height: 7.5, rx: 2 }, "c"),
     jsx("rect", { x: 13.5, y: 13.5, width: 7.5, height: 7.5, rx: 2 }, "d"),
+]);
+
+// A painter's palette: Barry Launcher's themes.
+const ThemesIcon = () => svg([
+    jsx("path", { d: "M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.7-1.7H16a5 5 0 0 0 5-5C21 6.4 17 3 12 3z" }, "p"),
+    jsx("circle", { cx: 7.5, cy: 11.5, r: 1.2, fill: "currentColor", stroke: "none" }, "a"),
+    jsx("circle", { cx: 9.5, cy: 7.5, r: 1.2, fill: "currentColor", stroke: "none" }, "b"),
+    jsx("circle", { cx: 14, cy: 6.8, r: 1.2, fill: "currentColor", stroke: "none" }, "c"),
+    jsx("circle", { cx: 17.2, cy: 10, r: 1.2, fill: "currentColor", stroke: "none" }, "d"),
 ]);
 
 // LB and RB: the controller's bumpers, in Steam's button numbering.
@@ -468,6 +485,171 @@ function AppsSection() {
     ] });
 }
 
+// Barry Launcher's themes: the one in use (picked here, it changes at once),
+// adding one (from a USB drive when one is plugged in, else Downloads), and
+// removing one you added, as with apps (the built-in ones stay).
+const THEME_EXTENSIONS = [...ARCHIVE_EXTENSIONS, "json"];
+
+function ThemesSection() {
+    const [st, setSt] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState("");
+    const [msg, setMsg] = useState("");
+    const load = useCallback(() => {
+        getThemes().then((r) => {
+            if (r && r.ok) { setSt(r); setErr(""); }
+            else setErr((r && r.error) || "Barry Launcher isn't answering.");
+        }).catch(() => setErr("Barry Launcher isn't answering."));
+    }, []);
+    useEffect(load, [load]);
+    const use = (t) => {
+        setErr(""); setMsg("");
+        setTheme(t.name).then((r) => {
+            if (r && r.ok) setSt(r); else setErr((r && r.error) || "Could not change the theme.");
+        }).catch(() => setErr("Could not change the theme."));
+    };
+    // A theme's .zip or .tar.gz, or the skin.json in its folder. One with its
+    // own screens (QML) is asked first.
+    const add = async () => {
+        setErr(""); setMsg("");
+        let start;
+        try {
+            setBusy(true);
+            start = await themesFolder();
+        } catch (e) {
+            start = null;
+        }
+        setBusy(false);
+        if (!start || !start.ok) {
+            setErr((start && start.error) || "Could not open the folder.");
+            return;
+        }
+        let picked;
+        try {
+            picked = await api.openFilePicker(0, start.path, true, true, undefined, THEME_EXTENSIONS, false, true);
+        } catch (e) {
+            themesDone().catch(() => {});
+            return;  // closed without a file
+        }
+        const path = picked && (picked.realpath || picked.path);
+        if (!path) { themesDone().catch(() => {}); return; }
+        const doInstall = async () => {
+            setBusy(true);
+            try {
+                const r = await installTheme(path);
+                if (r && r.ok) {
+                    setMsg(`${r.theme.replaces ? "Updated" : "Added"} ${r.theme.title}.`);
+                    load();
+                } else setErr((r && r.error) || "Could not add the theme.");
+            } catch (e) {
+                setErr("Could not add the theme.");
+            }
+            setBusy(false);
+            themesDone().catch(() => {});
+        };
+        let c;
+        try {
+            setBusy(true);
+            c = await checkTheme(path);
+        } catch (e) {
+            c = null;
+        }
+        setBusy(false);
+        if (!c || !c.ok) {
+            setErr((c && c.error) || "Could not read the theme.");
+            themesDone().catch(() => {});
+            return;
+        }
+        if (!c.theme.code) { doInstall(); return; }
+        DFL.showModal(jsx(DFL.ConfirmModal, {
+            strTitle: `Add ${c.theme.title}?`,
+            strDescription: `${c.theme.title} draws Barry Launcher's screens with its own code, which runs on this device `
+                + "as you. Add it only if you trust where it came from.",
+            strOKButtonText: "Add",
+            onOK: doInstall,
+            onCancel: () => themesDone().catch(() => {}),
+        }));
+    };
+    // A color of the theme in use (its skin.json "variants").
+    const recolor = (t, v) => {
+        setErr(""); setMsg("");
+        setThemeColor(t.name, v.id).then((r) => {
+            if (r && r.ok) setSt(r); else setErr((r && r.error) || "Could not change the color.");
+        }).catch(() => setErr("Could not change the color."));
+    };
+    const inUse = st ? st.skins.find((t) => t.name === st.current) : null;
+    // A variant's swatch, as a small keyboard: its background, a key and the
+    // accent key.
+    const swatch = (t, v) => {
+        const [bg, key, accent] = [0, 1, 2].map((i) => (v.swatch || [])[i] || "#808080");
+        const on = t.variant === v.id;
+        return jsx(DFL.DialogButton, {
+            onClick: () => recolor(t, v),
+            "aria-label": v.title,
+            style: { minWidth: 0, width: "48px", height: "36px", padding: 0, margin: "3px",
+                     borderRadius: "8px", background: bg, position: "relative",
+                     boxShadow: on ? "0 0 0 2px #1a9fff" : "0 0 0 1px rgba(255,255,255,0.18)" },
+            children: [
+                jsx("div", { style: { position: "absolute", left: "9px", bottom: "8px", width: "18px", height: "5px",
+                                      borderRadius: "2px", background: key } }, "k"),
+                jsx("div", { style: { position: "absolute", right: "7px", bottom: "7px", width: "9px", height: "7px",
+                                      borderRadius: "4px", background: accent } }, "a"),
+            ],
+        }, v.id);
+    };
+    const remove = (t) => DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: `Remove ${t.title}?`,
+        strDescription: "The theme is deleted."
+            + (st && st.current === t.name ? " Barry Launcher changes to SteamOS." : ""),
+        strOKButtonText: "Remove",
+        onOK: () => {
+            setErr(""); setMsg("");
+            removeTheme(t.name).then((r) => {
+                if (r && r.ok) { setSt(r); setMsg(`Removed ${t.title}.`); }
+                else setErr((r && r.error) || "Could not remove the theme.");
+            }).catch(() => setErr("Could not remove the theme."));
+        },
+    }));
+    return jsxs(DFL.PanelSection, { title: "Themes", children: [
+        err && note(err),
+        // One theme per row, apart from the next: its name (picks it) and,
+        // for one you added, ✕ (removes it).
+        ...(st ? st.skins : []).map((t) => row(jsxs(DFL.Focusable, {
+            "flow-children": "horizontal",
+            style: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" },
+            children: [
+                jsx(DFL.DialogButton, {
+                    onClick: () => use(t),
+                    style: { flex: 1, minWidth: 0, height: "40px", padding: "0 12px",
+                             display: "flex", alignItems: "center", gap: "10px" },
+                    children: [
+                        jsx("span", { style: { width: "14px", color: "#1a9fff" }, children: st.current === t.name ? "✓" : "" }, "c"),
+                        jsx("span", { style: { flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t.title }, "t"),
+                    ],
+                }),
+                !t.builtin && jsx(DFL.DialogButton, {
+                    onClick: () => remove(t),
+                    style: { minWidth: "40px", width: "40px", height: "40px", padding: 0, flexShrink: 0 },
+                    children: "✕",
+                }),
+            ],
+        }))),
+        inUse && inUse.variants.length > 1 && row(jsx(DFL.Focusable, {
+            "flow-children": "horizontal",
+            // Apart from the theme list above it.
+            style: { display: "flex", flexWrap: "wrap", margin: "16px -3px 0" },
+            children: inUse.variants.map((v) => swatch(inUse, v)),
+        })),
+        inUse && inUse.variants.length > 1 && note(`${inUse.title} color: `
+            + ((inUse.variants.find((v) => v.id === inUse.variant) || {}).title || inUse.variant)),
+        msg && note(msg),
+        row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: add,
+            children: busy ? "Working…" : "Add a theme" })),
+        note("A theme comes as a .zip (or .tar.gz), or as a folder: pick the skin.json in it. "
+            + "With a USB drive plugged in, the files open there; otherwise in Downloads."),
+    ] });
+}
+
 // The Games tab's picks. A dropdown's list remounts the panel, which would
 // otherwise put the Game back on the last one played.
 const gamePicks = { game: null, app: null, close: true };
@@ -591,6 +773,7 @@ function Content() {
     const tabs = [
         { id: "screens", icon: ThorIcon },
         { id: "apps", icon: AppsIcon },
+        { id: "themes", icon: ThemesIcon },
         { id: "games", icon: GamesIcon },
         ...(st.rgbDimmer != null ? [{ id: "lights", icon: RgbIcon }] : []),
         { id: "emulators", icon: HandheldIcon },
@@ -632,6 +815,7 @@ function Content() {
         note("This setting adjusts the brightness threshold of the performance dashboard settings"),
     ] }),
     shown === "apps" && jsx(AppsSection, {}),
+    shown === "themes" && jsx(ThemesSection, {}),
     shown === "games" && jsx(GamesSection, {}),
     shown === "emulators" && jsx(TwoScreenSection, {}),
     ] });

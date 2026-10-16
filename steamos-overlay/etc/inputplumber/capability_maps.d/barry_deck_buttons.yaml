@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Barry Launcher's Deck controls (Barry.Input's DeckButtons, "Barry Deck
+# Buttons"): the Steam Deck's back buttons and its trackpads' clicks, drawn
+# on the AYN Thor's bottom screen.
+version: 2
+kind: CapabilityMap
+name: Barry Launcher Deck buttons
+id: barry_deck_buttons
+
+mapping:
+  - name: L4
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY7
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: L5
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY8
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle2
+
+  - name: R4
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY5
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle1
+
+  - name: R5
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY6
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle2
+
+  - name: Left trackpad click
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY11
+          value_type: button
+    target_event:
+      touchpad:
+        name: LeftPad
+        touch:
+          button: Press
+
+  - name: Right trackpad click
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY12
+          value_type: button
+    target_event:
+      touchpad:
+        name: RightPad
+        touch:
+          button: Press

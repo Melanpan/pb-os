@@ -1,0 +1,29 @@
+{
+  "title": "Jello",
+  "author": "PB-OS",
+  "api": 1,
+  "colors": {
+    "background": "#fff4ec",
+    "surface": "#ffe9e4",
+    "panel": "#ffe0da",
+    "raised": "#ffcfc8",
+    "pressed": "#ffb3ad",
+    "border": "#f2b4b0",
+    "borderQuiet": "#f7d0cb",
+    "text": "#7d1a2c",
+    "accent": "#e3243f",
+    "accentFill": "#ffd5da",
+    "lit": "#e3243f",
+    "litText": "#ffffff",
+    "key": "#fffaf6",
+    "keyText": "#d01c3a",
+    "keySpecial": "#5fb233",
+    "keySpecialText": "#ffffff",
+    "keyAction": "#ee7410",
+    "keyActionText": "#ffffff",
+    "keyShadow": "#e9c6bb",
+    "icon": "#e3243f",
+    "danger": "#a3122b",
+    "cover": "#fff4ec"
+  }
+}
