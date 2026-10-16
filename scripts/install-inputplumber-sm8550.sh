@@ -217,6 +217,15 @@ install_odin_composite() {
     "${R}/etc/inputplumber/devices.d/01-ayn-controller.yaml"
   ln -sfn /usr/lib/systemd/system/inputplumber.service \
     "${R}/etc/systemd/system/multi-user.target.wants/inputplumber.service"
+  # The deck target is a USB/IP device on vhci_hcd, which refuses to suspend
+  # (-EBUSY) while it is attached: every sleep failed and the screens came
+  # back on. InputPlumber's own unit lets go of it before sleep (HookSleep)
+  # and brings it back after (HookWake).
+  [[ -f "${R}/usr/lib/systemd/system/inputplumber-suspend.service" ]] \
+    || die "inputplumber-suspend.service missing from the InputPlumber install"
+  install -d "${R}/etc/systemd/system/sleep.target.wants"
+  ln -sfn /usr/lib/systemd/system/inputplumber-suspend.service \
+    "${R}/etc/systemd/system/sleep.target.wants/inputplumber-suspend.service"
 }
 
 verify_needed() {
