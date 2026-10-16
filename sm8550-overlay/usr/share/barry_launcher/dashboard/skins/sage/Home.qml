@@ -197,7 +197,7 @@ Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30 * home.s
-        text: "AYN: performance dashboard  ·  hold AYN: home"
+        text: "swipe right: performance dashboard  ·  hold AYN: home"
         color: home.c.text
         opacity: 0.4
         font { family: Skin.font; pixelSize: 24 * home.s }

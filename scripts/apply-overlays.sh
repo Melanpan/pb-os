@@ -749,7 +749,7 @@ if [[ "$SOC" != sm8650 ]]; then
   remove_old_bottom_session
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
-  for f in barry_launcher_session barry_launcher_dashboard barry_launcher_statsd barry_launcher_shelld \
+  for f in barry_launcher_session barry_launcher_statsd barry_launcher_shelld \
     barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done

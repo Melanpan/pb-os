@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """sm8550-thor-backlightd: AYN Thor bottom screen. One brightness for both
-panels, the Barry Launcher plugin's bottom-screen switch, and the AYN button's dashboard overlay.
+panels, the Barry Launcher plugin's bottom-screen switch, and the AYN button.
 
 Brightness: Steam's Game Mode slider adjusts the first backlight it finds,
 the bottom panel's (ae94000.dsi.0), and writes it directly (the video group
@@ -34,12 +34,12 @@ driver powers the backlight up again on each modeset and wake, and the Game
 Mode / Desktop start scripts re-enable the touchscreen.
 
 AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (no device
-config lists it, see 50-ayn_thor.yaml); this grabs it. A short
-press of KEY_F24 toggles OVERLAY; holding it LONG_PRESS_S writes HOME, which
-Barry Launcher watches to bring its home screen forward (and hides the
-dashboard). Barry Launcher's dashboard shows itself
-over whatever the bottom screen holds while OVERLAY is "1" (and writes "0"
-itself if an idle time is set). While the overlay is up the bottom screen is on even if
+config lists it, see 50-ayn_thor.yaml); this grabs it. Holding KEY_F24
+LONG_PRESS_S writes HOME, which Barry Launcher watches to bring its home
+screen forward; a short press does nothing (the performance dashboard is a
+page left of Barry Launcher's home screen now, swiped in). OVERLAY was the
+short press's dashboard flag; nothing sets it now, and what follows still
+honors it should it be "1". While the overlay is up the bottom screen is on even if
 the switch says off (from OVERLAY_DELAY_S after the press, once the
 dashboard has drawn, so the app under it does not flash up); afterwards it
 returns to the switch's state. While OVERLAY or TOP_INPUT (Barry Launcher's
@@ -606,8 +606,8 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
             except BlockingIOError:
                 pass
 
-        # AYN button: a short press toggles the dashboard, a long one goes
-        # home. Decided on release, or once held long enough.
+        # AYN button: holding it goes home (once held long enough); a short
+        # press does nothing.
         if key_fd is not None and key_fd in events:
             try:
                 data = os.read(key_fd, EVENT.size * 32)
@@ -624,9 +624,7 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                     pressed_at = time.monotonic()
                 elif value == 0 and pressed_at is not None:
                     pressed_at = None
-                    up = read(OVERLAY, "0") != "1"
-                    write(OVERLAY, "1" if up else "0")
-                    log(f"AYN button: dashboard {'shown' if up else 'hidden'}")
+                    log("AYN button: short press (no action)")
         elif key_fd is None:
             pressed_at = None
             key_retry += 1

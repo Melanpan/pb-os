@@ -2,20 +2,22 @@
 """barry_launcher_statsd: device stats for Barry Launcher's dashboard on the
 AYN Thor's bottom screen.
 
-Serves JSON on 127.0.0.1:PORT for the QML dashboard (barry_launcher_dashboard)
-and its skins, so a skin is plain QML with no Python of its own:
+Serves JSON on 127.0.0.1:PORT for the QML dashboard (dashboard/Dashboard.qml,
+a page of the home screen) and its skins, so a skin is plain QML with no
+Python of its own:
 
   GET  /stats     one sample (schema below); sampled on request, at most
                   once per MIN_SAMPLE_S, so nothing runs while nobody asks
-  GET  /overlay   {"shown": bool}: the AYN button's flag (OVERLAY)
-  POST /overlay   {"shown": false} hides the dashboard (idle timeout)
+  GET  /overlay   {"shown": bool}: OVERLAY, the AYN button's old dashboard
+                  flag (nothing sets it now; kept for older skins)
+  POST /overlay   {"shown": false} clears it
   GET  /skins     {"skins": [{name, title, author, dir, variants}]}; dir is
                   the current skin's folder under "current"; variants: the
                   skin's color variants [{id, title, swatch: [colors]}]
                   (the first the default), [] for none
   GET  /settings  {"skin": name, "idleSeconds": n, "skinVariants": {skin: id}}
   POST /settings  any of those keys; skin applies from the next opening,
-                  idleSeconds 0 keeps the dashboard up until the next press;
+                  idleSeconds 0 keeps the dashboard in until swiped away;
                   skinVariants is merged into the saved ones (Barry's
                   keyboards and pads change at once)
   GET  /controls  the quick controls:

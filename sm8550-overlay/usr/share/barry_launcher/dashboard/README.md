@@ -1,7 +1,8 @@
 # Barry Launcher dashboard skins
 
-The AYN button shows Barry Launcher's performance dashboard on the Thor's
-bottom screen.
+Barry Launcher's performance dashboard is a page to the left of the home
+screen on the Thor's bottom screen: swipe left to right on home to pull it in,
+right to left (or swipe up from the bottom edge) to put it away.
 What it looks like is a *skin*: a folder of QML (Qt 6.8, QtQuick). No
 building and no Python needed.
 
@@ -17,13 +18,14 @@ is in `~/.config/barry_launcher/settings.json`:
 { "skin": "ayn", "idleSeconds": 0 }
 ```
 
-`idleSeconds` hides the dashboard after that long without a touch; 0 keeps it
-up until the next AYN press. Changes apply the next time the dashboard opens
-(the skin is reloaded on every opening, so you can edit and press AYN twice).
+`idleSeconds` puts the dashboard away after that long without a touch; 0
+keeps it in until you swipe it away. The skin is reloaded each time the
+dashboard comes in and when the chosen skin changes, so you can edit it and
+swipe it away and back.
 
 ## A skin folder
 
-- `Skin.qml`: the root item; the host sizes it to the whole screen
+- `Skin.qml`: the root item; the page sizes it to the whole screen
   (1240×1080 on the Thor).
 - `skin.json`: `{"title": "...", "author": "...", "api": 1}`
 - anything else it uses (more `.qml` components, images), by relative path
@@ -33,11 +35,11 @@ up until the next AYN press. Changes apply the next time the dashboard opens
 | member | |
 |---|---|
 | `dashboard.stats` | the latest sample, updated once a second (below) |
-| `dashboard.shown` | true while on screen |
+| `dashboard.shown` | true while on screen (even partly, as it slides) |
 | `dashboard.skinDir` | this skin's folder |
 | `dashboard.controls` | the quick controls (below), updated every 3 s |
 | `dashboard.setControls(body)` | change quick controls, e.g. `{fanProfile: "max"}` |
-| `dashboard.hide()` | dismiss, as a second AYN press would |
+| `dashboard.hide()` | put the page away (it slides back to the left) |
 | `dashboard.poke()` | count as activity for the idle timeout (touches count already) |
 | `dashboard.request(method, path, body, callback)` | raw call to the stats service |
 

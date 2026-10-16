@@ -10,9 +10,16 @@
 // home screen up into place: barry_launcher_shelld counts the trips (GET
 // /home), this puts the screen at the slide's start while still hidden and
 // says so (/home-ready), and then it is brought forward.
+//
+// The performance dashboard is a page to the left of home: a left-to-right
+// swipe from anywhere on home pulls it in, right to left (or going home)
+// puts it away. Barry.Input's PageSwipe tells the swipe from a tap and says
+// where the page goes; here it slides there, springing past a little and
+// back, as the keyboard does coming up.
 import QtQuick
 import QtQuick.Window
 import Barry.Input
+import "../dashboard"
 
 Window {
     id: win
@@ -69,13 +76,52 @@ Window {
     property var status: ({})
     property var tiles: null
 
-    // Home.qml, or the skin's.
-    SkinView {
-        id: home
-        file: "Home.qml"
+    PageSwipe {
+        id: pages
         anchors.fill: parent
-        transform: Translate { id: homeShift }
-        onLoaded: if (win.tiles !== null) item.tiles = win.tiles
+        threshold: 24 * win.s
+        onDragStarted: settleAnim.stop()
+        onSettle: function (target, velocity) {
+            settleAnim.stop()
+            const opening = target > pages.progress
+            settleAnim.to = target
+            // As the keyboard: in, a quick move with a visible overshoot;
+            // away, a softer settle.
+            settleAnim.duration = opening ? 460 : 380
+            settleAnim.easing.overshoot = opening ? 1.4 : 0.8
+            settleAnim.start()
+        }
+
+        // Home.qml, or the skin's; pushed right as the dashboard comes in.
+        Item {
+            width: pages.width
+            height: pages.height
+            x: pages.progress * pages.width
+            SkinView {
+                id: home
+                file: "Home.qml"
+                anchors.fill: parent
+                transform: Translate { id: homeShift }
+                onLoaded: if (win.tiles !== null) item.tiles = win.tiles
+            }
+        }
+
+        Dashboard {
+            id: dashboard
+            width: pages.width
+            height: pages.height
+            x: (pages.progress - 1) * pages.width
+            shown: pages.progress > 0.001 || pages.dragging
+            visible: shown
+            onHideRequested: pages.closePage()
+        }
+    }
+
+    NumberAnimation {
+        id: settleAnim
+        target: pages
+        property: "progress"
+        easing.type: Easing.OutBack
     }
     Binding { target: home.item; property: "s"; value: win.s }
     Binding { target: home.item; property: "running"; value: win.running }
@@ -131,8 +177,11 @@ Window {
                     return
                 let serial = -1
                 try { serial = JSON.parse(x.responseText).serial } catch (e) { return }
-                if (win.homeSerial >= 0 && serial !== win.homeSerial)
+                if (win.homeSerial >= 0 && serial !== win.homeSerial) {
+                    if (pages.open || pages.progress > 0)
+                        pages.closePage()  // going home puts the dashboard away
                     win.slideIn(serial)
+                }
                 win.homeSerial = serial
             }
             x.open("GET", api + "/home")
