@@ -20,3 +20,10 @@ ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", \
 ACTION=="remove", SUBSYSTEM=="input", KERNEL=="event*", \
   ENV{ID_BUS}=="usb|bluetooth", ENV{ID_VENDOR_ID}!="28de", DEVPATH!="/devices/virtual/*", DEVPATH!="*/vhci_hcd*", \
   RUN+="/usr/bin/systemctl --no-block start sm8550-inputplumber-ext-hid.service"
+
+# InputPlumber's generic Steam controller (deck-uhid, a uhid device) has
+# appeared, for example after steamos-manager reset the composite at boot:
+# on the AYN Thor the helper switches it back to the real Steam Deck
+# controller (deck); elsewhere it only re-checks the keyboard, as above.
+ACTION=="add", SUBSYSTEM=="hidraw", KERNEL=="hidraw*", DEVPATH=="/devices/virtual/misc/uhid/0003:28DE:*", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="sm8550-inputplumber-ext-hid.service"

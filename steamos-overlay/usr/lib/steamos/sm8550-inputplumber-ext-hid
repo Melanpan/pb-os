@@ -113,6 +113,16 @@ else
   want_kb=1
 fi
 
+# AYN Thor: the real Steam Deck controller (deck, a USB/IP device), so
+# Steam gives Barry Launcher's Deck controls their trackpads (the generic
+# deck-uhid one has none). steamos-manager resets the composite to deck-uhid
+# when it appears (71-sm8550-ext-hid.rules runs this then); put it back.
+want_pad=""
+if grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible 2>/dev/null \
+  && modinfo vhci-hcd >/dev/null 2>&1; then
+  want_pad=deck
+fi
+
 apply() {
   local id="$1" have_kb=0 pad=""
   targets_have_keyboard "$id" && have_kb=1
@@ -125,13 +135,14 @@ apply() {
     logger -t sm8550-inputplumber-ext-hid "composite $id: no gamepad target, left alone"
     return 1
   fi
-  [[ "$want_kb" -eq "$have_kb" ]] && return 0
+  local new_pad="${want_pad:-$pad}"
+  [[ "$want_kb" -eq "$have_kb" && "$new_pad" == "$pad" ]] && return 0
   if [[ "$want_kb" -eq 1 ]]; then
-    logger -t sm8550-inputplumber-ext-hid "composite $id: $pad + keyboard"
-    set_targets "$id" "$pad" keyboard || true
+    logger -t sm8550-inputplumber-ext-hid "composite $id: $new_pad + keyboard"
+    set_targets "$id" "$new_pad" keyboard || true
   else
-    logger -t sm8550-inputplumber-ext-hid "composite $id: $pad without keyboard"
-    set_targets "$id" "$pad" || true
+    logger -t sm8550-inputplumber-ext-hid "composite $id: $new_pad without keyboard"
+    set_targets "$id" "$new_pad" || true
   fi
   return 1
 }
