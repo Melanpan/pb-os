@@ -1,8 +1,11 @@
 # Barry Launcher dashboard skins
 
-Barry Launcher's performance dashboard is a page to the left of the home
-screen on the Thor's bottom screen: swipe left to right on home to pull it in,
-right to left (or swipe up from the bottom edge) to put it away.
+Barry Launcher's performance dashboard is a page to the left of the apps
+on the Thor's bottom screen (press the AYN button to open Barry Launcher):
+swipe left to right on the apps to pull it in, right to left to put it
+away. The quick settings are the page to the right of the apps, and while
+Barry Launcher is closed the bottom screen shows the hero art of the game
+selected on the top screen.
 What it looks like is a *skin*: a folder of QML (Qt 6.8, QtQuick). No
 building and no Python needed.
 

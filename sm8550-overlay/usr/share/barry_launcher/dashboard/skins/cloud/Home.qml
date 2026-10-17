@@ -26,11 +26,25 @@ Rectangle {
     signal launch(string app)
     signal close(string app)
 
+    // Over the game art, frosted (Shell.qml sets it): how solid this page's
+    // own background is, 1 fully.
+    property real glass: 1
+    function tint(color) {
+        const c = Qt.color(color)
+        return Qt.rgba(c.r, c.g, c.b, c.a * glass)
+    }
+    // The tiles over the art: see-through too, but less than the page.
+    readonly property real tileGlass: glass < 1 ? 0.6 : 1
+    function tileTint(color) {
+        const c = Qt.color(color)
+        return Qt.rgba(c.r, c.g, c.b, c.a * tileGlass)
+    }
+
     readonly property var c: Skin.colors
     readonly property real plateHeight: 150 * s
     gradient: Gradient {
-        GradientStop { position: 0; color: Qt.lighter(home.c.background, 1.04) }
-        GradientStop { position: 1; color: Qt.darker(home.c.background, 1.04) }
+        GradientStop { position: 0; color: home.tint(Qt.lighter(home.c.background, 1.04)) }
+        GradientStop { position: 1; color: home.tint(Qt.darker(home.c.background, 1.04)) }
     }
 
     // The case's gradient plate, along the top.
@@ -58,6 +72,43 @@ Rectangle {
         }
     }
 
+    // Barry opening: the tiles fly in toward the screen, the middle ones
+    // first (Barry.Input's TileDrop; Shell.qml calls dropIn()).
+    property real dropClock: -1
+    // Tiles take no taps before this (ms since the epoch): set as Barry opens.
+    property double armedAt: 0
+    function dropIn() {
+        armedAt = Date.now() + 600
+        const m = grid.mapToItem(home, grid.width / 2, grid.height / 2)
+        const tiles = []
+        for (let i = 0; i < tilesRep.count; i++)
+            if (tilesRep.itemAt(i))
+                tiles.push(tilesRep.itemAt(i))
+        let near = Infinity, reach = 0
+        for (const t of tiles) {
+            const c = t.mapToItem(home, t.width / 2, t.height / 2)
+            const d = Math.hypot(c.x - m.x, c.y - m.y)
+            near = Math.min(near, d)
+            reach = Math.max(reach, d)
+        }
+        for (const t of tiles)
+            t.drop.aim(home, m.x, m.y, near, reach)
+        dropAnim.stop()
+        if (!tiles.length)
+            return
+        dropAnim.to = tiles[0].drop.length
+        dropAnim.duration = tiles[0].drop.length
+        dropClock = 0
+        dropAnim.start()
+    }
+    NumberAnimation {
+        id: dropAnim
+        target: home
+        property: "dropClock"
+        from: 0
+        onFinished: home.dropClock = -1
+    }
+
     component Tile: Item {
         id: tile
         property string app
@@ -71,104 +122,115 @@ Rectangle {
         width: 300 * home.ts
         height: 340 * home.ts
 
-        // A keycap: pressed, it sinks onto its lower edge.
-        Rectangle {
-            id: face
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: 260 * home.ts
-            height: 260 * home.ts
-            radius: 56 * home.ts
-            color: home.c.keyShadow
+        // Flies in as Barry opens (Barry.Input's TileDrop).
+        property alias drop: dropper
+        TileDrop {
+            id: dropper
+            clock: home.dropClock
+
+            // A keycap: pressed, it sinks onto its lower edge.
             Rectangle {
-                id: cap
-                anchors { fill: parent; bottomMargin: tap.pressed ? 0 : 10 * home.ts; topMargin: tap.pressed ? 10 * home.ts : 0 }
-                radius: parent.radius
-                color: tile.isRunning || tile.statusText ? home.c.keyAction : home.c.key
+                id: face
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 260 * home.ts
+                height: 260 * home.ts
+                radius: 56 * home.ts
+                color: home.tileTint(home.c.keyShadow)
+                Rectangle {
+                    id: cap
+                    anchors { fill: parent; bottomMargin: tap.pressed ? 0 : 10 * home.ts; topMargin: tap.pressed ? 10 * home.ts : 0 }
+                    radius: parent.radius
+                    color: home.tileTint(tile.isRunning || tile.statusText ? home.c.keyAction : home.c.key)
+                }
+
+                SequentialAnimation on opacity {
+                    running: tile.statusText !== ""
+                    loops: Animation.Infinite
+                    alwaysRunToEnd: true
+                    NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutQuad }
+                    NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
+                }
+
+                Shell.Icon {
+                    anchors.centerIn: cap
+                    visible: !tile.imageIcon
+                    width: 150 * home.ts
+                    height: 150 * home.ts
+                    kind: tile.imageIcon ? "" : tile.iconKind
+                    color: tile.isRunning || tile.statusText ? home.c.keyActionText : home.c.icon
+                    lineWidth: 9 * home.ts
+                }
+                // A user app's own icon (barry_apps): a picture file.
+                Image {
+                    anchors.centerIn: cap
+                    visible: tile.imageIcon
+                    width: 170 * home.ts
+                    height: 170 * home.ts
+                    source: tile.imageIcon ? tile.iconKind : ""
+                    sourceSize: Qt.size(width, height)
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    asynchronous: true
+                }
+                // A quick tap only, and not while Barry is still coming in:
+                // thumbs resting on the screen's lower corners started
+                // Trackpad and Deck (2026-10-17).
+                TapHandler {
+                    id: tap
+                    longPressThreshold: 0.5
+                    onTapped: if (Date.now() >= home.armedAt) home.launch(tile.app)
+                }
             }
 
-            SequentialAnimation on opacity {
-                running: tile.statusText !== ""
-                loops: Animation.Infinite
-                alwaysRunToEnd: true
-                NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutQuad }
-                NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
-            }
-
-            Shell.Icon {
-                anchors.centerIn: cap
-                visible: !tile.imageIcon
+            // Close badge on a running app. Its touch area is wider than the
+            // badge, so a finger needn't hit the badge itself.
+            Item {
+                visible: tile.isRunning
+                x: badge.x - (width - badge.width) / 2
+                y: badge.y - (height - badge.height) / 2
                 width: 150 * home.ts
                 height: 150 * home.ts
-                kind: tile.imageIcon ? "" : tile.iconKind
-                color: tile.isRunning || tile.statusText ? home.c.keyActionText : home.c.icon
-                lineWidth: 9 * home.ts
+                TapHandler {
+                    id: closeTap
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                    onTapped: home.close(tile.app)
+                }
             }
-            // A user app's own icon (barry_apps): a picture file.
-            Image {
-                anchors.centerIn: cap
-                visible: tile.imageIcon
-                width: 170 * home.ts
-                height: 170 * home.ts
-                source: tile.imageIcon ? tile.iconKind : ""
-                sourceSize: Qt.size(width, height)
-                fillMode: Image.PreserveAspectFit
-                smooth: true
-                asynchronous: true
+            Rectangle {
+                id: badge
+                visible: tile.isRunning
+                x: face.x + face.width - width * 0.7
+                y: -height * 0.3
+                width: 76 * home.ts
+                height: 76 * home.ts
+                radius: width / 2
+                color: closeTap.pressed ? home.c.danger : home.c.border
+                border.color: home.c.background
+                border.width: 4 * home.ts
+                Shell.Icon {
+                    anchors.centerIn: parent
+                    width: 40 * home.ts
+                    height: 40 * home.ts
+                    kind: "close"
+                    color: home.c.text
+                    lineWidth: 6 * home.ts
+                }
             }
-            TapHandler {
-                id: tap
-                onTapped: home.launch(tile.app)
-            }
-        }
 
-        // Close badge on a running app. Its touch area is wider than the
-        // badge, so a finger needn't hit the badge itself.
-        Item {
-            visible: tile.isRunning
-            x: badge.x - (width - badge.width) / 2
-            y: badge.y - (height - badge.height) / 2
-            width: 150 * home.ts
-            height: 150 * home.ts
-            TapHandler {
-                id: closeTap
-                gesturePolicy: TapHandler.ReleaseWithinBounds
-                onTapped: home.close(tile.app)
-            }
-        }
-        Rectangle {
-            id: badge
-            visible: tile.isRunning
-            x: face.x + face.width - width * 0.7
-            y: -height * 0.3
-            width: 76 * home.ts
-            height: 76 * home.ts
-            radius: width / 2
-            color: closeTap.pressed ? home.c.danger : home.c.border
-            border.color: home.c.background
-            border.width: 4 * home.ts
-            Shell.Icon {
-                anchors.centerIn: parent
-                width: 40 * home.ts
-                height: 40 * home.ts
-                kind: "close"
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: face.bottom
+                anchors.topMargin: 24 * home.ts
+                // Long names (user apps have up to 20 characters) shrink to fit.
+                width: tile.width + 50 * home.ts
+                horizontalAlignment: Text.AlignHCenter
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 26 * home.ts
+                elide: Text.ElideRight
+                text: tile.statusText || tile.name
                 color: home.c.text
-                lineWidth: 6 * home.ts
+                font { family: Skin.font; pixelSize: 40 * home.ts; weight: Font.DemiBold }
             }
-        }
-
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: face.bottom
-            anchors.topMargin: 24 * home.ts
-            // Long names (user apps have up to 20 characters) shrink to fit.
-            width: tile.width + 50 * home.ts
-            horizontalAlignment: Text.AlignHCenter
-            fontSizeMode: Text.HorizontalFit
-            minimumPixelSize: 26 * home.ts
-            elide: Text.ElideRight
-            text: tile.statusText || tile.name
-            color: home.c.text
-            font { family: Skin.font; pixelSize: 40 * home.ts; weight: Font.DemiBold }
         }
     }
 
@@ -195,6 +257,7 @@ Rectangle {
             rowSpacing: 30 * home.ts
 
             Repeater {
+                id: tilesRep
                 model: home.tiles
                 delegate: Tile {
                     required property var modelData
@@ -223,7 +286,7 @@ Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30 * home.s
-        text: "swipe right: performance dashboard  ·  hold AYN: home"
+        text: "swipe right: performance  ·  swipe left: quick settings  ·  AYN: close"
         color: home.c.text
         opacity: 0.4
         font { family: Skin.font; pixelSize: 24 * home.s }

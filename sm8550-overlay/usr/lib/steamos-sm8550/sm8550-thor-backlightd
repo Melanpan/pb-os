@@ -34,24 +34,22 @@ driver powers the backlight up again on each modeset and wake, and the Game
 Mode / Desktop start scripts re-enable the touchscreen.
 
 AYN button: InputPlumber leaves gpio-keys-ayn alone on the Thor (no device
-config lists it, see 50-ayn_thor.yaml); this grabs it. Holding KEY_F24
-LONG_PRESS_S writes HOME, which Barry Launcher watches to bring its home
-screen forward; a short press does nothing (the performance dashboard is a
-page left of Barry Launcher's home screen now, swiped in). OVERLAY was the
-short press's dashboard flag; nothing sets it now, and what follows still
-honors it should it be "1". While the overlay is up the bottom screen is on even if
-the switch says off (from OVERLAY_DELAY_S after the press, once the
-dashboard has drawn, so the app under it does not flash up); afterwards it
-returns to the switch's state. While OVERLAY or TOP_INPUT (Barry Launcher's
-Keyboard or Trackpad app open, written by barry_launcher_shelld) is "1",
-Steam's gamescope also gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root:
-should it be drawing a game's second window on the bottom screen (a DS or
-3DS emulator's, gamescope's dual-screen branch), it hands the screen back to
-Barry Launcher's gamescope for the dashboard or keyboard and takes it again
-once both are "0". Holding the AYN button while such a game has the bottom
-screen (GAMESCOPE_BOTTOM_SCREEN_SHOWING, 1 shown or 2 waiting) yields it for
-Barry Launcher's home as well, until the button is held again or the game's
-window is gone.
+config lists it, see 50-ayn_thor.yaml); this grabs it. In Game Mode a short
+press of KEY_F24 opens or closes Barry Launcher: it flips OVERLAY, which
+barry_launcher_shelld watches (and also writes: an app started from Barry
+closes it, a swipe up from the bottom edge opens it). Holding it
+LONG_PRESS_S turns the bottom screen off or on, as the Dual Screen switch
+does (STATE); turning it off also closes Barry. A short press while it is
+off turns it on again, with Barry open. While Barry is open
+(OVERLAY "1") the bottom screen is on even if the switch says off (from
+OVERLAY_DELAY_S after the press, once Barry has drawn, so the app under it
+does not flash up); once it closes the screen returns to the switch's
+state. While OVERLAY or TOP_INPUT (Barry Launcher's Keyboard or Trackpad
+app open, written by barry_launcher_shelld) is "1", Steam's gamescope also
+gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root: should it be drawing a
+game's second window on the bottom screen (a DS or 3DS emulator's,
+gamescope's dual-screen branch), it hands the screen back to Barry
+Launcher's gamescope and takes it again once both are "0".
 
 Charge rest: while sm8550-charge-rest has the device resting on the
 charger (CHARGE_REST), both screens are its to power off and back on, and
@@ -102,9 +100,8 @@ FIRMWARE_TYPE = f"{RUN_DIR}/bottom-backlight-type"
 DESKTOP_MAX = f"{RUN_DIR}/bottom-backlight-max"
 IN_MODIFY = 0x2
 STEAM_GAMMA = 2.2
-OVERLAY = f"{RUN_DIR}/overlay"
+OVERLAY = f"{RUN_DIR}/overlay"  # "1": Barry Launcher is open
 TOP_INPUT = f"{RUN_DIR}/top-input"
-HOME = f"{RUN_DIR}/home"  # a request counter; any change means "go home"
 # Desktop Mode shares SCREENS with Game Mode, through
 # sm8550-thor-desktop-brightness in the Plasma session: on entering it this
 # leaves DESKTOP_START (SCREENS as they were) and holds both panels there
@@ -129,7 +126,7 @@ BL_ON, BL_OFF = "0", "4"  # FB_BLANK_UNBLANK, FB_BLANK_POWERDOWN
 # The kernel notifies actual_brightness on changes; the timeout also paces
 # enforcing the switch and retrying the AYN key device.
 POLL_MS = 100
-# The dashboard polls the flag every 200 ms, then maps and draws.
+# Barry Launcher hears the flag, then comes forward and draws.
 OVERLAY_DELAY_S = 0.5
 # Steam's shortest idle dim is minutes; one nudge per this many seconds of
 # touching keeps it awake.
@@ -320,8 +317,8 @@ def touch_inhibited_paths() -> list[str]:
 
 
 def setup_overlay() -> None:
-    """Session-writable flags: the dashboard clears OVERLAY on timeout, and
-    barry_launcher_shelld keeps TOP_INPUT."""
+    """Session-writable flags: barry_launcher_shelld opens and closes Barry
+    (OVERLAY) too, and keeps TOP_INPUT."""
     os.makedirs(RUN_DIR, exist_ok=True)
     try:
         gid = grp.getgrnam("input").gr_gid
@@ -431,16 +428,6 @@ def set_bottom_screen_yield(on: bool) -> bool:
     prop = "GAMESCOPE_BOTTOM_SCREEN_YIELD"
     r = steam_xprop(*(["-f", prop, "32c", "-set", prop, "1"] if on else ["-remove", prop]))
     return r is not None and r.returncode == 0
-
-
-def bottom_screen_game() -> bool:
-    """Steam's gamescope has a game's window for the bottom screen, shown
-    there or waiting for it (GAMESCOPE_BOTTOM_SCREEN_SHOWING 1 or 2)."""
-    r = steam_xprop("GAMESCOPE_BOTTOM_SCREEN_SHOWING")
-    if r is None or r.returncode != 0:
-        return False
-    value = r.stdout.rsplit("=", 1)[-1].strip()
-    return value in ("1", "2")
 
 
 def main() -> int:
@@ -577,11 +564,8 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
     was_on = None
     overlay_since: float | None = None
     pressed_at: float | None = None  # AYN held down since, until handled
-    home_count = 0
     yield_sent: bool | None = None  # GAMESCOPE_BOTTOM_SCREEN_YIELD as last set
     yield_retry_at = 0.0  # after Game Mode was not found
-    home_over_game = False  # Home yields the bottom screen of a dual-screen game
-    home_checked = 0.0
     desktop, mode_checked = False, -MODE_CHECK_S
     desktop_since = 0.0
     desktop_top_seen: int | None = None  # DESKTOP_TOP's mtime last taken in
@@ -606,8 +590,9 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
             except BlockingIOError:
                 pass
 
-        # AYN button: holding it goes home (once held long enough); a short
-        # press does nothing.
+        # AYN button: a short press opens or closes Barry Launcher (on
+        # release); holding it turns the bottom screen off or on (once held
+        # long enough).
         if key_fd is not None and key_fd in events:
             try:
                 data = os.read(key_fd, EVENT.size * 32)
@@ -624,7 +609,18 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                     pressed_at = time.monotonic()
                 elif value == 0 and pressed_at is not None:
                     pressed_at = None
-                    log("AYN button: short press (no action)")
+                    if desktop:
+                        log("AYN button: short press (no action in Desktop Mode)")
+                    else:
+                        opening = read(OVERLAY, "0") != "1"
+                        # Pressed while the bottom screen is off: it wakes
+                        # (the switch goes on) with Barry open, so Barry's
+                        # standby then shows the game art, not black.
+                        if opening and read(STATE, "on") == "off":
+                            write(STATE, "on")
+                            log("AYN button: bottom screen on")
+                        write(OVERLAY, "1" if opening else "0")
+                        log(f"AYN button: Barry Launcher {'opens' if opening else 'closes'}")
         elif key_fd is None:
             pressed_at = None
             key_retry += 1
@@ -657,27 +653,16 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
 
         if pressed_at is not None and time.monotonic() - pressed_at >= LONG_PRESS_S:
             pressed_at = None  # the release does nothing more
-            if read(OVERLAY, "0") == "1":
+            # Off as the switch would be: Barry closes too, or it would keep
+            # the screen lit.
+            turning_off = read(STATE, "on") != "off"
+            write(STATE, "off" if turning_off else "on")
+            if turning_off and read(OVERLAY, "0") == "1":
                 write(OVERLAY, "0")
-            if home_over_game:
-                # Held again: the game's window gets the bottom screen back.
-                home_over_game = False
-                log("AYN button held: back to the game")
-            else:
-                home_over_game = bottom_screen_game()
-                home_checked = time.monotonic()
-                home_count += 1
-                write(HOME, str(home_count))
-                log(f"AYN button held: home{' over the game' if home_over_game else ''}")
-        elif home_over_game and time.monotonic() - home_checked >= YIELD_RETRY_S:
-            # The game quit meanwhile: nothing to go back to.
-            home_checked = time.monotonic()
-            if not bottom_screen_game():
-                home_over_game = False
-                log("the game's window is gone; Home stays")
+            log(f"AYN button held: bottom screen {'off' if turning_off else 'on'}")
 
         overlay = read(OVERLAY, "0") == "1"
-        want_yield = overlay or home_over_game or read(TOP_INPUT, "0") == "1"
+        want_yield = overlay or read(TOP_INPUT, "0") == "1"
         if want_yield != yield_sent and time.monotonic() >= yield_retry_at:
             if set_bottom_screen_yield(want_yield):
                 yield_sent = want_yield

@@ -1,21 +1,33 @@
-// Barry Launcher's home screen on the AYN Thor's bottom screen during Game
-// Mode: the first window of barry_launcher_session, under everything else.
-// Tiles start the bottom screen's apps (Firefox, Discord, Signal) through
-// barry_launcher_shelld, or bring a running one forward; holding the
-// AYN button, or an app ending, comes back here. Because this window is
-// always shown, gamescope falls back to it when an overlay such as the
-// dashboard hides, instead of freezing on the overlay's last frame.
+// Barry Launcher on the AYN Thor's bottom screen during Game Mode: the first
+// window of barry_launcher_session, under everything else. Because this
+// window is always shown, gamescope falls back to it when an app quits,
+// instead of freezing on the app's last frame.
 //
-// Coming home (a swipe up from the bottom edge, the AYN button) slides the
-// home screen up into place: barry_launcher_shelld counts the trips (GET
-// /home), this puts the screen at the slide's start while still hidden and
-// says so (/home-ready), and then it is brought forward.
+// Its base is the hero art of the game selected on the top screen
+// (Hero.qml). Over it Barry opens and closes: a short press of the AYN
+// button, or a swipe up from the bottom edge (barry_launcher_shelld says so
+// in GET /home: "open", and "serial" counting each opening). Barry is three
+// pages side by side: the performance dashboard, the apps (Home.qml) and
+// the quick settings (QuickSettings.qml), left to right; it opens on the
+// apps. A left-to-right swipe from anywhere brings in the page to the left,
+// right to left the one to the right; Barry.Input's PageSwipe tells a swipe
+// from a tap and says where it goes, and here it slides there, springing
+// past a little and back, as the keyboard does coming up. An app's tile
+// starts it (or brings it forward) through barry_launcher_shelld, and Barry
+// closes; the AYN button opens Barry over it and closes back to it.
 //
-// The performance dashboard is a page to the left of home: a left-to-right
-// swipe from anywhere on home pulls it in, right to left (or going home)
-// puts it away. Barry.Input's PageSwipe tells the swipe from a tap and says
-// where the page goes; here it slides there, springing past a little and
-// back, as the keyboard does coming up.
+// The game art is standby. A tap on it wakes Barry too: its pages come over
+// the art, which stays behind as if behind frosted glass (Hero.qml's
+// frost), its logo gone. Untouched for standbySeconds (Barry's settings,
+// 15 by default; 0: never), Barry goes back to the art, unless it is open
+// over an app or on the dashboard.
+//
+// Opening, the apps fly in toward the screen, the middle ones first
+// (Home.qml's dropIn, Barry.Input's TileDrop; a skin's home screen without
+// it slides up instead): shelld counts the openings, this puts Barry at
+// the start while still hidden and says so (/home-ready), and then the
+// window is brought forward. Closing, it fades down and the hero shows
+// again.
 import QtQuick
 import QtQuick.Window
 import Barry.Input
@@ -76,46 +88,126 @@ Window {
     property var status: ({})
     property var tiles: null
 
-    PageSwipe {
-        id: pages
+    // What shelld says (GET /home).
+    property bool barryOpen: false
+    property bool barryOver: false  // open over an app it closes back to
+    // The art behind Barry: 0 in focus, 1 frosted (animated as Barry comes
+    // and goes).
+    property real frost: 0
+    property int standbySeconds: 15
+
+    function setBarry(open, why) {
+        win.post("/barry", { open: open, why: why })
+    }
+    function readSettings() {
+        const x = new XMLHttpRequest()
+        x.onreadystatechange = function () {
+            if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
+                return
+            try {
+                const v = JSON.parse(x.responseText).standbySeconds
+                if (typeof v === "number")
+                    win.standbySeconds = v
+            } catch (e) {}
+        }
+        x.open("GET", "http://127.0.0.1:47823/settings")
+        x.send()
+    }
+    Component.onCompleted: readSettings()
+
+    // The hero art: what shows while Barry is closed.
+    SkinView {
+        id: hero
+        file: "Hero.qml"
         anchors.fill: parent
-        threshold: 24 * win.s
-        onDragStarted: settleAnim.stop()
-        onSettle: function (target, velocity) {
-            settleAnim.stop()
-            const opening = target > pages.progress
-            settleAnim.to = target
-            // As the keyboard: in, a quick move with a visible overshoot;
-            // away, a softer settle.
-            settleAnim.duration = opening ? 460 : 380
-            settleAnim.easing.overshoot = opening ? 1.4 : 0.8
-            settleAnim.start()
-        }
-
-        // Home.qml, or the skin's; pushed right as the dashboard comes in.
-        Item {
-            width: pages.width
-            height: pages.height
-            x: pages.progress * pages.width
-            SkinView {
-                id: home
-                file: "Home.qml"
-                anchors.fill: parent
-                transform: Translate { id: homeShift }
-                onLoaded: if (win.tiles !== null) item.tiles = win.tiles
-            }
-        }
-
-        Dashboard {
-            id: dashboard
-            width: pages.width
-            height: pages.height
-            x: (pages.progress - 1) * pages.width
-            shown: pages.progress > 0.001 || pages.dragging
-            visible: shown
-            onHideRequested: pages.closePage()
+    }
+    Binding { target: hero.item; property: "s"; value: win.s }
+    Binding { target: hero.item; property: "shown"; value: !win.barryOpen || barry.opacity < 1 }
+    Binding { target: hero.item; property: "frost"; value: win.frost }
+    // Standby: a tap on the art wakes Barry.
+    Item {
+        anchors.fill: hero
+        TapHandler {
+            enabled: !win.barryOpen
+            onTapped: win.setBarry(true, "tap on the game art")
         }
     }
+    // The pages go see-through over the art (with no game, they stay solid).
+    readonly property real glass: SteamGame.available ? 0.2 : 1
+
+    // Barry: its three pages over the hero.
+    Item {
+        id: barry
+        anchors.fill: parent
+        opacity: 0
+        visible: opacity > 0
+        transform: Translate { id: barryShift }
+
+        PageSwipe {
+            id: pages
+            anchors.fill: parent
+            minPage: -1
+            maxPage: 1
+            threshold: 24 * win.s
+            swipeEnabled: win.barryOpen
+            onDragStarted: settleAnim.stop()
+            onSettle: function (target, velocity) {
+                settleAnim.stop()
+                // As the keyboard: toward a side page, a quick move with a
+                // visible overshoot; back to the apps, a softer settle.
+                const opening = target !== 0
+                settleAnim.to = target
+                settleAnim.duration = opening ? 460 : 380
+                settleAnim.easing.overshoot = opening ? 1.4 : 0.8
+                settleAnim.start()
+            }
+
+            // Home.qml, or the skin's: the apps, in the middle.
+            Item {
+                width: pages.width
+                height: pages.height
+                x: pages.progress * pages.width
+                SkinView {
+                    id: home
+                    file: "Home.qml"
+                    anchors.fill: parent
+                    onLoaded: if (win.tiles !== null) item.tiles = win.tiles
+                }
+            }
+
+            Dashboard {
+                id: dashboard
+                width: pages.width
+                height: pages.height
+                x: (pages.progress - 1) * pages.width
+                shown: win.barryOpen && (pages.progress > 0.001 || (pages.dragging && pages.page >= 0))
+                visible: pages.progress > 0.001
+                onHideRequested: pages.goTo(0)
+            }
+
+            Item {
+                width: pages.width
+                height: pages.height
+                x: (pages.progress + 1) * pages.width
+                visible: pages.progress < -0.001
+                SkinView {
+                    id: quick
+                    file: "QuickSettings.qml"
+                    anchors.fill: parent
+                }
+            }
+        }
+    }
+    Binding { target: quick.item; property: "s"; value: win.s }
+    Binding { target: quick.item; property: "glass"; value: win.glass }
+    Binding { target: quick.item; property: "standbySeconds"; value: win.standbySeconds }
+    Connections {
+        target: quick.item
+        ignoreUnknownSignals: true
+        function onStandbyChosen(seconds) { win.standbySeconds = seconds }
+    }
+    Binding { target: home.item; property: "glass"; value: win.glass }
+    Binding { target: quick.item; property: "shown"; value: win.barryOpen && pages.progress < -0.001 }
 
     NumberAnimation {
         id: settleAnim
@@ -136,16 +228,29 @@ Window {
         function onClose(app) { win.post("/close", { app: app }) }
     }
 
-    property int homeSerial: -1  // the last trip home seen; -1: none yet
+    property int homeSerial: -1  // the last opening seen; -1: none yet
 
     function slideIn(serial) {
+        slideOut.stop()
         slide.stop()
-        homeShift.y = 0.18 * height
-        home.opacity = 0
+        // Barry opens on the apps.
+        settleAnim.stop()
+        pages.goTo(0)
+        settleAnim.stop()
+        pages.progress = 0
+        // A home screen with dropIn() (the built-in one, and skins that
+        // use Barry.Input's TileDrop): its tiles fly in over a quick fade.
+        // Else Barry slides up into place.
+        const drops = !!home.item && typeof home.item.dropIn === "function"
+        barryShift.y = drops ? 0 : 0.18 * height
+        barry.opacity = 0
         const x = new XMLHttpRequest()
         x.onreadystatechange = function () {
-            if (x.readyState === XMLHttpRequest.DONE)
-                slide.start()
+            if (x.readyState !== XMLHttpRequest.DONE)
+                return
+            slide.start()
+            if (drops)
+                home.item.dropIn()
         }
         x.open("POST", api + "/home-ready")
         x.setRequestHeader("Content-Type", "application/json")
@@ -154,8 +259,37 @@ Window {
 
     ParallelAnimation {
         id: slide
-        NumberAnimation { target: homeShift; property: "y"; to: 0; duration: 300; easing.type: Easing.OutCubic }
-        NumberAnimation { target: home; property: "opacity"; to: 1; duration: 220; easing.type: Easing.OutQuad }
+        NumberAnimation { target: barryShift; property: "y"; to: 0; duration: 300; easing.type: Easing.OutCubic }
+        NumberAnimation { target: barry; property: "opacity"; to: 1; duration: 220; easing.type: Easing.OutQuad }
+        NumberAnimation { target: win; property: "frost"; to: 1; duration: 380; easing.type: Easing.OutCubic }
+    }
+    // Back to the art: the apps fade out, the art comes back into focus and
+    // the logo fades back in.
+    ParallelAnimation {
+        id: slideOut
+        NumberAnimation { target: barry; property: "opacity"; to: 0; duration: 320; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: win; property: "frost"; to: 0; duration: 520; easing.type: Easing.InOutCubic }
+    }
+
+    // Any touch counts as use (a passive look: the touch goes on to what
+    // is under it).
+    Item {
+        anchors.fill: parent
+        z: 100
+        PointHandler {
+            onActiveChanged: if (active) standby.restart()
+        }
+    }
+    Timer {
+        id: standby
+        interval: Math.max(1, win.standbySeconds) * 1000
+        running: win.barryOpen && !win.barryOver && win.standbySeconds > 0
+                 && pages.page !== 1 && !pages.dragging
+        onTriggered: win.setBarry(false, "untouched for " + win.standbySeconds + " s")
+    }
+    Connections {
+        target: pages
+        function onPageChanged() { standby.restart() }
     }
 
     Timer {
@@ -175,14 +309,24 @@ Window {
                 homePoll.polling = false
                 if (x.status !== 200)
                     return
-                let serial = -1
-                try { serial = JSON.parse(x.responseText).serial } catch (e) { return }
-                if (win.homeSerial >= 0 && serial !== win.homeSerial) {
-                    if (pages.open || pages.progress > 0)
-                        pages.closePage()  // going home puts the dashboard away
-                    win.slideIn(serial)
+                let answer = null
+                try { answer = JSON.parse(x.responseText) } catch (e) { return }
+                const open = answer.open === true
+                if (win.homeSerial >= 0 && answer.serial !== win.homeSerial && open) {
+                    win.readSettings()
+                    win.slideIn(answer.serial)
+                } else if (win.barryOpen && !open) {
+                    slide.stop()
+                    slideOut.start()
+                } else if (win.homeSerial < 0 && open) {
+                    // Open already as this started.
+                    barryShift.y = 0
+                    barry.opacity = 1
+                    win.frost = 1
                 }
-                win.homeSerial = serial
+                win.barryOver = answer.over === true
+                win.homeSerial = answer.serial
+                win.barryOpen = open
             }
             x.open("GET", api + "/home")
             x.send()

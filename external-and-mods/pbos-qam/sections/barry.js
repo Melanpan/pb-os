@@ -42,6 +42,9 @@ const setLanguage = callable("set_language");
 const checkLanguage = callable("check_language");
 const installLanguage = callable("install_language");
 const removeLanguage = callable("remove_language");
+const steamGame = callable("steam_game");
+const getSgdb = callable("get_sgdb");
+const setSgdbKey = callable("set_sgdb_key");
 // The PB-OS tab's file picker (select 0: a file), called as @decky/api's openFilePicker.
 const ARCHIVE_EXTENSIONS = ["zip", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tar"];
 
@@ -159,8 +162,115 @@ function watchGames() {
     if (gamesSeen) {
         for (const id of now) if (!gamesSeen.has(id)) gameEvent(id, true).catch(() => {});
         for (const id of gamesSeen) if (!now.has(id)) gameEvent(id, false).catch(() => {});
+        // A game starting is the game selected now (the hero art).
+        for (const id of now) if (!gamesSeen.has(id)) selectGame(Number(id));
     }
     gamesSeen = now;
+    sendGame();
+}
+
+// The game selected on the top screen, for the bottom screen's hero art
+// and logo (Barry Launcher; pbos-qamd's heroart.cpp finds the images): the
+// game tile or game page Steam's focus is on, a game as it starts, and at
+// first the game running, else the one played last. Focus is heard
+// (focusin in Steam's windows); a focused element's game is in the React
+// props of it or its parents (an app overview with appid and
+// display_name), or in the route of a game's page.
+let selected = null;   // { appid, name, shortcut }
+let gameSent = "";
+let selectTimer = 0;
+const SELECT_SETTLE_MS = 150;  // moving along a shelf: only where it stops
+
+function appOverview(appid) {
+    try { return (window.appStore && appStore.GetAppOverviewByAppID(appid)) || null; } catch (e) { return null; }
+}
+
+function isGame(app) {
+    return app && (app.app_type === STEAM_GAME || app.app_type === NON_STEAM_GAME);
+}
+
+function lastPlayed() {
+    let all = [];
+    try {
+        all = (window.collectionStore && collectionStore.allAppsCollection && collectionStore.allAppsCollection.allApps) || [];
+    } catch (e) { /* signed out */ }
+    let best = null;
+    for (const a of all) if (isGame(a) && a.rt_last_time_played > 0 && (!best || a.rt_last_time_played > best.rt_last_time_played)) best = a;
+    return best;
+}
+
+function mainRunning() {
+    const app = DFL.Router && DFL.Router.MainRunningApp;
+    return app && app.appid ? app : null;
+}
+
+function gameOf(app) {
+    return app ? { appid: String(app.appid), name: app.display_name || "", shortcut: app.app_type === NON_STEAM_GAME } : null;
+}
+
+function selectGame(appid) {
+    const app = appOverview(appid);
+    if (!isGame(app)) return;
+    selected = gameOf(app);
+    sendGame();
+}
+
+function sendGame() {
+    if (!selected) selected = gameOf(mainRunning() || lastPlayed());
+    if (!selected) return;
+    const running = mainRunning();
+    const profile = gameOf(running || lastPlayed());
+    const game = { ...selected, running: runningGames().has(selected.appid), profile: profile && { appid: profile.appid, name: profile.name } };
+    const key = JSON.stringify(game);
+    if (key === gameSent) return;
+    gameSent = key;
+    steamGame(game).catch(() => { gameSent = ""; });
+}
+
+function focusedApp(el) {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+        const key = Object.keys(n).find((k) => k.startsWith("__reactFiber$"));
+        if (!key) continue;
+        // This element's fiber and its owners up the tree.
+        for (let f = n[key], i = 0; f && i < 40; f = f.return, i++) {
+            const p = f.memoizedProps;
+            if (!p || typeof p !== "object") continue;
+            for (const app of [p.app, p.overview, p.appOverview]) {
+                if (app && typeof app === "object" && app.appid && app.display_name) return isGame(app) ? app : null;
+            }
+            if (typeof p.appid === "number" && p.appid > 0) {
+                const app = appOverview(p.appid);
+                if (app) return isGame(app) ? app : null;
+            }
+        }
+        return null;
+    }
+    return null;
+}
+
+function onFocusIn(e) {
+    const el = e.target;
+    const win = el && el.ownerDocument && el.ownerDocument.defaultView;
+    clearTimeout(selectTimer);
+    selectTimer = setTimeout(() => {
+        let app = focusedApp(el);
+        if (!app && win) {
+            const m = /\/library\/app\/(\d+)/.exec(win.location.pathname || "");
+            if (m) app = appOverview(Number(m[1]));
+        }
+        if (isGame(app)) selectGame(app.appid);
+    }, SELECT_SETTLE_MS);
+}
+
+const focusDocs = new Set();
+
+function watchFocus() {
+    for (const w of steamWindows()) {
+        const doc = w.document;
+        if (focusDocs.has(doc)) continue;
+        doc.addEventListener("focusin", onFocusIn, true);
+        focusDocs.add(doc);
+    }
 }
 
 // Games to link: those running and the most recently played (Steam's and
@@ -200,6 +310,7 @@ function steamKeyboardShowing(mgr) {
 async function watchBarryKeyboard() {
     if (!unhookKeyboard) unhookKeyboard = hookKeyboard();
     watchClicks();  // windows Steam opened since
+    watchFocus();
     const available = await barryKeyboardAvailable().catch(() => false);
     if (available && !barryAvailable) {
         // A Steam keyboard left up from before goes away.
@@ -873,6 +984,38 @@ function ScreensPage() {
     ] });
 }
 
+// The bottom screen's art: SteamGridDB, for games Steam has no hero or logo
+// for, with the user's own API key (steamgriddb.com, Preferences, API).
+function ArtPage() {
+    const [st, setSt] = useState(null);
+    const [key, setKey] = useState("");
+    const [error, setError] = useState("");
+    const [busy, setBusy] = useState(false);
+    useEffect(() => { getSgdb().then(setSt).catch(() => setSt({})); }, []);
+    const save = (k) => {
+        setBusy(true);
+        setSgdbKey(k).then((r) => {
+            setBusy(false);
+            if (r && r.ok === false) { setError(r.error || "Not saved."); return; }
+            setError(""); setKey(""); setSt(r);
+        }).catch(() => { setBusy(false); setError("Not saved."); });
+    };
+    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
+    return jsxs(DFL.PanelSection, { title: "Bottom Screen Art", children: [
+        note("The bottom screen shows the hero art and logo of the game selected on the top screen: your own art for it (as the SteamGridDB plugin sets it), else Steam's."),
+        note(st.hasKey
+            ? "SteamGridDB: on. Games without art get it from SteamGridDB."
+            : "SteamGridDB is optional and off. Games with art (Steam's, or yours) show it without a key. Only for games that have none, mostly non-Steam games, add your own SteamGridDB API key (steamgriddb.com, Preferences, API)."),
+        row(jsx(DFL.TextField, {
+            label: st.hasKey ? "Replace the API key" : "SteamGridDB API key (optional)", bIsPassword: true, value: key, disabled: busy,
+            onChange: (e) => { setKey(e.target.value); setError(""); },
+        })),
+        ...(error ? [row(jsx("div", { style: { color: "#ff6b6b" }, children: error }))] : []),
+        row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !key.trim(), onClick: () => save(key), children: "Save key" })),
+        ...(st.hasKey ? [row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => save(""), children: "Remove key" }))] : []),
+    ] });
+}
+
 function DimmerPage() {
     const { st, rgb } = useBarryState();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
@@ -886,6 +1029,7 @@ function DimmerPage() {
 // ------------------------------------------------------------- plugins ---
 // Each former tab is a plugin in the PB-OS list, in the old tab order.
 P.plugin({ id: "screens", title: "Dual Screen", icon: ThorIcon, content: ScreensPage, order: 10 });
+P.plugin({ id: "art", title: "Bottom Screen Art", icon: ThemesIcon, content: ArtPage, order: 15 });
 P.plugin({ id: "apps", title: "Apps", icon: AppsIcon, content: AppsSection, order: 20 });
 P.plugin({ id: "themes", title: "Themes", icon: ThemesIcon, content: ThemesSection, order: 30 });
 P.plugin({ id: "languages", title: "Keyboard Languages", icon: LanguagesIcon, content: LanguagesSection, order: 40 });

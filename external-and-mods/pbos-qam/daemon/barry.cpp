@@ -12,7 +12,9 @@
 // apps and apps that open with games (barry_launcher_shelld keeps them), its
 // themes (barry_launcher_statsd lists them) and its keyboards' language
 // packs: added from a USB drive or Downloads, unpacked safely into the
-// user's ~/.local/share/barry_launcher, removed again.
+// user's ~/.local/share/barry_launcher, removed again. The game selected in
+// Steam, for the bottom screen's hero art (heroart.cpp), and the user's
+// SteamGridDB key for it.
 //
 // "Two-screen emulators": the user's own emulators (none ship with PB-OS)
 // set to draw their second screen in a window of its own, which gamescope's
@@ -42,6 +44,7 @@
 #include <tuple>
 
 #include "archive.h"
+#include "heroart.h"
 #include "section.h"
 #include "util.h"
 
@@ -1433,6 +1436,10 @@ private:
             }
         }
         if (m == "open_barry_keyboard") return open_keyboard();
+        // The bottom screen's hero art (heroart.cpp).
+        if (m == "steam_game") return hero_set_game(a.at(0));
+        if (m == "get_sgdb") return hero_sgdb_state();
+        if (m == "set_sgdb_key") return hero_set_sgdb_key(arg(a, 0, "").str());
         throw CallError("Barry Launcher has no method " + m);
     }
 

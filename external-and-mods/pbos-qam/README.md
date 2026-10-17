@@ -29,6 +29,8 @@ the user's own plugins, but PB-OS's settings no longer depend on it.
 | `daemon/tools.cpp` | | The PB-OS Tools backend (was `Decky/pbos-utils/main.py`). |
 | `daemon/barry.cpp` | | The Barry Launcher backend (was `Decky/sm8550/dual-screen/main.py`). |
 | `daemon/files.cpp` | | Folder listings for the tab's file picker (home and removable drives only). |
+| `daemon/heroart.cpp` | `/run/pbos-qam/steam-game.json` | AYN Thor: the game selected in Steam and its hero and logo images (the user's own art, Steam's, or SteamGridDB's with the user's own API key), for the bottom screen while Barry Launcher is closed. |
+| `daemon/barrylink.cpp` | `/run/pbos-qam/barry.sock` | AYN Thor: Barry Launcher's quick settings page calls a few methods here (brightness, charging, game profiles). Only the desktop user and root are answered. |
 | `frontend/` | `/usr/share/pbos-qam/pbos-qam.js` | The loader: the tab, the list, toasts, the file picker and the check. Bundles @decky/ui. `frontend/build.sh` builds `dist/pbos-qam.js` on the build Mac, and the result is committed. |
 | `sections/*.js` | `/usr/share/pbos-qam/sections/` | Each section's pages: the Decky plugins' tab components, unchanged. |
 | `pbos_lights.py` | `/usr/lib/pbos-qam/pbos_lights.py` | The stick light engine (RP6, Nova, Odin 2s). Its own unit `pbos-utils-lights` on the system's Python, as before. |
@@ -48,7 +50,8 @@ pbos-qamd also removes them at start if they are there.
 - The frontend calls the backend through a DevTools binding:
   `window.__pbosQamCall(json)` reaches pbos-qamd as `Runtime.bindingCalled`,
   and the answer goes back with `Runtime.evaluate`. pbos-qamd opens no port
-  of its own.
+  of its own. On the AYN Thor it has a local socket for Barry Launcher
+  (`barrylink.cpp`), not a network port.
 - Calls are positional, as Decky's `callable()` was. Each call runs on a
   thread of its own, so a slow helper (an update check, sizing the home
   folder) never holds up the others.
@@ -69,6 +72,7 @@ Nothing in pbos-qamd polls, except where noted below.
 | A move ending (SD ↔ internal) | systemd over D-Bus (the unit's PropertiesChanged) |
 | The Performance button (pbosd) | inotify on pbosd's state file |
 | Emulator configs (two-screen) | inotify on their folders, and pidfd when an emulator still running has to quit first |
+| The game selected in Steam (Thor hero art) | `focusin` in Steam's windows and games starting; Barry Launcher reads the result with inotify |
 
 The Decky plugins polled the drives every 3 s, the move every 2 s, pbosd's
 state every 0.25 s and the emulators every 30 s. The update check still

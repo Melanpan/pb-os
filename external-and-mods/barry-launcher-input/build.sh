@@ -19,7 +19,7 @@ done
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/src"
-cp "$HERE"/CMakeLists.txt "$HERE"/*.cpp "$HERE"/*.h "$work/src/"
+cp "$HERE"/CMakeLists.txt "$HERE"/*.cpp "$HERE"/*.h "$HERE"/*.qml "$work/src/"
 run() {
   bwrap --ro-bind "$R" / --bind "$work" /build --dev /dev --proc /proc --tmpfs /tmp \
     --unshare-pid --die-with-parent --chdir /build --setenv PATH /usr/bin --setenv HOME /tmp "$@"

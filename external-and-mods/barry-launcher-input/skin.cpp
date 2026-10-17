@@ -18,7 +18,8 @@ const char DEFAULT_SKIN[] = "ayn";
 // Editors and copies come as bursts of changes: read once they settle.
 constexpr int SETTLE_MS = 150;
 // The files a skin may replace.
-const char *const VIEWS[] = {"KeyPanel.qml", "GridPanel.qml", "TopInput.qml", "DeckControls.qml", "Home.qml"};
+const char *const VIEWS[] = {"KeyPanel.qml", "GridPanel.qml", "TopInput.qml", "DeckControls.qml", "Home.qml",
+                             "Hero.qml", "QuickSettings.qml"};
 
 }  // namespace
 

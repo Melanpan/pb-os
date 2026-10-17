@@ -39,6 +39,10 @@ qt_add_qml_module(barryinput
     skin.cpp skin.h
     heattrail.cpp heattrail.h
     pageswipe.cpp pageswipe.h
+    steamgame.cpp steamgame.h
+    pbosqam.cpp pbosqam.h
+  QML_FILES
+    TileDrop.qml
 )
 target_compile_options(barryinput PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(barryinput PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::DBus X11::X11 X11::Xtst)

@@ -1146,6 +1146,68 @@ install -m0755 "$DECKY_LOADER" "$HOME_DST/homebrew/services/PluginLoader"
 printf '%s' "$DECKY_VERSION" >"$HOME_DST/homebrew/services/.loader.version"
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service"
+# SteamGridDB (from the Decky store, unchanged): artwork for games, the
+# user's own picks. Steam keeps them as custom artwork, which is also where
+# the Thor's bottom screen takes its hero art from (pbos-qam heroart.cpp).
+# Every build takes the store's newest version when it is newer than the one
+# pinned here (SGDB_VERSION, the floor), checked against the store's own
+# sha256 of that version's zip; without the store (offline) the pinned one,
+# checked against SGDB_SHA256. Unpacked as Decky's store unpacks it (the
+# zip's folder under plugins/), so a store update replaces it in place. The
+# source maps are left out (7 MB, for debugging only).
+SGDB_VERSION=1.8.1
+SGDB_SHA256=e84f5b1f111af8862b06218479491fbf61036e1bfd9f16f93f9901e9b9ebc5e0
+SGDB_STORE="https://plugins.deckbrew.xyz/plugins?query=SteamGridDB"
+sgdb_store="$(curl -fsS --max-time 30 "$SGDB_STORE" 2>/dev/null || true)"
+# Prints "version sha256" of the store's newest version when it is newer than
+# the floor, nothing when not; fails when the answer is not what it should be.
+read -r -d '' SGDB_PICK <<'PY' || true
+import json, re, sys
+def key(v):
+    return tuple(int(n) for n in re.findall(r"\d+", v)[:4])
+floor = sys.argv[1]
+p = next(p for p in json.load(sys.stdin) if p.get("name") == "SteamGridDB")
+best = max(p["versions"], key=lambda v: key(v["name"]))
+if not re.fullmatch(r"[0-9a-f]{64}", best["hash"]) or not re.fullmatch(r"[0-9][0-9.]*", best["name"]):
+    sys.exit(1)
+if key(best["name"]) > key(floor):
+    print(best["name"], best["hash"])
+PY
+if newest="$(python3 -c "$SGDB_PICK" "$SGDB_VERSION" <<<"$sgdb_store" 2>/dev/null)"; then
+  if [[ -n "$newest" ]]; then
+    read -r SGDB_VERSION SGDB_SHA256 <<<"$newest"
+    log "SteamGridDB plugin: the store has ${SGDB_VERSION}, newer than the pinned one; using it"
+  else
+    log "SteamGridDB plugin: ${SGDB_VERSION} is the store's newest"
+  fi
+else
+  log "WARN: SteamGridDB plugin: the Decky store did not answer; using the pinned ${SGDB_VERSION}"
+fi
+SGDB_ZIP="${MOD}/Decky/store/decky-steamgriddb-${SGDB_VERSION}.zip"
+if [[ ! -s "$SGDB_ZIP" ]]; then
+  mkdir -p "${SGDB_ZIP%/*}"
+  curl -fL -o "$SGDB_ZIP.part" \
+    "https://cdn.tzatzikiweeb.moe/file/steam-deck-homebrew/versions/${SGDB_SHA256}.zip" &&
+    mv "$SGDB_ZIP.part" "$SGDB_ZIP"
+fi
+[[ -s "$SGDB_ZIP" ]] || die "SteamGridDB plugin ${SGDB_VERSION} missing and download failed"
+echo "${SGDB_SHA256}  ${SGDB_ZIP}" | sha256sum -c --quiet - \
+  || die "SteamGridDB plugin ${SGDB_VERSION} does not match its sha256 (delete ${SGDB_ZIP} to re-download)"
+rm -rf "$HOME_DST/homebrew/plugins/decky-steamgriddb"
+mkdir -p "$HOME_DST/homebrew/plugins"
+python3 - "$SGDB_ZIP" "$HOME_DST/homebrew/plugins" <<'PY'
+import os, sys, zipfile
+src, dst = sys.argv[1], os.path.realpath(sys.argv[2])
+with zipfile.ZipFile(src) as z:
+    for m in z.infolist():
+        out = os.path.realpath(os.path.join(dst, m.filename))
+        if not out.startswith(dst + os.sep) or not m.filename.startswith("decky-steamgriddb/"):
+            sys.exit(f"unexpected entry {m.filename}")
+        if m.filename.endswith(".map"):
+            continue
+        z.extract(m, dst)
+PY
+[[ -f "$HOME_DST/homebrew/plugins/decky-steamgriddb/plugin.json" ]] || die "SteamGridDB plugin did not unpack"
 # Fix lsfg-vk home paths
 if [[ -f "$HOME_DST/.config/lsfg-vk/conf.toml" ]]; then
   sed -i 's|/home/steam/|/home/steamos/|g' "$HOME_DST/.config/lsfg-vk/conf.toml"

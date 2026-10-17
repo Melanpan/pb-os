@@ -1803,4 +1803,10 @@ api.addEventListener("pbos_update_available", onAvailable);
 api.addEventListener("pbos_mode", onMode);
 api.addEventListener("pbos_local_available", onLocal);
 api.addEventListener("pbos_move_done", onMoveDone);
+// A game profile saved in Barry Launcher's quick settings (AYN Thor; the
+// backend saved it): the game's launch options are Steam's, so the
+// profile's wrapper goes in or comes out here.
+api.addEventListener("barry_game_profile", (appid, on) => {
+    setWrapper(String(appid), !!on).catch((e) => P.fail("barry game profile", e));
+});
 });

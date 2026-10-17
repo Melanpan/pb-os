@@ -38,32 +38,31 @@ void PageSwipe::setDragging(bool dragging)
     emit draggingChanged();
 }
 
-void PageSwipe::setOpen(bool open)
+void PageSwipe::setPage(int page)
 {
-    if (open == m_open)
+    if (page == m_page)
         return;
-    m_open = open;
-    emit openChanged();
+    m_page = page;
+    emit pageChanged();
 }
 
-void PageSwipe::settleTo(qreal target)
+int PageSwipe::clampPage(int page) const
 {
-    setOpen(target > 0.5);
+    return qBound(m_minPage, page, qMax(m_minPage, m_maxPage));
+}
+
+void PageSwipe::settleTo(int target)
+{
+    target = clampPage(target);
+    setPage(target);
     emit settle(target, m_velocity);
 }
 
-void PageSwipe::openPage()
+void PageSwipe::goTo(int page)
 {
     cancel();
     m_velocity = 0;
-    settleTo(1);
-}
-
-void PageSwipe::closePage()
-{
-    cancel();
-    m_velocity = 0;
-    settleTo(0);
+    settleTo(page);
 }
 
 void PageSwipe::begin(const QEventPoint &point)
@@ -92,8 +91,9 @@ bool PageSwipe::move(QPointerEvent *event, const QEventPoint &point)
         const qreal dy = pos.y() - m_start.y();
         if (qAbs(dx) < m_threshold || qAbs(dx) < kSideways * qAbs(dy))
             return false;
-        // Only a direction that moves the page: in while away, away while in.
-        const bool toward = m_startProgress < 0.5 ? dx > 0 : dx < 0;
+        // Only a direction with a page to go to.
+        const int from = clampPage(qRound(m_startProgress));
+        const bool toward = dx > 0 ? from < m_maxPage : from > m_minPage;
         if (!toward) {
             m_pointId = -1;  // this touch is not a swipe, whatever it does next
             return false;
@@ -113,7 +113,10 @@ bool PageSwipe::move(QPointerEvent *event, const QEventPoint &point)
         emit dragStarted();
         return true;
     }
-    setProgress(qBound<qreal>(0, m_startProgress + (pos.x() - m_start.x()) / w, 1));
+    // One page either way from where the swipe began, within the pages.
+    const int from = clampPage(qRound(m_startProgress));
+    const qreal lo = qMax<qreal>(m_minPage, from - 1), hi = qMin<qreal>(m_maxPage, from + 1);
+    setProgress(qBound<qreal>(lo, m_startProgress + (pos.x() - m_start.x()) / w, hi));
     return true;
 }
 
@@ -124,14 +127,15 @@ void PageSwipe::end()
     if (!was)
         return;
     setDragging(false);
-    qreal target;
+    const int from = clampPage(qRound(m_startProgress));
+    int target;
     if (m_velocity > kFling)
-        target = 1;
+        target = from + 1;
     else if (m_velocity < -kFling)
-        target = 0;
+        target = from - 1;
     else
-        target = m_progress > 0.5 ? 1 : 0;
-    settleTo(target);
+        target = qRound(m_progress);
+    settleTo(qBound(from - 1, target, from + 1));
 }
 
 void PageSwipe::cancel()
@@ -139,7 +143,7 @@ void PageSwipe::cancel()
     m_pointId = -1;
     if (m_dragging) {
         setDragging(false);
-        settleTo(m_progress > 0.5 ? 1 : 0);
+        settleTo(qRound(m_progress));
     }
 }
 

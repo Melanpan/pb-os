@@ -67,6 +67,8 @@ view" and "running tab: drawn" are informational.
 | settingsStore, collectionStore | `m_Settings.strCompatTool`, local and all games | Proton PB-OS, game lists | `sections/tools.js`, `sections/barry.js` |
 | virtual keyboard manager | `SteamUIStore.ActiveWindowInstance.VirtualKeyboardManager` with `SetVirtualKeyboardShownInternal` | Barry's keyboard instead of Steam's (Thor) | `sections/barry.js` |
 | SteamUIStore.WindowStore | `SteamUIWindows` | Barry's trackpad clicks in text fields (Thor) | `sections/barry.js` |
+| (not in the check) focused game | `focusin` in Steam's windows; the focused element's React fiber (`__reactFiber$…`) and its owners, for props `app`/`overview`/`appOverview` (an app overview with `appid` and `display_name`) or a numeric `appid`; else the route `/library/app/<id>` | the bottom screen's hero art (Thor) | `sections/barry.js` `focusedApp` |
+| (not in the check) app overviews | `appStore.GetAppOverviewByAppID`, `collectionStore.allAppsCollection.allApps` (`app_type`, `rt_last_time_played`), `Router.MainRunningApp` | the hero art's game, and the quick settings' game profile (Thor) | `sections/barry.js` |
 | running tab: … | what the loaded tab reports (patched, drawn, sections, errors) | spotting a tab that loaded but broke | `status` in `loader.js` |
 
 Outside the frontend:

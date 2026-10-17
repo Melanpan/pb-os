@@ -6,7 +6,9 @@
 //
 // The frontend reaches it through a DevTools binding (Runtime.addBinding):
 // window.__pbosQamCall(json) arrives here as Runtime.bindingCalled, and the
-// answer goes back with Runtime.evaluate. No port of its own is opened.
+// answer goes back with Runtime.evaluate. No port of its own is opened; on
+// the AYN Thor, Barry Launcher reaches a few settings through a local socket
+// only its user may use (barrylink.cpp).
 //
 // Steam coming up is heard, not polled for: the web helper's log in Steam's
 // logs folder is written as it starts (inotify, only while not connected);
@@ -30,6 +32,7 @@
 #include <memory>
 #include <thread>
 
+#include "barrylink.h"
 #include "cdp.h"
 #include "loop.h"
 #include "section.h"
@@ -99,6 +102,16 @@ public:
         }
         if (!build_script()) return false;
         for (auto& s : sections_) s->start(*this);
+        // Barry Launcher's quick settings (AYN Thor only).
+        for (auto& s : sections_)
+            if (s->name() == "barry")
+                barry_link_start(
+                    [this](const std::string& name) -> Section* {
+                        for (auto& t : sections_)
+                            if (t->name() == name) return t.get();
+                        return nullptr;
+                    },
+                    *this);
         Loop::work(remove_old_plugins);
         watch_steam();
         cdp_ = std::thread([this] { cdp_thread(); });
@@ -112,6 +125,7 @@ public:
         ssize_t r = write(stop_, &one, sizeof one);
         (void)r;
         if (cdp_.joinable()) cdp_.join();
+        barry_link_stop();
         for (auto& s : sections_) s->stop();
     }
 

@@ -1,6 +1,7 @@
-// PageSwipe: a page beside another, pulled in and pushed away sideways. On
-// the home screen it is the performance dashboard to the left of home: a
-// left-to-right swipe from anywhere pulls it in, right to left puts it away.
+// PageSwipe: pages side by side, pulled in and pushed away sideways. In
+// Barry Launcher they are the performance dashboard, the apps (home) and
+// the quick settings, left to right: a left-to-right swipe from anywhere
+// brings in the page to the left, right to left the one to the right.
 //
 // It watches its children's touches (and mouse, for a test without a
 // touchscreen) without taking them: a tap on a tile is still a tap. A touch
@@ -11,7 +12,10 @@
 // the QML animates progress there (its look). A touch something keeps for
 // itself (a slider with preventStealing) is never taken.
 //
-// progress: 0 = the page is away (home shows), 1 = the page is in.
+// progress: which page shows, from minPage to maxPage. A left-to-right
+// swipe raises it: the page at progress p is the one p places LEFT of page
+// 0 (in Barry: 1 the dashboard, 0 home, -1 the quick settings). One swipe
+// moves one page at most.
 #pragma once
 
 #include <QElapsedTimer>
@@ -25,13 +29,15 @@ class QPointerEvent;
 class PageSwipe : public QQuickItem {
     Q_OBJECT
     QML_ELEMENT
-    // 0 (away) .. 1 (in); the QML's settling animation writes it too, and
-    // may pass either end a little (an overshoot).
+    // minPage .. maxPage; the QML's settling animation writes it too, and
+    // may pass a page a little (an overshoot).
     Q_PROPERTY(qreal progress READ progress WRITE setProgress NOTIFY progressChanged)
-    // A finger is moving the page.
+    // A finger is moving the pages.
     Q_PROPERTY(bool dragging READ dragging NOTIFY draggingChanged)
-    // Where the page is going or has gone: in (true) or away.
-    Q_PROPERTY(bool open READ isOpen NOTIFY openChanged)
+    // The page going or gone to.
+    Q_PROPERTY(int page READ page NOTIFY pageChanged)
+    Q_PROPERTY(int minPage MEMBER m_minPage NOTIFY rangeChanged)
+    Q_PROPERTY(int maxPage MEMBER m_maxPage NOTIFY rangeChanged)
     // Pixels a touch must travel before it is a swipe.
     Q_PROPERTY(qreal threshold MEMBER m_threshold NOTIFY thresholdChanged)
     // Off: touches pass untouched (an app on top, say).
@@ -43,21 +49,21 @@ public:
     qreal progress() const { return m_progress; }
     void setProgress(qreal progress);
     bool dragging() const { return m_dragging; }
-    bool isOpen() const { return m_open; }
+    int page() const { return m_page; }
 
-    // Send the page in or away (settle() follows).
-    Q_INVOKABLE void openPage();
-    Q_INVOKABLE void closePage();
+    // Go to a page (settle() follows).
+    Q_INVOKABLE void goTo(int page);
 
 signals:
     void progressChanged();
     void draggingChanged();
-    void openChanged();
+    void pageChanged();
+    void rangeChanged();
     void thresholdChanged();
     void swipeEnabledChanged();
     // A finger took the page (stop any settling animation).
     void dragStarted();
-    // Animate progress to target (0 or 1); velocity in progress per second.
+    // Animate progress to target (a page); velocity in progress per second.
     void settle(qreal target, qreal velocity);
 
 protected:
@@ -77,12 +83,15 @@ private:
     void end();
     void cancel();
     void setDragging(bool dragging);
-    void setOpen(bool open);
-    void settleTo(qreal target);
+    void setPage(int page);
+    void settleTo(int target);
+    int clampPage(int page) const;
 
     qreal m_progress = 0;
     bool m_dragging = false;
-    bool m_open = false;
+    int m_page = 0;
+    int m_minPage = 0;
+    int m_maxPage = 1;
     qreal m_threshold = 24;
     bool m_swipeEnabled = true;
 

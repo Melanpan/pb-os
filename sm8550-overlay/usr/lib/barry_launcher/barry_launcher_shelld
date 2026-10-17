@@ -10,7 +10,13 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /launch    {"app": name}: start the app, or bring the running one
                   forward
   POST /close     {"app": name}: quit it
-  POST /home      bring the home screen forward
+  GET  /home      {"serial": n, "open": bool, "over": bool}: Barry is open
+                  (its pages over the hero art), over an app it closes back
+                  to, and serial counts the times it came up, for its
+                  slide-in
+  POST /home      open Barry
+  POST /barry     {"open": bool, "why": str}: open or close Barry (the
+                  shell: a tap on the game art, its standby timeout)
   POST /apps/install {"path": archive}: install or update a user app
                   (barry_apps), {"ok": bool, "app": manifest | "error": str}
   POST /apps/remove  {"app": id}: remove a user app and its data
@@ -46,8 +52,8 @@ correct a word. The keyboard window is a gamescope overlay
 keyboard does: it takes the touches, but X keyboard focus stays on the app
 underneath. Like Steam's overlay it stays mapped and hides by opacity:
 gamescope stops watching a window's properties once it is unmapped, so a
-hidden overlay's marks could never be cleared. It also hides while the AYN
-dashboard is up, since overlays are drawn above it.
+hidden overlay's marks could never be cleared. It also hides while Barry
+is open, since overlays are drawn above it.
 
 Most apps are Firefox instances, each with its own profile under
 ~/.local/share/barry_launcher: the browser, and Discord's web app in kiosk
@@ -64,8 +70,15 @@ Steam's keyboard).
 Without Steam, gamescope treats every window
 as its own app and shows the most recently mapped one (stacking order does
 not count), so switching is unmapping and mapping the wanted window again.
-Holding the AYN button (sm8550-thor-backlightd) writes HOME_REQUEST, and any
-change to it brings the home screen forward.
+
+Barry opens and closes over the home window, whose base is the selected
+game's hero art (Shell.qml): BARRY_FLAG says whether it is open. A short
+press of the AYN button flips it (sm8550-thor-backlightd), and this hears
+the change (a file monitor) and brings the home window forward. Closing
+goes back to the app that was in front when Barry opened, if it still
+runs; otherwise the hero art stays. This writes the flag too: an app
+started from Barry closes it, and a swipe up from the bottom edge over an
+app opens it.
 
 User apps (barry_apps: QML apps installed from an archive, by the barry-app
 command or the Barry Launcher plugin) join the home screen after the built-in
@@ -121,14 +134,15 @@ HOME_READY_S = 0.15
 KEYBOARDS_DIR = "/usr/share/barry_launcher/keyboards"
 LANG_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 HOME_TITLE = "Barry Launcher"
-DASHBOARD_FLAG = "/run/sm8550-thor/overlay"
+# "1" while Barry is open (its pages over the hero art); sm8550-thor-backlightd
+# flips it on an AYN press, and keeps the bottom screen lit meanwhile.
+BARRY_FLAG = "/run/sm8550-thor/overlay"
 # "1" while the Trackpad app is open: it works the top screen from here, so sm8550-thor-backlightd has Steam's gamescope hand the bottom
 # screen back should a dual-screen game be showing its second window there.
 TOP_INPUT_FLAG = "/run/sm8550-thor/top-input"
 TOP_INPUT_APP = "trackpad"
 # Launching this opens the Trackpad app with its keyboard up.
 TOP_KEYBOARD = "keyboard"
-HOME_REQUEST = "/run/sm8550-thor/home"
 HOME = os.path.expanduser("~")
 DATA = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher")
 # name -> Firefox profile folder, extra arguments, zoom. The panel is about
@@ -383,7 +397,11 @@ class State:
         self.text_acc = None  # the focused editable field, if any
         self.keyboard_height = 0  # the key panel's height, as Keyboard.qml reports it
         self.inset: int | None = None  # GAMESCOPE_FOCUS_BOTTOM_INSET last set
-        self.home_serial = 0  # counts trips home, for the home screen's slide-in
+        self.home_serial = 0  # counts Barry opening, for its slide-in
+        self.barry_open = False
+        self.barry_lock = threading.Lock()  # one open or close at a time
+        self.front: str | None = None  # the app shown (None: the home window)
+        self.back_app: str | None = None  # in front when Barry opened
         self.home_ready = threading.Event()
         self.im = None  # Desktop Mode: barry_desktop.InputMethod
         self.im_top = False  # Desktop Mode: the active field was tapped on the top screen
@@ -401,7 +419,7 @@ class State:
             return {"visible": self.visible, "top": self.top}
 
     def set_keyboard(self, visible: bool, top: bool | None = None) -> None:
-        if visible and dashboard_up():
+        if visible and barry_up():
             visible = False
         with self.lock:
             self.visible = visible
@@ -416,17 +434,78 @@ class State:
 STATE = State()
 
 
-def dashboard_up() -> bool:
-    # The dashboard is Game Mode's: Desktop Mode never shows it, though the
-    # flag can still read 1 from Game Mode (or from an AYN press here), and
-    # it would keep the keyboard down for nothing.
-    if DESKTOP:
-        return False
+def barry_flag() -> bool | None:
+    """BARRY_FLAG: open or not; None while it is being written (empty)."""
     try:
-        with open(DASHBOARD_FLAG, encoding="utf-8") as fh:
-            return fh.read().strip() == "1"
+        with open(BARRY_FLAG, encoding="utf-8") as fh:
+            value = fh.read().strip()
     except OSError:
         return False
+    return None if value == "" else value == "1"
+
+
+def barry_up() -> bool:
+    # Opening and closing is Game Mode's: in Desktop Mode the flag can still
+    # read 1 from Game Mode, and it would keep the keyboard down for nothing.
+    return not DESKTOP and STATE.barry_open
+
+
+def write_barry_flag(open_: bool) -> None:
+    # Whole (a new file renamed over it): sm8550-thor-backlightd never reads
+    # it half written.
+    tmp = f"{BARRY_FLAG}.shelld"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("1" if open_ else "0")
+        os.chmod(tmp, 0o664)
+        os.replace(tmp, BARRY_FLAG)
+    except OSError as err:
+        log(f"cannot write {BARRY_FLAG}: {err}")
+
+
+def open_barry(why: str) -> None:
+    """Barry's pages over whatever shows; the app in front is remembered,
+    for closing back to it. A tool (the trackpad, the Deck controls) is not
+    an app to come back to: it closes, and closing Barry shows the hero art
+    (else the AYN button only ever went between Barry and the tool)."""
+    with STATE.barry_lock:
+        if STATE.barry_open:
+            return
+        STATE.barry_open = True
+        front = STATE.front
+        STATE.back_app = front if front and running(front) and not APPS.get(front, {}).get("tool") else None
+        log(f"{why}: Barry opens{f' over {front}' if STATE.back_app else ''}")
+        write_barry_flag(True)
+        go_home(raise_window=front is not None)
+        leave_tools("")
+
+
+def close_barry(why: str, back: bool = True) -> None:
+    """Barry's pages away: the app it opened over comes back (back), or the
+    hero art shows."""
+    with STATE.barry_lock:
+        if not STATE.barry_open:
+            return
+        STATE.barry_open = False
+        app, STATE.back_app = STATE.back_app, None
+        write_barry_flag(False)
+        if back and app and running(app):
+            log(f"{why}: Barry closes, back to {app}")
+            bring_forward(app)
+        else:
+            log(f"{why}: Barry closes")
+
+
+def on_barry_flag(_monitor, _file, _other, event) -> None:
+    """BARRY_FLAG written (an AYN press, or the screen turned off). Only a
+    finished write counts: the file is emptied first, and reading it then
+    closed Barry the moment it opened."""
+    if event not in (Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.CREATED):
+        return
+    want = barry_flag()
+    if DESKTOP or want is None or want == STATE.barry_open:
+        return
+    threading.Thread(target=open_barry if want else close_barry, args=("AYN button",), daemon=True).start()
 
 
 def set_keyboard_prop(prop: str, value: str, quiet: bool = False) -> bool:
@@ -506,6 +585,7 @@ def activate(args: list[str]) -> bool:
 
 def bring_forward(app: str | None) -> bool:
     """Bring an app's window (None: the home screen) forward."""
+    STATE.front = app
     spec = APPS.get(app, {}) if app else {}
     proc = running(app) if app else None
     if DESKTOP:
@@ -526,23 +606,30 @@ def bring_forward(app: str | None) -> bool:
     return activate(["--pid", str(proc.pid), "--classname", "Navigator"])
 
 
-def go_home() -> None:
-    # The home screen slides in (Shell.qml): it sees the new serial, puts
-    # itself at the animation's start while still hidden, and says so; then
-    # it comes forward. Not waiting long: it comes forward regardless.
+def go_home(raise_window: bool = True) -> None:
+    # Barry slides in (Shell.qml): it sees the new serial, puts itself at
+    # the animation's start while still hidden, and says so; then the home
+    # window comes forward. Not waiting long: it comes forward regardless.
+    # Apps keep running under it (closing Barry goes back to them).
     lower_curtain("left for home")
     with STATE.lock:
         STATE.home_serial += 1
         STATE.home_ready.clear()
     STATE.home_ready.wait(HOME_READY_S)
     STATE.set_keyboard(False)
-    # The trackpad and the Deck controls are tools, not apps to come back
-    # to: leaving one closes it. Their exit lets go of anything they held.
-    for app, spec in APPS.items():
-        if spec.get("tool") and running(app):
-            close(app)
-    if not bring_forward(None):
+    # Unmapping and mapping the window again (bring_forward) shows black
+    # for a moment: only when something else is in front.
+    if raise_window and not bring_forward(None):
         log("cannot find the home screen window")
+
+
+def leave_tools(but: str) -> None:
+    """The trackpad and the Deck controls are tools, not apps to come back
+    to: Barry opening, or another app starting, closes them. Their exit
+    lets go of anything they held."""
+    for app, spec in APPS.items():
+        if app != but and spec.get("tool") and running(app):
+            close(app)
 
 
 def app_env(**extra: str) -> dict:
@@ -661,6 +748,10 @@ def launch(app: str) -> tuple[int, dict]:
     spec = APPS.get(app)
     if spec is None:
         return 404, {"error": f"no app {app!r}"}
+    # Started from Barry (or the plugin): Barry closes, the app shows.
+    close_barry(f"{app} starts", back=False)
+    leave_tools(app)
+    STATE.front = app
     if app in STATE.status:
         return 200, {"ok": True, "running": False}
     proc = running(app)
@@ -1302,7 +1393,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
         if path == "/home":
-            self._json(200, {"serial": STATE.home_serial})
+            self._json(200, {"serial": STATE.home_serial, "open": barry_up(),
+                             "over": barry_up() and STATE.back_app is not None})
         elif path == "/keyboard":
             # Keyboard.qml polls with its panel height (?h=).
             h = urllib.parse.parse_qs(query).get("h", [""])[0]
@@ -1348,8 +1440,19 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/close":
             self._json(*close(str(body.get("app", ""))))
         elif path == "/home":
-            go_home()
+            if DESKTOP:
+                go_home()
+            else:
+                open_barry("asked")
             self._json(200, {"ok": True})
+        elif path == "/barry":
+            why = str(body.get("why", "the shell"))[:40]
+            if DESKTOP:
+                self._json(409, {"error": "Game Mode only"})
+            else:
+                threading.Thread(target=open_barry if body.get("open") else close_barry, args=(why,),
+                                 daemon=True).start()
+                self._json(200, {"ok": True})
         elif path == "/home-ready":
             if body.get("serial") == STATE.home_serial:
                 STATE.home_ready.set()
@@ -1485,8 +1588,16 @@ def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
 
 
 def on_home_swipe() -> bool:
-    log("swipe up from the bottom edge: home")
-    go_home()
+    if DESKTOP:
+        log("swipe up from the bottom edge: home")
+        go_home()
+    elif STATE.front is None or not running(STATE.front):
+        # Over the game art (or Barry) it is no way in: a thumb holding the
+        # Thor slid up the edge, opened Barry and then landed on a tile.
+        # A tap or the AYN button wakes Barry there.
+        log("swipe up from the bottom edge over the game art: ignored")
+    else:
+        threading.Thread(target=open_barry, args=("swipe up from the bottom edge",), daemon=True).start()
     return False
 
 
@@ -1876,17 +1987,16 @@ def main() -> None:
     apply_inset()  # no inset left over from before a restart
     threading.Thread(target=warm_apps, daemon=True).start()
     threading.Thread(target=load_dictionary, daemon=True).start()
-    def home_request_stamp() -> int | None:
-        try:
-            return os.stat(HOME_REQUEST).st_mtime_ns
-        except OSError:
-            return None
-
-    last_home = home_request_stamp()
+    # Barry opens and closes (sm8550-thor-backlightd's AYN press).
+    barry_monitor = None
+    if not DESKTOP:
+        write_barry_flag(False)  # closed at start, as the shell starts
+        barry_monitor = Gio.File.new_for_path(BARRY_FLAG).monitor_file(Gio.FileMonitorFlags.NONE, None)
+        barry_monitor.connect("changed", on_barry_flag)
     top_input_written: bool | None = None
 
     def watch() -> bool:
-        nonlocal last_home, top_input_written
+        nonlocal top_input_written
         # The keyboard window appears shortly after we start; mark it then,
         # so gamescope does not take it for an app.
         if not STATE.overlay_marked:
@@ -1896,18 +2006,14 @@ def main() -> None:
             if proc.poll() is not None:
                 log(f"{name} exited ({proc.returncode})")
                 del STATE.apps[name]
+                if STATE.front == name:
+                    STATE.front = None  # gamescope shows the home window again
                 if name in STATE.services:
                     threading.Thread(target=barry_apps.stop_service, args=(STATE.services.pop(name),),
                                      daemon=True).start()
                 STATE.set_keyboard(False)
-        # AYN held: home.
-        stamp = home_request_stamp()
-        if stamp != last_home:
-            last_home = stamp
-            if stamp is not None:
-                go_home()
-        # Overlays draw above the dashboard: step aside while it is up.
-        if STATE.keyboard()["visible"] and dashboard_up():
+        # Overlays draw above Barry: step aside while it is open.
+        if STATE.keyboard()["visible"] and barry_up():
             STATE.set_keyboard(False)
         top_input = not DESKTOP and running(TOP_INPUT_APP) is not None
         if top_input != top_input_written:
