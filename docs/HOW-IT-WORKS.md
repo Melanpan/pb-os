@@ -203,7 +203,7 @@ remove every trace of it.
 | DTB selection | 14-slot index chain | ROCKNIX ABL ≥ 1.1.8 matches the DTB `model` string |
 | Root | initramfs + `root=UUID=` | tiny busybox initramfs (writes `bootlog.txt` to the FAT partition), `root=PARTUUID=` patched at image pack |
 | GPU userspace | patched A740 Turnip | Frame's stock Turnip/zink (A750) |
-| Controller | `rsinput` serial MCU | USB pad → InputPlumber's `deck` target: a real Steam Deck controller (`28de:1205`, over USB/IP), the one controller on every PB-OS device (`sm8550-inputplumber-ext-hid` restores it after steamos-manager resets it to `deck-uhid`, and gives any second composite the null target). Steam treats it as a Steam Deck: its trackpads (Barry Launcher's Deck controls), "Steam Deck Controller" emulator defaults, and the account's Steam Deck layouts (+ optional MCU link) |
+| Controller | `rsinput` serial MCU | USB pad → InputPlumber's `deck` target: a real Steam Deck controller (`28de:1205`, over USB/IP), the one controller on every PB-OS device (`sm8550-inputplumber-ext-hid` restores it after steamos-manager resets it to `deck-uhid`, and gives any second composite the null target; `sm8550-inputplumber-stale-configs` removes older images' second device configs from `/etc/inputplumber/devices.d` before every InputPlumber start). Steam treats it as a Steam Deck: its trackpads (Barry Launcher's Deck controls), "Steam Deck Controller" emulator defaults, and the account's Steam Deck layouts (+ optional MCU link) |
 | Audio | `AYN-Odin2` | `SM8650-APS2`: WSA884x speakers + WCD939x, ROCKNIX UCM |
 | UFS installer | SM8550 layouts | rewritten for the Pocket FIT: keeps Android, backs up the partition table |
 

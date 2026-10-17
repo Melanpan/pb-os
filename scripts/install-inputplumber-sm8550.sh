@@ -182,12 +182,12 @@ install_odin_composite() {
       || die "${f}: expected one gamepad target; check the Deck target override"
     sed -i -E 's/^( *)- (xbox-elite|deck-uhid)$/\1- deck/' "${dev}/${f}"
   done
-  # Earlier builds' second copies of these, in /etc and its overlay upper.
-  for f in 02-ayn-odin.yaml 02-ayn-thor.yaml 50-ayn_thor.yaml 50-ayn_odin2.yaml \
-      50-ayn_odin2_mini.yaml 50-ayn_odin2portal.yaml 50-retroid_pocket6.yaml 50-retroid_pocket_nova.yaml; do
-    rm -f "${R}/etc/inputplumber/devices.d/${f}" \
-      "${R}/var/lib/overlays/etc/upper/inputplumber/devices.d/${f}"
-  done
+  # Earlier builds' second copies of these, in /etc and its overlay upper:
+  # gone from the image now, and on updated devices before every
+  # InputPlumber start (99-sm8550.conf runs the same script).
+  install -m0755 "${OVL}/usr/lib/steamos/sm8550-inputplumber-stale-configs" \
+    "${R}/usr/lib/steamos/sm8550-inputplumber-stale-configs"
+  "${R}/usr/lib/steamos/sm8550-inputplumber-stale-configs" "${R}"
   install -m0644 "${OVL}/usr/lib/systemd/system/inputplumber.service.d/99-sm8550.conf" \
     "${R}/usr/lib/systemd/system/inputplumber.service.d/99-sm8550.conf"
   install -m0755 "${OVL}/usr/lib/steamos/sm8550-inputplumber-ext-hid" \

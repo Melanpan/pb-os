@@ -1,0 +1,33 @@
+#!/bin/bash
+# InputPlumber device configs that earlier images (before 0.5.3) put in
+# /etc/inputplumber/devices.d. InputPlumber loads /etc and /usr/share alike,
+# so an old copy is a second config for the same device, not a replacement.
+# On the AYN Thor the old 02-ayn-thor.yaml lacks Barry's Deck devices: the
+# Deck app's pads then made a second composite (a second controller), which
+# sm8550-inputplumber-ext-hid nulled a moment later, and the pads went dead.
+#
+# An in-place update only deletes files the releases it updates from still
+# had, so a device first installed from an older image keeps them. Runs
+# before every InputPlumber start (99-sm8550.conf), and at image build with
+# the rootfs as ROOT (install-inputplumber-sm8550.sh), so both use this list.
+set -uo pipefail
+
+ROOT="${1:-}"
+STALE=(02-ayn-odin.yaml 02-ayn-thor.yaml 50-ayn_thor.yaml 50-ayn_odin2.yaml
+  50-ayn_odin2_mini.yaml 50-ayn_odin2portal.yaml 50-retroid_pocket6.yaml
+  50-retroid_pocket_nova.yaml)
+
+dirs=("${ROOT}/etc/inputplumber/devices.d")
+# At build: the image's /etc overlay upper as well. On a running device /etc
+# is that overlay already; its upper is never written under it.
+[[ -n "$ROOT" ]] && dirs+=("${ROOT}/var/lib/overlays/etc/upper/inputplumber/devices.d")
+
+for d in "${dirs[@]}"; do
+  for f in "${STALE[@]}"; do
+    [[ -e "$d/$f" || -L "$d/$f" ]] || continue
+    if rm -f "$d/$f"; then
+      [[ -n "$ROOT" ]] || logger -t sm8550-inputplumber-stale-configs "removed $d/$f (an older image's copy)"
+    fi
+  done
+done
+exit 0
