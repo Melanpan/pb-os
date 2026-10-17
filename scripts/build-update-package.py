@@ -226,11 +226,13 @@ if a.state_only:
 output = (Path(a.output) if a.output else out_dir / f'pb-os-{version}-{image}.update.tar.gz').resolve()
 if not (root / 'usr/lib/liblsfg-vk-arm64.so').is_file(): raise SystemExit('missing lsfg-vk 1.x ARM layer')
 # Decky plugins: the image's bundle (install-system-fixes.sh) plus decky-lsfg-vk,
-# which updaters from before 2026-10 require. Device plugins a package does not
-# carry are removed, so a plugin left from another image goes too.
+# which updaters from before 2026-10 require, and SteamGridDB (apply-overlays.sh,
+# the Decky store's newest at build time), the Thor's hero art source. Device
+# plugins a package does not carry are removed, so a plugin left from another
+# image goes too.
 bundle = root / 'usr/share/steamos-odin/decky-plugins'
 bundled = [p.name for p in bundle.iterdir() if p.is_dir()] if bundle.is_dir() else []
-PLUGINS = sorted({'decky-lsfg-vk', *bundled})
+PLUGINS = sorted({'decky-lsfg-vk', 'decky-steamgriddb', *bundled})
 # pbos-utils and dual-screen: the PB-OS tab in Quick Access (pbos-qamd) now.
 REMOVE = sorted({'pbos-control', 'pbos-utils', 'dual-screen', 'thor-stick-calibration', 'stick-calibration', 'thor-screens', 'pbos-update'} - set(PLUGINS))
 def load_state(f):
