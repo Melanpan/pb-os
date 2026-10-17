@@ -1,0 +1,107 @@
+#!/bin/bash
+# Motion sensors behind the ADSP's sensor hub (SSC): sets up the files the
+# ADSP's sensors process reads through hexagonrpcd (sm8550-sensors.service,
+# sm8550-sensors-root.service), then pbos-motiond streams the sensors.
+#
+#   sm8550-sensors profile   prints this device's profile id, or fails
+#   sm8550-sensors prepare   builds /var/lib/sm8550-sensors/root and, once,
+#                            the sensor registry
+#
+# The hexagonrpcd root (what the ADSP sees as Android's paths), on the same
+# file system as the registry: the ADSP writes a temp file beside the
+# registry and renames it in.
+#   sensors/config        stock sensor JSON (/usr/share/sm8550-sensors/ID)
+#   sensors/sns_reg.conf
+#   sensors/registry      the registry, made once from the JSON by
+#                         sscregistrygen; the ADSP adds what it learns about
+#                         this unit, so it is never replaced
+#                         (/var/lib/sm8550-sensors/ID/registry)
+#   socinfo/              the selectors the stock config filters on
+#   dsp/adsp/             DSP libraries the stock registry asks for
+# Adapted from MaSi's SteamOS-ARM-SM8550 (S28qcom-sensors, by suckbluefrog
+# for Batocera).
+set -euo pipefail
+
+SHARE=/usr/share/sm8550-sensors
+LIB=/usr/lib/sm8550-sensors
+ROOT=/var/lib/sm8550-sensors/root
+
+log() { echo "sm8550-sensors: $*" >&2; }
+
+# Devices whose sensors work this way, by device-tree compatible:
+# compatible  id  registry file that proves the IMU profile was generated.
+profiles() {
+  cat <<'EOF'
+ayn,thor thor sh5001_0_platform.config
+EOF
+}
+
+profile() {
+  local compat id marker
+  while read -r compat id marker; do
+    if tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qx "$compat"; then
+      echo "$id $marker"
+      return 0
+    fi
+  done < <(profiles)
+  return 1
+}
+
+prepare() {
+  local id marker state reg tmp soc
+  read -r id marker < <(profile) || { log "no sensor profile for this device"; exit 1; }
+  [[ -d "$SHARE/$id/sensors/config" ]] || { log "missing $SHARE/$id"; exit 1; }
+
+  # Audio shares the ADSP: let its sound card bind before the sensors
+  # process opens FastRPC sessions (an ADSP restart after that is not
+  # reliably recovered).
+  udevadm wait --timeout=30 /sys/class/sound/card0 || log "no sound card yet, going on"
+
+  state=/var/lib/sm8550-sensors/$id
+  reg=$state/registry
+  mkdir -p "$reg"
+  if [[ ! -s "$reg/$marker" ]]; then
+    if [[ -n "$(ls -A "$reg")" ]]; then
+      log "the registry in $reg is incomplete; not replacing it (it may hold this unit's calibration)"
+      exit 1
+    fi
+    soc=$(tr -d '\0\r\n ' </sys/devices/soc0/soc_id 2>/dev/null || true)
+    tmp=$(mktemp -d "$state/registry.new.XXXX")
+    # The stock Thor and Odin 2 registries are the Kailua HDK profile.
+    if ! "$LIB/sscregistrygen" -p HDK -s "${soc:-603}" "$SHARE/$id/sensors/config" "$tmp" >&2 \
+      || [[ ! -s "$tmp/$marker" ]]; then
+      rm -rf "$tmp"
+      log "could not make the sensor registry"
+      exit 1
+    fi
+    mv "$tmp"/* "$reg"/
+    rmdir "$tmp"
+    log "made the sensor registry in $reg"
+  fi
+
+  rm -rf "$ROOT"
+  mkdir -p "$ROOT/sensors" "$ROOT/dsp" "$ROOT/socinfo"
+  ln -s "$SHARE/$id/sensors/config" "$ROOT/sensors/config"
+  ln -s "$SHARE/$id/sensors/sns_reg.conf" "$ROOT/sensors/sns_reg.conf"
+  ln -s "$reg" "$ROOT/sensors/registry"
+  printf 'version=%s\0' "$(sed -n 's/^version=//p' "$SHARE/$id/sensors/sns_reg.conf" | head -n1)" \
+    >"$ROOT/sensors/sns_reg_version"
+  if [[ -d "$SHARE/$id/dsp/adsp" ]]; then
+    ln -s "$SHARE/$id/dsp/adsp" "$ROOT/dsp/adsp"
+  else
+    mkdir -p "$ROOT/dsp/adsp"
+  fi
+  # Mainline socinfo has only some of Android's selector files.
+  local f
+  for f in soc_id revision machine family; do
+    [[ -r /sys/devices/soc0/$f ]] && tr -d '\0' </sys/devices/soc0/$f >"$ROOT/socinfo/$f"
+  done
+  echo HDK >"$ROOT/socinfo/hw_platform"
+  for f in platform_subtype platform_subtype_id platform_version; do echo 0 >"$ROOT/socinfo/$f"; done
+}
+
+case "${1:-}" in
+  profile) profile >/dev/null && profile | cut -d' ' -f1 ;;
+  prepare) prepare ;;
+  *) echo "usage: $0 profile|prepare" >&2; exit 2 ;;
+esac

@@ -1,0 +1,11 @@
+[Unit]
+Description=Motion sensors as "PB-OS Motion Sensors" for the Steam Deck controller
+After=sm8550-sensors-root.service
+BindsTo=sm8550-sensors.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/sm8550-sensors/pbos-motiond
+StateDirectory=sm8550-sensors
+Restart=always
+RestartSec=2

@@ -1,0 +1,292 @@
+diff --git a/src/input/manager.rs b/src/input/manager.rs
+index a7b9d5d..ccefe9e 100644
+--- a/src/input/manager.rs
++++ b/src/input/manager.rs
+@@ -63,6 +63,9 @@ const VIRT_DEVICE_WHITELIST: &[&str] = &[
+     "Barry Deck Left Pad",
+     "Barry Deck Right Pad",
+     "Barry Deck Buttons",
++    // PB-OS: the built-in motion sensors (pbos-motiond, uinput), as the
++    // virtual Steam Deck's gyro.
++    "PB-OS Motion Sensors",
+ ];
+ 
+ #[derive(Error, Debug)]
+diff --git a/src/input/source/evdev.rs b/src/input/source/evdev.rs
+index 844bfbd..fb43590 100644
+--- a/src/input/source/evdev.rs
++++ b/src/input/source/evdev.rs
+@@ -1,11 +1,13 @@
+ pub mod blocked;
+ pub mod gamepad;
++pub mod imu;
+ pub mod keyboard;
+ pub mod touchscreen;
+ 
+ use std::{collections::HashMap, error::Error, time::Duration};
+ 
+ use evdev::{Device, EventType};
++use imu::ImuEventDevice;
+ use keyboard::KeyboardEventDevice;
+ use touchscreen::TouchscreenEventDevice;
+ 
+@@ -32,6 +34,7 @@ enum DriverType {
+     Gamepad,
+     Touchscreen,
+     Keyboard,
++    Imu,
+ }
+ 
+ /// [EventDevice] represents an input device using the input event subsystem.
+@@ -41,6 +44,7 @@ pub enum EventDevice {
+     Gamepad(SourceDriver<GamepadEventDevice>),
+     Touchscreen(SourceDriver<TouchscreenEventDevice>),
+     Keyboard(SourceDriver<KeyboardEventDevice>),
++    Imu(SourceDriver<ImuEventDevice>),
+ }
+ 
+ impl SourceDeviceCompatible for EventDevice {
+@@ -50,6 +54,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.info_ref(),
+             EventDevice::Touchscreen(source_driver) => source_driver.info_ref(),
+             EventDevice::Keyboard(source_driver) => source_driver.info_ref(),
++            EventDevice::Imu(source_driver) => source_driver.info_ref(),
+         }
+     }
+ 
+@@ -59,6 +64,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.get_id(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_id(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_id(),
++            EventDevice::Imu(source_driver) => source_driver.get_id(),
+         }
+     }
+ 
+@@ -68,6 +74,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.client(),
+             EventDevice::Touchscreen(source_driver) => source_driver.client(),
+             EventDevice::Keyboard(source_driver) => source_driver.client(),
++            EventDevice::Imu(source_driver) => source_driver.client(),
+         }
+     }
+ 
+@@ -77,6 +84,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.run().await,
+             EventDevice::Touchscreen(source_driver) => source_driver.run().await,
+             EventDevice::Keyboard(source_driver) => source_driver.run().await,
++            EventDevice::Imu(source_driver) => source_driver.run().await,
+         }
+     }
+ 
+@@ -86,6 +94,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.get_capabilities(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_capabilities(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_capabilities(),
++            EventDevice::Imu(source_driver) => source_driver.get_capabilities(),
+         }
+     }
+ 
+@@ -95,6 +104,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.get_output_capabilities(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_output_capabilities(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_output_capabilities(),
++            EventDevice::Imu(source_driver) => source_driver.get_output_capabilities(),
+         }
+     }
+ 
+@@ -104,6 +114,7 @@ impl SourceDeviceCompatible for EventDevice {
+             EventDevice::Gamepad(source_driver) => source_driver.get_device_path(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_device_path(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_device_path(),
++            EventDevice::Imu(source_driver) => source_driver.get_device_path(),
+         }
+     }
+ }
+@@ -177,6 +188,12 @@ impl EventDevice {
+                     SourceDriver::new(composite_device, device, device_info.into(), conf);
+                 Ok(Self::Keyboard(source_device))
+             }
++            DriverType::Imu => {
++                let device = ImuEventDevice::new(device_info.clone())?;
++                let source_device =
++                    SourceDriver::new(composite_device, device, device_info.into(), conf);
++                Ok(Self::Imu(source_device))
++            }
+         }
+     }
+ 
+@@ -190,6 +207,9 @@ impl EventDevice {
+         }
+ 
+         let properties = device.get_properties();
++        if properties.contains_key("ID_INPUT_ACCELEROMETER") || has_accelerometer_prop(device) {
++            return DriverType::Imu;
++        }
+         if properties.contains_key("ID_INPUT_TOUCHSCREEN") {
+             return DriverType::Touchscreen;
+         }
+@@ -208,6 +228,24 @@ impl EventDevice {
+ }
+ 
+ /// Returns the DBus object path for evdev devices
++/// Whether the kernel marks the device as a motion sensor
++/// (INPUT_PROP_ACCELEROMETER). Read from sysfs, as udev's
++/// ID_INPUT_ACCELEROMETER may not be in the cached properties yet when a
++/// uinput motion sensor appears.
++fn has_accelerometer_prop(device: &UdevDevice) -> bool {
++    const INPUT_PROP_ACCELEROMETER: u32 = 0x06;
++    let path = format!("{}/device/properties", device.syspath());
++    let Ok(props) = std::fs::read_to_string(path) else {
++        return false;
++    };
++    // A bitmap in hex words, most significant first; the bit is in the last.
++    props
++        .split_whitespace()
++        .last()
++        .and_then(|word| u64::from_str_radix(word, 16).ok())
++        .is_some_and(|bits| bits & (1 << INPUT_PROP_ACCELEROMETER) != 0)
++}
++
+ pub fn get_dbus_path(handler: String) -> String {
+     format!("{}/{}", BUS_SOURCES_PREFIX, handler.clone())
+ }
+diff --git a/src/input/source/evdev/imu.rs b/src/input/source/evdev/imu.rs
+new file mode 100644
+index 0000000..e6d27b8
+--- /dev/null
++++ b/src/input/source/evdev/imu.rs
+@@ -0,0 +1,134 @@
++use std::collections::HashMap;
++use std::error::Error;
++use std::fmt::Debug;
++use std::os::fd::AsFd;
++
++use evdev::{AbsoluteAxisCode, Device, EventSummary, InputEvent, SynchronizationCode};
++use nix::fcntl::{FcntlArg, OFlag};
++
++use crate::{
++    input::{
++        capability::{Capability, Source},
++        event::{native::NativeEvent, value::InputValue},
++        source::{InputError, SourceInputDevice, SourceOutputDevice},
++    },
++    udev::device::UdevDevice,
++};
++
++/// Same units as the IIO IMU sources (accel_gyro_3d.rs): m/s² and °/s
++/// scaled to the UHID LSB the targets expect.
++const ACCEL_SCALE_FACTOR: f64 = 1632.6530612244898; // 1 / 0.0006125
++const GYRO_SCALE_FACTOR: f64 = 16.0; // 1 / 0.0625
++const STANDARD_GRAVITY: f64 = 9.80665;
++
++/// Source device for an evdev motion sensor (INPUT_PROP_ACCELEROMETER,
++/// udev's ID_INPUT_ACCELEROMETER), the way hid-playstation and hid-nintendo
++/// report theirs: ABS_X/Y/Z is acceleration (resolution = units per g),
++/// ABS_RX/RY/RZ angular velocity (resolution = units per °/s), already in
++/// the controller's frame. One accelerometer and one gyro event go out per
++/// SYN_REPORT.
++pub struct ImuEventDevice {
++    device: Device,
++    /// Units per g (accel) or per °/s (gyro), by axis.
++    resolution: HashMap<AbsoluteAxisCode, f64>,
++    accel: [f64; 3],
++    gyro: [f64; 3],
++    dirty: bool,
++}
++
++impl ImuEventDevice {
++    pub fn new(device_info: UdevDevice) -> Result<Self, Box<dyn Error + Send + Sync>> {
++        let path = device_info.devnode();
++        log::debug!("Opening motion sensor at: {}", path);
++        let mut device = Device::open(path.clone())?;
++        device.grab()?;
++        let fd = device.as_fd();
++        nix::fcntl::fcntl(fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
++
++        let mut resolution = HashMap::new();
++        for (axis, info) in device.get_absinfo()? {
++            let res = info.resolution();
++            resolution.insert(axis, if res > 0 { res as f64 } else { 1.0 });
++        }
++
++        Ok(Self {
++            device,
++            resolution,
++            accel: [0.0; 3],
++            gyro: [0.0; 3],
++            dirty: false,
++        })
++    }
++
++    fn scaled(&self, axis: AbsoluteAxisCode, value: i32) -> f64 {
++        value as f64 / self.resolution.get(&axis).copied().unwrap_or(1.0)
++    }
++
++    fn translate(&mut self, event: InputEvent) -> Vec<NativeEvent> {
++        match event.destructure() {
++            EventSummary::AbsoluteAxis(_, axis, value) => {
++                let g = self.scaled(axis, value) * STANDARD_GRAVITY * ACCEL_SCALE_FACTOR;
++                let dps = self.scaled(axis, value) * GYRO_SCALE_FACTOR;
++                match axis {
++                    AbsoluteAxisCode::ABS_X => self.accel[0] = g,
++                    AbsoluteAxisCode::ABS_Y => self.accel[1] = g,
++                    AbsoluteAxisCode::ABS_Z => self.accel[2] = g,
++                    AbsoluteAxisCode::ABS_RX => self.gyro[0] = dps,
++                    AbsoluteAxisCode::ABS_RY => self.gyro[1] = dps,
++                    AbsoluteAxisCode::ABS_RZ => self.gyro[2] = dps,
++                    _ => return vec![],
++                }
++                self.dirty = true;
++                vec![]
++            }
++            EventSummary::Synchronization(_, SynchronizationCode::SYN_REPORT, _) if self.dirty => {
++                self.dirty = false;
++                vec![
++                    NativeEvent::new(
++                        Capability::Accelerometer(Source::Center),
++                        InputValue::Vector3 {
++                            x: Some(self.accel[0]),
++                            y: Some(self.accel[1]),
++                            z: Some(self.accel[2]),
++                        },
++                    ),
++                    NativeEvent::new(
++                        Capability::Gyroscope(Source::Center),
++                        InputValue::Vector3 {
++                            x: Some(self.gyro[0]),
++                            y: Some(self.gyro[1]),
++                            z: Some(self.gyro[2]),
++                        },
++                    ),
++                ]
++            }
++            _ => vec![],
++        }
++    }
++}
++
++impl SourceInputDevice for ImuEventDevice {
++    fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
++        let events: Vec<InputEvent> = match self.device.fetch_events() {
++            Ok(events) => events.into_iter().collect(),
++            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(vec![]),
++            Err(err) => return Err(format!("Failed to fetch events: {:?}", err).into()),
++        };
++        Ok(events.into_iter().flat_map(|e| self.translate(e)).collect())
++    }
++
++    fn get_capabilities(&self) -> Result<Vec<Capability>, InputError> {
++        Ok(vec![
++            Capability::Accelerometer(Source::Center),
++            Capability::Gyroscope(Source::Center),
++        ])
++    }
++}
++
++impl SourceOutputDevice for ImuEventDevice {}
++
++impl Debug for ImuEventDevice {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("ImuEventDevice").finish()
++    }
++}

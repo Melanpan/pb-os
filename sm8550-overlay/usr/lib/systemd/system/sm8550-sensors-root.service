@@ -1,0 +1,12 @@
+[Unit]
+Description=Motion sensors: the ADSP root process's files (hexagonrpcd, RootPD)
+After=sm8550-sensors.service
+BindsTo=sm8550-sensors.service
+
+[Service]
+Type=simple
+# Both share one FastRPC node; the sensors process attaches first.
+ExecStartPre=/bin/sleep 1
+ExecStart=/usr/lib/sm8550-sensors/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -R /var/lib/sm8550-sensors/root
+Restart=always
+RestartSec=1

@@ -1,0 +1,19 @@
+[Unit]
+Description=Motion sensors: the ADSP sensors process's files (hexagonrpcd, SensorsPD)
+# Only where /usr/lib/steamos-sm8550/sm8550-sensors has a profile (the AYN
+# Thor for now) and the kernel has the ADSP FastRPC node.
+ConditionPathExists=/dev/fastrpc-adsp
+After=sound.target systemd-udevd.service
+Wants=sm8550-sensors-root.service pbos-motiond.service
+
+[Service]
+Type=simple
+ExecCondition=/usr/lib/steamos-sm8550/sm8550-sensors profile
+ExecStartPre=/usr/lib/steamos-sm8550/sm8550-sensors prepare
+ExecStart=/usr/lib/sm8550-sensors/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R /var/lib/sm8550-sensors/root
+# Its FastRPC node goes away for a moment while the ADSP restarts.
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

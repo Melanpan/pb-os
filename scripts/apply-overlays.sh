@@ -867,7 +867,10 @@ if [[ "$SOC" != sm8650 ]]; then
            sm8550-stickcal.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
+  # Motion sensors (gyro) through the ADSP's sensor hub, for Steam.
+  "${SCRIPT_DIR}/install-pbos-motion.sh" "$R" || die "motion sensors failed"
 else
+  "${SCRIPT_DIR}/install-pbos-motion.sh" "$R" --remove
   remove_thor_bottom_screen
   rm -rf "$R/usr/lib/steamos-sm8550" "$R/usr/share/sm8550-fand" \
     "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
