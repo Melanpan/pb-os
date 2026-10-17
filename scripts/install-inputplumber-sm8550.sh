@@ -181,6 +181,13 @@ install_odin_composite() {
     [[ "$(grep -cE '^ *- (xbox-elite|deck-uhid)$' "${dev}/${f}")" == 1 ]] \
       || die "${f}: expected one gamepad target; check the Deck target override"
     sed -i -E 's/^( *)- (xbox-elite|deck-uhid)$/\1- deck/' "${dev}/${f}"
+    # The built-in accelerometer and gyroscope (pbos-motiond, through the
+    # ADSP's sensor hub) as the Deck's motion sensors (InputPlumber patch 0006).
+    [[ "$(grep -c '^target_devices:$' "${dev}/${f}")" == 1 ]] \
+      || die "${f}: expected one target_devices list; check the motion sensor source"
+    awk '/^target_devices:$/ { print "  - group: imu"; print "    evdev:";
+      print "      name: PB-OS Motion Sensors"; print "      handler: event*"; print "" } { print }' \
+      "${dev}/${f}" >"${dev}/${f}.new" && mv "${dev}/${f}.new" "${dev}/${f}"
   done
   # Earlier builds' second copies of these, in /etc and its overlay upper:
   # gone from the image now, and on updated devices before every

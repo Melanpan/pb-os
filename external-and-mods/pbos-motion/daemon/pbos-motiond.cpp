@@ -101,6 +101,11 @@ struct Profile {
 // Matches the frame MaSi's and Batocera's bridges validated on a Thor.
 constexpr Profile kProfiles[] = {
     {"ayn,thor", "thor", {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}}},
+    // Retroid Pocket Nova (QMI8658): the same quarter turn, measured on a
+    // Nova (upright = sensor +x, right side down = sensor +y). The RP6 has
+    // the same sensor and stock orientation (-x/-y/+z); not yet measured.
+    {"retroidpocket,rpnova", "rpnova", {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}}},
+    {"retroidpocket,rp6", "rp6", {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}}},
 };
 
 std::optional<Profile> detect_profile() {

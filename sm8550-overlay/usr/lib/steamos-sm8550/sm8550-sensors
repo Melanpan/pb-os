@@ -10,19 +10,22 @@
 # The hexagonrpcd root (what the ADSP sees as Android's paths), on the same
 # file system as the registry: the ADSP writes a temp file beside the
 # registry and renames it in.
-#   sensors/config        stock sensor JSON (/usr/share/sm8550-sensors/ID)
-#   sensors/sns_reg.conf
+#   sensors/config        stock sensor JSON: Qualcomm's Kailua set, the same
+#   sensors/sns_reg.conf  on the Thor, Nova and RP6 (/usr/share/sm8550-sensors/
+#                         kailua); the ADSP probes which IMU is fitted
 #   sensors/registry      the registry, made once from the JSON by
 #                         sscregistrygen; the ADSP adds what it learns about
 #                         this unit, so it is never replaced
 #                         (/var/lib/sm8550-sensors/ID/registry)
 #   socinfo/              the selectors the stock config filters on
-#   dsp/adsp/             DSP libraries the stock registry asks for
+#   dsp/adsp/             DSP libraries the device's stock firmware ships
+#                         (/usr/share/sm8550-sensors/ID/dsp/adsp, if any)
 # Adapted from MaSi's SteamOS-ARM-SM8550 (S28qcom-sensors, by suckbluefrog
 # for Batocera).
 set -euo pipefail
 
 SHARE=/usr/share/sm8550-sensors
+CONFIG=$SHARE/kailua/sensors
 LIB=/usr/lib/sm8550-sensors
 ROOT=/var/lib/sm8550-sensors/root
 
@@ -33,6 +36,8 @@ log() { echo "sm8550-sensors: $*" >&2; }
 profiles() {
   cat <<'EOF'
 ayn,thor thor sh5001_0_platform.config
+retroidpocket,rpnova rpnova qmi8658_0_platform.config
+retroidpocket,rp6 rp6 qmi8658_0_platform.config
 EOF
 }
 
@@ -50,7 +55,7 @@ profile() {
 prepare() {
   local id marker state reg tmp soc
   read -r id marker < <(profile) || { log "no sensor profile for this device"; exit 1; }
-  [[ -d "$SHARE/$id/sensors/config" ]] || { log "missing $SHARE/$id"; exit 1; }
+  [[ -d "$CONFIG/config" ]] || { log "missing $CONFIG"; exit 1; }
 
   # Audio shares the ADSP: let its sound card bind before the sensors
   # process opens FastRPC sessions (an ADSP restart after that is not
@@ -67,8 +72,8 @@ prepare() {
     fi
     soc=$(tr -d '\0\r\n ' </sys/devices/soc0/soc_id 2>/dev/null || true)
     tmp=$(mktemp -d "$state/registry.new.XXXX")
-    # The stock Thor and Odin 2 registries are the Kailua HDK profile.
-    if ! "$LIB/sscregistrygen" -p HDK -s "${soc:-603}" "$SHARE/$id/sensors/config" "$tmp" >&2 \
+    # The stock Thor, Odin 2, Nova and RP6 registries are the Kailua HDK profile.
+    if ! "$LIB/sscregistrygen" -p HDK -s "${soc:-603}" "$CONFIG/config" "$tmp" >&2 \
       || [[ ! -s "$tmp/$marker" ]]; then
       rm -rf "$tmp"
       log "could not make the sensor registry"
@@ -81,10 +86,10 @@ prepare() {
 
   rm -rf "$ROOT"
   mkdir -p "$ROOT/sensors" "$ROOT/dsp" "$ROOT/socinfo"
-  ln -s "$SHARE/$id/sensors/config" "$ROOT/sensors/config"
-  ln -s "$SHARE/$id/sensors/sns_reg.conf" "$ROOT/sensors/sns_reg.conf"
+  ln -s "$CONFIG/config" "$ROOT/sensors/config"
+  ln -s "$CONFIG/sns_reg.conf" "$ROOT/sensors/sns_reg.conf"
   ln -s "$reg" "$ROOT/sensors/registry"
-  printf 'version=%s\0' "$(sed -n 's/^version=//p' "$SHARE/$id/sensors/sns_reg.conf" | head -n1)" \
+  printf 'version=%s\0' "$(sed -n 's/^version=//p' "$CONFIG/sns_reg.conf" | head -n1)" \
     >"$ROOT/sensors/sns_reg_version"
   if [[ -d "$SHARE/$id/dsp/adsp" ]]; then
     ln -s "$SHARE/$id/dsp/adsp" "$ROOT/dsp/adsp"
