@@ -573,8 +573,11 @@ def running(app: str) -> subprocess.Popen | None:
 
 def activate(args: list[str]) -> bool:
     """Bring the first window matching xdotool search ARGS forward: map it
-    again, so it is gamescope's most recently mapped window."""
-    r = subprocess.run(["xdotool", "search", "--onlyvisible", *args], capture_output=True, text=True)
+    again, so it is gamescope's most recently mapped window. All of ARGS
+    must match (--all): xdotool's default is any one, and "--pid P
+    --classname Navigator" then took the first Firefox window of all,
+    bringing up Firefox for Discord."""
+    r = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", *args], capture_output=True, text=True)
     wins = r.stdout.split()
     if not wins:
         return False
@@ -881,8 +884,8 @@ def watch_opening(app: str, kind: str, ready) -> None:
 
 
 def window_shown(search: list[str]) -> bool:
-    """Is a window matching xdotool search ARGS mapped?"""
-    r = subprocess.run(["xdotool", "search", "--onlyvisible", *search], capture_output=True, text=True)
+    """Is a window matching all of xdotool search ARGS mapped?"""
+    r = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", *search], capture_output=True, text=True)
     return bool(r.stdout.split())
 
 
