@@ -22,6 +22,10 @@
 // gyro 1024 per deg/s. The gyro's zero is learned while the device lies
 // still and kept per device (Steam has its own calibration on top).
 //
+// Around suspend the streams are closed, so the sensors (sampling on the
+// ADSP) don't run while the device sleeps: a logind delay lock holds the
+// suspend until they are off, and they start again on resume.
+//
 // pbos-motiond --dump   print the samples instead of making the uinput
 //                       device, for testing: the sensor's own frame (raw)
 //                       and the Deck frame (a new device's profile).
@@ -35,6 +39,7 @@
 #include <sys/ioctl.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
+#include <systemd/sd-bus.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -490,7 +495,9 @@ class SscClient {
 // ---- gyro zero -----------------------------------------------------------
 
 // Learns the gyro's zero (deg/s, Deck frame) from half-second windows in
-// which the device lies still, and keeps it across restarts.
+// which the device lies still, and keeps it across restarts. Still means
+// both: the gyro steady (a slow, steady turn is steady too) and gravity
+// not moving, which a turn of any speed would show.
 class GyroZero {
  public:
   explicit GyroZero(std::string path) : path_(std::move(path)) {
@@ -501,11 +508,15 @@ class GyroZero {
   }
   const float *bias() const { return bias_; }
 
-  void add(const float w[3], int rate) {
+  // w: gyro (deg/s), a: accelerometer (g), both Deck frame.
+  void add(const float w[3], const float a[3], int rate) {
     for (int i = 0; i < 3; i++) {
       if (std::fabs(w[i]) > 6.0f) return reset();
       sum_[i] += w[i];
       sq_[i] += double(w[i]) * w[i];
+      if (n_ == 0 || a[i] < amin_[i]) amin_[i] = a[i];
+      if (n_ == 0 || a[i] > amax_[i]) amax_[i] = a[i];
+      if (amax_[i] - amin_[i] > 0.03f) return reset();  // noise ~0.02 g; 3° of turn ~0.05 g
     }
     if (++n_ < rate / 2) return;
     float mean[3];
@@ -535,6 +546,7 @@ class GyroZero {
   std::string path_;
   float bias_[3] = {0, 0, 0};
   double sum_[3] = {0, 0, 0}, sq_[3] = {0, 0, 0};
+  float amin_[3] = {0, 0, 0}, amax_[3] = {0, 0, 0};
   int n_ = 0;
   bool learned_ = false;
   time_t saved_ = -3600;
@@ -609,6 +621,75 @@ uint32_t usec_now() {
   return uint32_t(uint64_t(t.tv_sec) * 1000000 + t.tv_nsec / 1000);
 }
 
+// logind's PrepareForSleep, with a delay lock so the sensors are off before
+// the suspend goes on.
+class SleepWatch {
+ public:
+  ~SleepWatch() {
+    release();
+    if (bus_) sd_bus_flush_close_unref(bus_);
+  }
+  bool open() {
+    int r = sd_bus_open_system(&bus_);
+    if (r < 0) {
+      logf("system bus: %s (sensors stay on in sleep)", strerror(-r));
+      return false;
+    }
+    r = sd_bus_match_signal(bus_, nullptr, "org.freedesktop.login1", "/org/freedesktop/login1",
+                            "org.freedesktop.login1.Manager", "PrepareForSleep", on_signal, this);
+    if (r < 0) {
+      logf("PrepareForSleep: %s (sensors stay on in sleep)", strerror(-r));
+      return false;
+    }
+    take();
+    return true;
+  }
+  int fd() const { return bus_ ? sd_bus_get_fd(bus_) : -1; }
+  short events() const {
+    int e = bus_ ? sd_bus_get_events(bus_) : 0;
+    return short(e > 0 ? e : POLLIN);
+  }
+  // Handles what the bus has; true when the sleep state changed.
+  bool process() {
+    changed_ = false;
+    while (bus_ && sd_bus_process(bus_, nullptr) > 0) {
+    }
+    return changed_;
+  }
+  bool asleep() const { return asleep_; }
+  void take() {
+    if (lock_ >= 0 || !bus_) return;
+    sd_bus_error err = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = nullptr;
+    int r = sd_bus_call_method(bus_, "org.freedesktop.login1", "/org/freedesktop/login1",
+                               "org.freedesktop.login1.Manager", "Inhibit", &err, &reply, "ssss", "sleep",
+                               "pbos-motiond", "Turning the motion sensors off", "delay");
+    int fd = -1;
+    if (r >= 0 && sd_bus_message_read(reply, "h", &fd) >= 0) lock_ = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+    if (lock_ < 0) logf("sleep delay lock: %s", err.message ? err.message : strerror(-r));
+    sd_bus_error_free(&err);
+    sd_bus_message_unref(reply);
+  }
+  void release() {
+    if (lock_ >= 0) close(lock_);
+    lock_ = -1;
+  }
+
+ private:
+  static int on_signal(sd_bus_message *m, void *data, sd_bus_error *) {
+    auto *self = static_cast<SleepWatch *>(data);
+    int start = 0;
+    if (sd_bus_message_read(m, "b", &start) >= 0) {
+      self->asleep_ = start;
+      self->changed_ = true;
+    }
+    return 0;
+  }
+  sd_bus *bus_ = nullptr;
+  int lock_ = -1;
+  bool asleep_ = false, changed_ = false;
+};
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -646,8 +727,25 @@ int main(int argc, char **argv) {
   logf("%s: waiting for the sensor hub", profile->id);
 
   SscClient accel, gyro;
-  bool up = false;
+  bool up = false, hub = false;
   Service svc;
+  auto start_streams = [&] {
+    up = accel.open(svc) && gyro.open(svc) && accel.start("accel", kRate, 3000) &&
+         gyro.start("gyro", kRate, 3000);
+    if (!up) {
+      // The hub can list the service before its sensors are ready; it is
+      // offered again when the sensors process restarts.
+      accel.close_();
+      gyro.close_();
+    }
+  };
+  auto stop_streams = [&] {
+    accel.close_();
+    gyro.close_();
+    up = false;
+  };
+  SleepWatch sleep;
+  if (!g_dump) sleep.open();
   float a[3] = {0, 0, 1}, w[3] = {0, 0, 0}, raw_a[3] = {0, 0, 0}, raw_w[3] = {0, 0, 0};
   auto rotate = [&](float x, float y, float z, float out[3], float scale) {
     float in[3] = {x, y, z};
@@ -657,12 +755,30 @@ int main(int argc, char **argv) {
   unsigned dumped = 0;
 
   for (;;) {
-    pollfd p[4] = {{sfd, POLLIN, 0}, {ns, POLLIN, 0}, {accel.fd(), POLLIN, 0}, {gyro.fd(), POLLIN, 0}};
-    if (poll(p, 4, -1) < 0) {
+    pollfd p[5] = {{sfd, POLLIN, 0},
+                   {ns, POLLIN, 0},
+                   {accel.fd(), POLLIN, 0},
+                   {gyro.fd(), POLLIN, 0},
+                   {sleep.fd(), sleep.events(), 0}};
+    if (poll(p, 5, -1) < 0) {
       if (errno == EINTR) continue;
       break;
     }
     if (p[0].revents) break;
+
+    if (p[4].revents && sleep.process()) {
+      if (sleep.asleep()) {
+        if (up) logf("suspending: motion sensors off");
+        stop_streams();
+        sleep.release();
+      } else {
+        sleep.take();
+        if (hub) {
+          logf("resumed: motion sensors on");
+          start_streams();
+        }
+      }
+    }
 
     if (p[1].revents & POLLIN) {
       qrtr_ctrl_pkt pkt{};
@@ -672,19 +788,12 @@ int main(int argc, char **argv) {
         Service s{le32toh(pkt.server.node), le32toh(pkt.server.port)};
         if (cmd == QRTR_TYPE_NEW_SERVER && !up) {
           svc = s;
-          up = accel.open(svc) && gyro.open(svc) && accel.start("accel", kRate, 3000) &&
-               gyro.start("gyro", kRate, 3000);
-          if (!up) {
-            // The hub can list the service before its sensors are ready;
-            // it is offered again when the sensors process restarts.
-            accel.close_();
-            gyro.close_();
-          }
-        } else if (cmd == QRTR_TYPE_DEL_SERVER && up && s.node == svc.node && s.port == svc.port) {
+          hub = true;
+          if (!sleep.asleep()) start_streams();
+        } else if (cmd == QRTR_TYPE_DEL_SERVER && hub && s.node == svc.node && s.port == svc.port) {
           logf("sensor hub went away");
-          accel.close_();
-          gyro.close_();
-          up = false;
+          stop_streams();
+          hub = false;
         }
       }
     }
@@ -702,7 +811,7 @@ int main(int argc, char **argv) {
           float raw[3];
           raw_w[0] = x * kRadToDeg, raw_w[1] = y * kRadToDeg, raw_w[2] = z * kRadToDeg;
           rotate(x, y, z, raw, kRadToDeg);
-          zero.add(raw, kRate);
+          zero.add(raw, a, kRate);
           for (int i = 0; i < 3; i++) w[i] = raw[i] - zero.bias()[i];
           if (g_dump) {
             if (dumped++ % (kRate / 10) == 0)
