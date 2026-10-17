@@ -26,7 +26,22 @@ constexpr int SETTLE_MS = 300;
 const QSet<QString> RESERVED = {"shift", "BackSpace", "space", "Return", "symbols", "keys", "abc", "hide",
                                 "lang", "ctrl", "alt", "super", "Escape", "Tab", "Home", "End", "Delete",
                                 "Left", "Right", "Up", "Down", "Prior", "Next", "copy", "paste", "cut",
-                                "selectall", "undo", "redo"};
+                                "selectall", "undo", "redo", "numbers", "deleteword"};
+// A grid key's swipes, as Thumb-Key names them (top is up the screen).
+const QStringList DIRECTIONS = {"top", "topRight", "right", "bottomRight", "bottom", "bottomLeft", "left", "topLeft"};
+constexpr int GRID_SIZE = 3;  // a grid is 3 rows of 3 keys
+// The number grid a grid pack without its own gets: Thumb-Key's.
+const char DEFAULT_NUMBERS[] = R"json([
+  [{"center": "1", "bottomLeft": "$"},
+   {"center": "2", "top": "^", "topRight": "´", "right": "!", "bottomRight": "\\", "bottomLeft": "/", "left": "+", "topLeft": "`"},
+   {"center": "3", "bottomRight": "€", "bottom": "=", "bottomLeft": "£", "left": "?"}],
+  [{"center": "4", "topRight": "%", "bottomRight": "_", "bottomLeft": "[", "left": "(", "topLeft": "{"},
+   {"center": "5"},
+   {"center": "6", "topRight": "}", "right": ")", "bottomRight": "]", "bottomLeft": "@", "topLeft": "|"}],
+  [{"center": "7", "bottomRight": ":", "bottomLeft": "<", "topLeft": "~"},
+   {"center": "8", "topRight": "'", "bottomRight": "-", "bottom": ".", "bottomLeft": "*", "left": ",", "topLeft": "\""},
+   {"center": "9", "top": "&", "topRight": "°", "bottomRight": ">", "bottomLeft": ";", "left": "#"}]
+])json";
 
 // What Shift makes of a key: its upper case, when that is one character
 // ("ß" stays "ß", not "SS").
@@ -34,6 +49,44 @@ QString shiftOf(const QString &key)
 {
     const QString up = key.toUpper();
     return key.size() == 1 && up.size() != 1 ? key : up;
+}
+
+// A grid (Thumb-Key's layout): 3 rows of 3 keys, each {"center": text,
+// <direction>: text a swipe that way types, or "shift"}. Out: the same, as
+// variants; false if it is not one.
+bool readGrid(const QJsonValue &v, QVariantList *out)
+{
+    const QJsonArray rows = v.toArray();
+    if (rows.size() != GRID_SIZE)
+        return false;
+    auto text = [](const QJsonValue &t, bool swipe) {
+        const QString s = t.toString();
+        if (swipe && s == QLatin1String("shift"))
+            return true;
+        return !s.isEmpty() && s.size() <= MAX_KEY && !RESERVED.contains(s);
+    };
+    for (const QJsonValue &r : rows) {
+        const QJsonArray keys = r.toArray();
+        if (keys.size() != GRID_SIZE)
+            return false;
+        QVariantList row;
+        for (const QJsonValue &k : keys) {
+            const QJsonObject key = k.toObject();
+            if (!text(key.value(QStringLiteral("center")), false))
+                return false;
+            QVariantMap cell{{"center", key.value(QStringLiteral("center")).toString()}};
+            for (const QString &d : DIRECTIONS) {
+                if (!key.contains(d))
+                    continue;
+                if (!text(key.value(d), true))
+                    return false;
+                cell.insert(d, key.value(d).toString());
+            }
+            row << cell;
+        }
+        *out << QVariant(row);
+    }
+    return true;
 }
 
 // The English pack, should no pack be readable at all: the keyboard always
@@ -57,7 +110,8 @@ QVariantMap builtIn()
     }
     return {{"id", "en"}, {"name", "English"}, {"label", "EN"}, {"dir", ""}, {"rows", rows},
             {"shiftRows", shiftRows}, {"more", QVariantMap()}, {"letters", letters},
-            {"wordChars", "'"}, {"words", ""}, {"composer", ""}};
+            {"wordChars", "'"}, {"words", ""}, {"composer", ""}, {"layout", "rows"},
+            {"grid", QVariantList()}, {"numbers", QVariantList()}, {"wordsFrom", ""}};
 }
 
 }  // namespace
@@ -161,12 +215,28 @@ QVariantMap KeyboardLanguages::load(const QString &dir, const QString &id, QStri
         }
         return true;
     };
+    // grid (instead of rows): Thumb-Key's keys, a letter to tap and more
+    // to swipe out of each; numbers, the grid its 123 key shows.
+    const bool isGrid = o.contains(QStringLiteral("grid"));
+    QVariantList grid, numbers;
+    if (isGrid) {
+        if (!readGrid(o.value(QStringLiteral("grid")), &grid)) {
+            *problem = QStringLiteral("grid must be 3 rows of 3 keys, each a center and its swipes (up to %1 characters, or \"shift\")").arg(MAX_KEY);
+            return {};
+        }
+        if (o.contains(QStringLiteral("numbers")) ? !readGrid(o.value(QStringLiteral("numbers")), &numbers)
+                                                   : !readGrid(QJsonDocument::fromJson(DEFAULT_NUMBERS).array(), &numbers)) {
+            *problem = QStringLiteral("numbers must be a grid, as grid is");
+            return {};
+        }
+    }
     QVariantList rows, shiftRows;
-    if (!readRows(o.value(QStringLiteral("rows")), &rows)) {
+    if (!isGrid && !readRows(o.value(QStringLiteral("rows")), &rows)) {
         *problem = QStringLiteral("rows must be 3 or 4 lists of 1-%1 keys, each the text it types").arg(MAX_ROW);
         return {};
     }
-    if (o.contains(QStringLiteral("shiftRows"))) {
+    // (A grid's keys shift to their capitals.)
+    if (o.contains(QStringLiteral("shiftRows")) && !isGrid) {
         bool same = readRows(o.value(QStringLiteral("shiftRows")), &shiftRows) && shiftRows.size() == rows.size();
         for (int i = 0; same && i < rows.size(); i++)
             same = shiftRows[i].toList().size() == rows[i].toList().size();
@@ -222,6 +292,14 @@ QVariantMap KeyboardLanguages::load(const QString &dir, const QString &id, QStri
     };
     addLetters(rows);
     addLetters(shiftRows);
+    for (const QVariant &row : grid) {
+        QVariantList texts;
+        for (const QVariant &cell : row.toList())
+            for (const QVariant &t : cell.toMap())
+                if (t.toString() != QLatin1String("shift"))
+                    texts << t << shiftOf(t.toString());
+        addLetters({QVariant(texts)});
+    }
     for (const QVariant &alts : more)
         for (const QVariant &a : alts.toList())
             for (const QChar c : a.toString())
@@ -253,7 +331,9 @@ QVariantMap KeyboardLanguages::load(const QString &dir, const QString &id, QStri
         label = id.left(3).toUpper();
     return {{"id", id}, {"name", name}, {"label", label.left(4)}, {"dir", dir}, {"rows", rows},
             {"shiftRows", shiftRows}, {"more", more}, {"letters", letters}, {"wordChars", wordChars},
-            {"words", words}, {"composer", composer.isEmpty() ? QString() : QUrl::fromLocalFile(composer).toString()}};
+            {"words", words}, {"composer", composer.isEmpty() ? QString() : QUrl::fromLocalFile(composer).toString()},
+            {"layout", isGrid ? "grid" : "rows"}, {"grid", grid}, {"numbers", numbers},
+            {"wordsFrom", words.isEmpty() ? o.value(QStringLiteral("wordsFrom")).toString() : QString()}};
 }
 
 void KeyboardLanguages::rescan()
@@ -275,6 +355,12 @@ void KeyboardLanguages::rescan()
                 problemById.remove(id);
             }
         }
+    }
+    // wordsFrom: another pack's words (a second layout for a language).
+    for (QVariantMap &pack : byId) {
+        const QString from = pack.value(QStringLiteral("wordsFrom")).toString();
+        if (!from.isEmpty() && from != pack.value(QStringLiteral("id")).toString() && byId.contains(from))
+            pack.insert(QStringLiteral("words"), byId.value(from).value(QStringLiteral("words")));
     }
     QVariantList languages;
     for (const QVariantMap &pack : byId)

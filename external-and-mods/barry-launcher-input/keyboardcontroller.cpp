@@ -25,11 +25,12 @@ const char SHELLD[] = "http://127.0.0.1:47824";  // barry_launcher_shelld
 const QSet<QString> NAMED = {"shift", "BackSpace", "space", "Return", "symbols", "keys", "abc", "hide",
                              "lang", "ctrl", "alt", "super", "Escape", "Tab", "Home", "End", "Delete",
                              "Left", "Right", "Up", "Down", "Prior", "Next", "copy", "paste", "cut",
-                             "selectall", "undo", "redo"};
+                             "selectall", "undo", "redo", "numbers", "deleteword"};
 const QSet<QString> REPEATING = {"BackSpace", "Left", "Right", "Up", "Down", "Delete"};
 const QHash<QString, QStringList> SHORTCUTS = {
     {"copy", {"ctrl", "c"}}, {"paste", {"ctrl", "v"}}, {"cut", {"ctrl", "x"}},
     {"selectall", {"ctrl", "a"}}, {"undo", {"ctrl", "z"}}, {"redo", {"ctrl", "shift", "z"}},
+    {"deleteword", {"ctrl", "BackSpace"}},
 };
 constexpr int REPEAT_MS = 90;
 constexpr int REPEAT_AFTER = 4;  // ticks held before a key repeats
@@ -53,8 +54,10 @@ KeyboardController::KeyboardController(QObject *parent) : QObject(parent)
 {
     m_repeat.setInterval(REPEAT_MS);
     connect(&m_repeat, &QTimer::timeout, this, [this] {
-        if (++m_repeatTicks > REPEAT_AFTER)
+        if (++m_repeatTicks > REPEAT_AFTER) {
+            m_repeated = true;
             press(m_repeatKey);
+        }
     });
     KeyboardLanguages *languages = KeyboardLanguages::instance();
     connect(languages, &KeyboardLanguages::currentChanged, this, &KeyboardController::languageUpdated);
@@ -62,6 +65,8 @@ KeyboardController::KeyboardController(QObject *parent) : QObject(parent)
         emit languageChanged();
         rebuildRows();
     });
+    // A grid's labels follow Shift.
+    connect(this, &KeyboardController::stateChanged, this, &KeyboardController::rebuildGrid);
 }
 
 KeyboardController::~KeyboardController()
@@ -167,7 +172,7 @@ bool KeyboardController::manyLanguages() const
 
 bool KeyboardController::canGlide() const
 {
-    return m_glide && !m_language.value("words").toString().isEmpty() && !m_composer;
+    return m_glide && !m_language.value("words").toString().isEmpty() && !m_composer && !isGridPack();
 }
 
 bool KeyboardController::isNamed(const QString &key) const
@@ -266,6 +271,7 @@ void KeyboardController::rebuildRows()
         m_rows = rows;
         emit rowsChanged();
     }
+    rebuildGrid();
 }
 
 // --- touches ----------------------------------------------------------------------
@@ -277,6 +283,7 @@ void KeyboardController::keyDown(const QString &key)
     if (REPEATING.contains(key)) {
         m_repeatKey = key;
         m_repeatTicks = 0;
+        m_repeated = false;
         m_repeat.start();
     }
 }
@@ -336,6 +343,10 @@ void KeyboardController::reset()
     m_repeat.stop();
     dismissMore();
     clearStrip();
+    if (!m_touches.isEmpty()) {
+        m_touches.clear();
+        emit pressedChanged();
+    }
     bool handled;
     if (m_composer)
         callComposer("reset", QVariant(), &handled);
@@ -372,6 +383,11 @@ void KeyboardController::press(const QString &k)
     }
     if (k == QLatin1String("keys")) {
         page(m_page == QLatin1String("keys") ? QStringLiteral("letters") : QStringLiteral("keys"));
+        return;
+    }
+    if (k == QLatin1String("numbers")) {
+        m_shifted = false;
+        page(m_page == QLatin1String("numbers") ? QStringLiteral("letters") : QStringLiteral("numbers"));
         return;
     }
     if (k == QLatin1String("abc")) { page(QStringLiteral("letters")); return; }

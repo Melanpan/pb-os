@@ -27,6 +27,12 @@ A pack Barry cannot read is left out, and the reason is logged:
 `journalctl --user -u barry_launcher` in Game Mode,
 `journalctl --user -u barry_launcher_desktop` in Desktop Mode.
 
+PB-OS also ships keyboards it leaves off, in
+`/usr/share/barry_launcher/keyboards-extra/`: Thumb-Key's English layout
+(`en-thumbkey`, see "Grid packs" below). The Languages tab lists each one as
+"Add …"; adding it copies it to your packs and puts it in use, and ✕ takes
+it away again. Your other packs stay as they are.
+
 ## What goes in a pack
 
 | File | Needed | What it does |
@@ -72,12 +78,64 @@ A pack Barry cannot read is left out, and the reason is logged:
   part of a word (default `'`). Glide typing and autocorrect use this.
 - **`words`**: the name of the word list in the pack's folder (see below).
 - **`composer`**: the name of the composer in the pack's folder (see below).
+- **`grid`**, **`numbers`**, **`wordsFrom`**: a grid pack's (see below).
 
 Key names Barry uses for its own keys cannot be a pack's keys: `shift`,
 `BackSpace`, `space`, `Return`, `symbols`, `keys`, `abc`, `hide`, `lang`,
 `ctrl`, `alt`, `super`, `Escape`, `Tab`, `Home`, `End`, `Delete`, `Left`,
 `Right`, `Up`, `Down`, `Prior`, `Next`, `copy`, `paste`, `cut`,
-`selectall`, `undo`, `redo`.
+`selectall`, `undo`, `redo`, `numbers`, `deleteword`.
+
+## Grid packs (Thumb-Key)
+
+A pack with `grid` in place of `rows` has Thumb-Key's keys
+(https://github.com/dessalines/thumb-key): three rows of three big keys.
+Each key types its center letter when tapped, and another when you swipe
+from it toward one of its corners or sides, where that letter is shown
+small. A swipe only needs to go roughly the right way: the key's nearest
+swipe counts.
+
+```json
+{
+  "name": "English (Thumb-Key)",
+  "label": "TK",
+  "grid": [
+    [{"center": "s", "bottomRight": "w"}, {"center": "r", "bottom": "g"}, {"center": "o", "bottomLeft": "u"}],
+    [{"center": "n", "right": "m"},
+     {"center": "h", "top": "q", "topRight": "b", "right": "p", "bottomRight": "y",
+      "bottom": "x", "bottomLeft": "v", "left": "k", "topLeft": "j"},
+     {"center": "a", "top": "shift", "left": "l"}],
+    [{"center": "t", "topRight": "c"},
+     {"center": "i", "top": "f", "topRight": "'", "right": "z", "bottomRight": "-", "bottom": ".", "bottomLeft": "*"},
+     {"center": "e", "topLeft": "d"}]
+  ],
+  "wordsFrom": "en"
+}
+```
+
+- **`grid`** (instead of `rows`): 3 rows of 3 keys. Each key has a
+  **`center`** and any of `top`, `topRight`, `right`, `bottomRight`,
+  `bottom`, `bottomLeft`, `left`, `topLeft`: the text that swipe types (up
+  to 8 characters), or `"shift"` for Shift. Shift gives capitals.
+- **`numbers`**: the grid the 123 key shows, the same shape. Leave it out
+  for Thumb-Key's own (1-9 with symbols to swipe out; 0 is in the bottom row).
+- **`wordsFrom`**: the id of a pack whose words to use, so a second layout
+  for a language needs no word list of its own. Suggestions, autocorrect and
+  the words you told it to leave alone are that pack's.
+
+Barry adds the side keys (123 or ABC, Shift or #+=, Backspace) and the
+bottom row (hide, the language key, space, comma, Enter; on the 123 page
+Fn and 0 in place of the language key and comma, which 8 swipes). Slide along the
+space bar to move the cursor; swipe left on Backspace to delete a word.
+Glide typing is off for a grid pack (a swipe is a letter); held-key
+alternatives (`more`) are not used. #+= and Fn show the usual symbols and
+Fn pages.
+
+`tools/thumbkey-to-barry.py` in PB-OS's repository turns a Thumb-Key layout
+(a `.kt` file in its `keyboards/` folder) into a `grid`.
+
+A theme draws the grid with its own colors; one that wants its own shapes
+can have its own `GridPanel.qml`, as it can a `KeyPanel.qml`.
 
 ## words.txt
 

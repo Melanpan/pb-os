@@ -1,0 +1,11 @@
+English (Thumb-Key) for Barry Launcher's keyboards
+
+The letters' places (which key each letter is on, and which way to swipe for
+it) are Thumb-Key's English layout, from Thumb-Key
+(https://github.com/dessalines/thumb-key, GNU AGPL 3.0), turned into this
+keyboard.json by tools/thumbkey-to-barry.py in PB-OS. The number keys (123)
+are Thumb-Key's number layout. Barry Launcher's own code draws the keys and
+reads the swipes; none of Thumb-Key's code is used.
+
+Words for suggestions and autocorrect come from the English pack
+("wordsFrom": "en").

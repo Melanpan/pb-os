@@ -19,6 +19,11 @@
 // word as typed, to undo it. While a word is typed the strip offers
 // completions. A pack's composer (Composer.qml) sees every key first.
 //
+// Grid packs (Thumb-Key's layout, keyboardgrid.cpp): big keys, each a
+// letter to tap and more to swipe out of it, drawn by GridPanel.qml, which
+// reports raw touches (touchDown/Move/Up); which key, which way, the space
+// bar's slide (the cursor) and Backspace's swipe (a word) are decided here.
+//
 // Where the text goes: typer (Typer: XTest or KWin's input method), or,
 // with preferKeyboard, keyboard (a uinput VirtualKeyboard, which games read)
 // whenever the pack's letters are all on the US layout. Shortcuts go to
@@ -89,6 +94,15 @@ class KeyboardController : public QObject, public QQmlParserStatus {
     // A held key's alternatives, while they show.
     Q_PROPERTY(QString moreFor READ moreFor NOTIFY moreChanged)
     Q_PROPERTY(QStringList moreAlts READ moreAlts NOTIFY moreChanged)
+    // A grid pack's page of grid keys is up (letters or numbers): drawn by
+    // GridPanel.qml instead of KeyPanel.qml.
+    Q_PROPERTY(bool gridPage READ gridPage NOTIFY gridChanged)
+    // Its rows (4: three of 3 grid keys and a side key, then the bottom
+    // row), each key {key, center (what a tap types, as now shifted, or a
+    // named key), swipes ({direction: text}), span (columns of 4)}.
+    Q_PROPERTY(QVariantList grid READ grid NOTIFY gridChanged)
+    // The grid keys a finger is on.
+    Q_PROPERTY(QStringList pressedCells READ pressedCells NOTIFY pressedChanged)
 
 public:
     explicit KeyboardController(QObject *parent = nullptr);
@@ -126,6 +140,9 @@ public:
     QVariantList trail() const;
     QString moreFor() const { return m_moreFor; }
     QStringList moreAlts() const { return m_moreAlts; }
+    bool gridPage() const;
+    QVariantList grid() const { return m_grid; }
+    QStringList pressedCells() const;
 
     // --- the QML's reports ---
     Q_INVOKABLE void keyDown(const QString &key);  // a finger landed on it
@@ -141,6 +158,14 @@ public:
     // A letter key's item, for glide typing (where it is).
     Q_INVOKABLE void registerKey(const QString &key, QQuickItem *item);
     Q_INVOKABLE void unregisterKey(const QString &key, QQuickItem *item);
+    // A grid page's touches (positions in panel's coordinates) and its
+    // keys' items (where they are).
+    Q_INVOKABLE void touchDown(int id, qreal x, qreal y);
+    Q_INVOKABLE void touchMove(int id, qreal x, qreal y);
+    Q_INVOKABLE void touchUp(int id, qreal x, qreal y);
+    Q_INVOKABLE void touchCancel(int id);
+    Q_INVOKABLE void registerCell(const QString &key, QQuickItem *item);
+    Q_INVOKABLE void unregisterCell(const QString &key, QQuickItem *item);
     // Back to letters, nothing held or pending (the keyboard just opened).
     Q_INVOKABLE void reset();
 
@@ -158,6 +183,8 @@ signals:
     void stripChanged();
     void trailChanged();
     void moreChanged();
+    void gridChanged();
+    void pressedChanged();
     void hideRequested();
 
 private slots:
@@ -180,6 +207,11 @@ private:
     bool isWordText(const QString &text) const;
     QString shiftOf(const QString &key) const;
     QString letterAt(QPointF pos) const;
+    // grid packs (keyboardgrid.cpp)
+    bool isGridPack() const;
+    void rebuildGrid();
+    QString cellAt(QPointF pos) const;
+    QString swipeText(const QString &cell, QPointF move) const;
     // the composer
     void loadComposer();
     QVariantMap callComposer(const char *method, const QVariant &arg, bool *handled);
@@ -236,9 +268,22 @@ private:
     QString m_moreFor;
     QStringList m_moreAlts;
 
+    QVariantList m_grid;
+    QHash<QString, QVariantMap> m_cellInfo;  // a grid key -> {center, swipes}
+    QHash<QString, QPointer<QQuickItem>> m_cells;
+    struct Touch {
+        QString cell;
+        QPointF start;
+        qreal size = 0;      // the key's smaller side: how far a swipe goes
+        bool swiped = false;
+        int slid = 0;        // the space bar's cursor steps so far
+    };
+    QHash<int, Touch> m_touches;
+
     QTimer m_repeat;
     QString m_repeatKey;
     int m_repeatTicks = 0;
+    bool m_repeated = false;  // the held key has repeated: no press as it lifts
 
     // What to type, in order: a step waits behind one shelld is still
     // planning (autocorrect's swap for the word just typed).

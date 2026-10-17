@@ -992,7 +992,13 @@ constexpr size_t LANGUAGE_KEY_MAX = 8;
 const std::set<std::string> LANGUAGE_RESERVED = {
     "shift", "BackSpace", "space", "Return", "symbols", "keys", "abc", "hide", "lang", "ctrl",
     "alt", "super", "Escape", "Tab", "Home", "End", "Delete", "Left", "Right", "Up",
-    "Down", "Prior", "Next", "copy", "paste", "cut", "selectall", "undo", "redo"};
+    "Down", "Prior", "Next", "copy", "paste", "cut", "selectall", "undo", "redo", "numbers", "deleteword"};
+// A grid pack's grid and numbers: 3 rows of 3 keys, as keyboardlanguages.cpp.
+constexpr size_t LANGUAGE_GRID = 3;
+const char* const LANGUAGE_DIRECTIONS[] = {"top", "topRight", "right", "bottomRight", "bottom", "bottomLeft", "left", "topLeft"};
+// Packs PB-OS ships but does not turn on (a second layout, like Thumb-Key's):
+// the Languages tab offers to add them.
+const std::string LANGUAGES_EXTRA = "/usr/share/barry_launcher/keyboards-extra";
 
 std::string languages_dir() { return home() + "/.local/share/barry_launcher/keyboards"; }
 
@@ -1032,11 +1038,36 @@ Value check_language(const Value& meta, const std::string& src) {
         }
         return true;
     };
+    auto grid_ok = [](const Value& grid) {
+        auto text_ok = [](const Value& t, bool swipe) {
+            if (!t.is_string()) return false;
+            if (swipe && t.as_string() == "shift") return true;
+            size_t n = code_points(t.as_string());
+            return n > 0 && n <= LANGUAGE_KEY_MAX && !LANGUAGE_RESERVED.count(t.as_string());
+        };
+        if (!grid.is_array() || grid.size() != LANGUAGE_GRID) return false;
+        for (const auto& r : grid.items()) {
+            if (!r.is_array() || r.size() != LANGUAGE_GRID) return false;
+            for (const auto& k : r.items()) {
+                if (!k.is_object() || !text_ok(k["center"], false)) return false;
+                for (const char* d : LANGUAGE_DIRECTIONS)
+                    if (k.has(d) && !text_ok(k[d], true)) return false;
+            }
+        }
+        return true;
+    };
+    const bool grid = meta.has("grid");
+    if (grid) {
+        if (!grid_ok(meta["grid"]))
+            throw PackError("grid must be 3 rows of 3 keys, each a center and its swipes (up to " +
+                            std::to_string(LANGUAGE_KEY_MAX) + " characters, or \"shift\")");
+        if (meta.has("numbers") && !grid_ok(meta["numbers"])) throw PackError("numbers must be a grid, as grid is");
+    }
     const Value& rows = meta["rows"];
-    if (!rows_ok(rows))
+    if (!grid && !rows_ok(rows))
         throw PackError("rows must be 3 or 4 lists of 1-" + std::to_string(LANGUAGE_ROW_MAX) +
                         " keys, each the text it types");
-    if (meta.has("shiftRows")) {
+    if (!grid && meta.has("shiftRows")) {
         const Value& shift = meta["shiftRows"];
         bool same = rows_ok(shift) && shift.size() == rows.size();
         for (size_t i = 0; same && i < rows.size(); ++i) same = shift.at(i).size() == rows.at(i).size();
@@ -1105,12 +1136,33 @@ Value languages_state() {
     std::string current = langs.empty() ? "en" : langs[0]["name"].str();
     if (found.count(chosen)) current = chosen;
     else if (found.count("en")) current = "en";
+    // The shipped extras not added yet.
+    Value extras = Value::array();
+    for (const auto& pid : listdir(LANGUAGES_EXTRA)) {
+        std::string d = LANGUAGES_EXTRA + "/" + pid;
+        if (!std::regex_match(pid, id_re) || !is_dir(d) || found.count(lower(pid))) continue;
+        try {
+            auto text = read_file(d + "/keyboard.json");
+            if (!text) continue;
+            auto meta = Value::parse(*text);
+            if (!meta || !meta->is_object()) continue;
+            Value info = check_language(*meta, d);
+            Value e = Value::object();
+            e["name"] = pid;
+            e["title"] = info["title"];
+            e["path"] = d + "/keyboard.json";
+            extras.push(e);
+        } catch (const std::exception& e) {
+            log("barry: languages: extra %s left out: %s", pid.c_str(), e.what());
+        }
+    }
     Value out = Value::object();
     out["ok"] = true;
     out["current"] = current;
     Value list = Value::array();
     for (auto& l : langs) list.push(l);
     out["languages"] = list;
+    out["extras"] = extras;
     return out;
 }
 

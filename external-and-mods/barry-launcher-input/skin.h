@@ -4,8 +4,8 @@
 //
 // A skin is a folder: skin.json ({"title", "author", "api": 1, "colors":
 // {...}, "font": "...", "trackpadHeat": [...], "variants": [...]}) and, if it likes, its own QML for any of the views
-// (KeyPanel.qml, TopInput.qml, DeckControls.qml, Home.qml; Skin.qml is the
-// dashboard's). The built-in views take their colors from `colors`; a view
+// (KeyPanel.qml, GridPanel.qml, TopInput.qml, DeckControls.qml, Home.qml;
+// Skin.qml is the dashboard's). The built-in views take their colors from `colors`; a view
 // file in the skin replaces the built-in one, which stays the fallback.
 // Behavior is never a skin's: the views only draw and report touches to
 // Barry.Input's controllers.

@@ -179,6 +179,36 @@ def key_positions(rows: list) -> dict:
     widest = max((len(r) for r in rows), default=0)
     return {key: (x + (widest - len(row)) / 2, y)
             for y, row in enumerate(rows) for x, key in enumerate(row) if len(key) == 1}
+
+
+# A grid pack's keys (Thumb-Key's layout): its letters four key widths apart,
+# each swipe's letter one from its key's center the way it goes, so a swipe
+# a little off (the next direction round) or a tap for a swipe is a slip
+# onto a neighboring key, and another key's letter is not.
+GRID_SPACING = 4.0
+GRID_DIRECTIONS = {"top": (0, -1), "topRight": (1, -1), "right": (1, 0), "bottomRight": (1, 1),
+                   "bottom": (0, 1), "bottomLeft": (-1, 1), "left": (-1, 0), "topLeft": (-1, -1)}
+
+
+def grid_positions(grid: list) -> dict:
+    """Letter positions in key widths for a grid pack's grid (rows of
+    {"center": text, <direction>: text})."""
+    out = {}
+    for y, row in enumerate(grid):
+        for x, key in enumerate(row if isinstance(row, list) else []):
+            if not isinstance(key, dict):
+                continue
+            cx, cy = x * GRID_SPACING, y * GRID_SPACING
+            for name, text in key.items():
+                if not isinstance(text, str) or len(text) != 1:
+                    continue
+                if name == "center":
+                    out.setdefault(text.lower(), (cx, cy))
+                elif name in GRID_DIRECTIONS:
+                    dx, dy = GRID_DIRECTIONS[name]
+                    n = math.hypot(dx, dy)
+                    out.setdefault(text.lower(), (cx + dx / n, cy + dy / n))
+    return out
 COST_NEAR, COST_FAR, COST_SWAP, COST_EXTRA, COST_DOUBLE, COST_MISSING = 0.45, 1.0, 0.6, 0.9, 0.4, 0.9
 # A letter typed for its held-key form ("e" for "é"): the commonest slip in
 # languages with accents, so cheaper than a neighboring key.
@@ -246,12 +276,13 @@ class Corrector:
     (by undoing a correction) count as known from then on."""
 
     def __init__(self, decoder: Decoder, personal_path: str | None = None, rows: list | None = None,
-                 more: dict | None = None) -> None:
+                 more: dict | None = None, positions: dict | None = None) -> None:
         """rows: a keyboard pack's letter rows (lower case), for typo costs;
-        QWERTY's without. With more (its held keys' letters), the letters a
-        correctable word is made of; English keeps to plain ASCII."""
+        QWERTY's without, or positions (a grid pack's, grid_positions).
+        With more (its held keys' letters), the letters a correctable word
+        is made of; English keeps to plain ASCII."""
         self.english = decoder.english
-        self.positions = key_positions(rows) if rows else QWERTY
+        self.positions = positions or (key_positions(rows) if rows else QWERTY)
         self.alphabet = None
         # A held key's letter and its key's ("é": "e"), for words typed
         # without their accents (not English: it has none).

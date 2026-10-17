@@ -1137,6 +1137,11 @@ def type_input(body: dict) -> tuple[int, dict]:
             d = dictionary(lang)
             if d:
                 d["corrector"].keep(body["keep"])
+                # The language's other layouts keep the same list.
+                for other in GLIDE["packs"].values():
+                    c = other["corrector"]
+                    if c is not d["corrector"] and c.personal_path == d["corrector"].personal_path:
+                        c.personal.add(body["keep"].lower())
     reply: dict = {"ok": True, "back": back, "text": text}
     if key:
         reply["key"] = key
@@ -1161,9 +1166,11 @@ def keyboard_dirs() -> list[str]:
     return [KEYBOARDS_DIR, os.path.join(DATA, "keyboards")]
 
 
-def keyboard_pack(lang: str) -> dict | None:
-    """A keyboard pack's rows, held keys' letters and words file (a path
-    inside its folder, or None): the user's, else the shipped one."""
+def keyboard_pack(lang: str, borrow: bool = True) -> dict | None:
+    """A keyboard pack's rows (or grid), held keys' letters and words file
+    (a path inside its folder, or None): the user's, else the shipped one.
+    A pack without words of its own can borrow another's ("wordsFrom": a
+    second layout for a language); words_lang is whose they are."""
     if not isinstance(lang, str) or not LANG_ID.match(lang):
         return None
     for base in reversed(keyboard_dirs()):
@@ -1181,9 +1188,17 @@ def keyboard_pack(lang: str) -> dict | None:
             if path.startswith(os.path.realpath(folder) + os.sep) and os.path.isfile(path):
                 words = path
         rows = [[k for k in r if isinstance(k, str)] for r in pack.get("rows", []) if isinstance(r, list)]
+        grid = pack.get("grid") if isinstance(pack.get("grid"), list) else None
         more = pack.get("more") if isinstance(pack.get("more"), dict) else {}
         more = {k: [a for a in v if isinstance(a, str)] for k, v in more.items() if isinstance(v, list)}
-        return {"folder": folder, "words": words, "rows": rows, "more": more}
+        words_lang = lang
+        source = pack.get("wordsFrom")
+        if words is None and borrow and isinstance(source, str) and source != lang:
+            lender = keyboard_pack(source, borrow=False)
+            if lender and lender["words"]:
+                words, words_lang = lender["words"], source
+        return {"folder": folder, "words": words, "rows": rows, "grid": grid, "more": more,
+                "words_lang": words_lang}
     return None
 
 
@@ -1202,15 +1217,24 @@ def dictionary(lang: str) -> dict | None:
     cached = GLIDE["packs"].get(lang)
     if cached and cached["stamp"] == stamp:
         return cached
-    english = lang == "en"
-    try:
-        decoder = barry_glide.Decoder(pack["words"], english)
-    except (OSError, ValueError) as err:
-        log(f"keyboard {lang}: cannot read {pack['words']}: {err}")
-        return None
-    personal = os.path.join(DATA, "personal-words.txt" if english else f"personal-words-{lang}.txt")
+    # Whose words: two layouts of a language share them (and one copy).
+    words_lang = pack["words_lang"]
+    english = words_lang == "en"
+    decoders = GLIDE.setdefault("decoders", {})
+    shared = decoders.get(pack["words"])
+    if shared and shared[0] == (stamp[1], english):
+        decoder = shared[1]
+    else:
+        try:
+            decoder = barry_glide.Decoder(pack["words"], english)
+        except (OSError, ValueError) as err:
+            log(f"keyboard {lang}: cannot read {pack['words']}: {err}")
+            return None
+        decoders[pack["words"]] = ((stamp[1], english), decoder)
+    personal = os.path.join(DATA, "personal-words.txt" if english else f"personal-words-{words_lang}.txt")
+    positions = barry_glide.grid_positions(pack["grid"]) if pack["grid"] else None
     entry = {"stamp": stamp, "decoder": decoder,
-             "corrector": barry_glide.Corrector(decoder, personal, pack["rows"], pack["more"]),
+             "corrector": barry_glide.Corrector(decoder, personal, pack["rows"], pack["more"], positions),
              # A held key's letter ("é") glides over the key it is on ("e").
              "fold": {a.lower(): base.lower() for base, alts in pack["more"].items() if len(base) == 1
                       for a in alts if len(a) == 1}}

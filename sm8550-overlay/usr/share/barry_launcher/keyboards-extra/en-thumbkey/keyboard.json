@@ -1,0 +1,23 @@
+{
+  "name": "English (Thumb-Key)",
+  "label": "TK",
+  "grid": [
+    [
+      {"center": "s", "bottomRight": "w"},
+      {"center": "r", "bottom": "g"},
+      {"center": "o", "bottomLeft": "u"}
+    ],
+    [
+      {"center": "n", "right": "m"},
+      {"center": "h", "top": "q", "topRight": "b", "right": "p", "bottomRight": "y", "bottom": "x", "bottomLeft": "v", "left": "k", "topLeft": "j"},
+      {"center": "a", "top": "shift", "left": "l"}
+    ],
+    [
+      {"center": "t", "topRight": "c"},
+      {"center": "i", "top": "f", "topRight": "'", "right": "z", "bottomRight": "-", "bottom": ".", "bottomLeft": "*"},
+      {"center": "e", "topLeft": "d"}
+    ]
+  ],
+  "wordChars": "'",
+  "wordsFrom": "en"
+}

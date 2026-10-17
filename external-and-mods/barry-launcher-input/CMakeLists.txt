@@ -34,6 +34,7 @@ qt_add_qml_module(barryinput
     deckcontrols.cpp deckcontrols.h
     haptics.cpp haptics.h
     keyboardcontroller.cpp keyboardcontroller.h
+    keyboardgrid.cpp
     keyboardstate.cpp keyboardstate.h
     skin.cpp skin.h
     heattrail.cpp heattrail.h

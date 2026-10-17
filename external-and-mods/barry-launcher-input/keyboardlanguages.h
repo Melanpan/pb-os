@@ -2,7 +2,9 @@
 // in, and the one in use. A pack is a folder with a keyboard.json (its keys)
 // and, if it likes, a words.txt (glide typing, suggestions, autocorrect) and
 // a Composer.qml (languages that compose, or pick from candidates). The
-// folder's name is the pack's id.
+// folder's name is the pack's id. A pack's keys are rows (a phone's
+// keyboard) or a grid (Thumb-Key's: big keys you tap or swipe out of); a
+// grid pack can borrow another pack's words (wordsFrom).
 //
 // Packs come from /usr/share/barry_launcher/keyboards (shipped) and
 // ~/.local/share/barry_launcher/keyboards (the user's own), where a pack
@@ -29,7 +31,9 @@ class KeyboardLanguages : public QObject {
     QML_ELEMENT
     QML_SINGLETON
     // Each: {id, name, label, dir, rows, shiftRows, more, letters,
-    // wordChars, words (a path, or ""), composer (a URL, or "")}
+    // wordChars, words (a path, or ""), composer (a URL, or ""), layout
+    // ("rows", or "grid": Thumb-Key's keys), grid and numbers (a grid
+    // pack's: 3 rows of 3 {center, <direction>: text}), wordsFrom}
     Q_PROPERTY(QVariantList languages READ languages NOTIFY languagesChanged)
     Q_PROPERTY(QString currentId READ currentId WRITE setCurrentId NOTIFY currentChanged)
     Q_PROPERTY(QVariantMap current READ current NOTIFY currentChanged)

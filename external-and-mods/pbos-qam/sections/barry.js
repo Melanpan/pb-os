@@ -680,6 +680,18 @@ function LanguagesSection() {
             + "as you. Add it only if you trust where it came from.",
         setBusy, setErr, setMsg, load,
     });
+    // A keyboard PB-OS ships but leaves off (another layout, like
+    // Thumb-Key's): added as a pack you added, then put in use.
+    const addExtra = (x) => {
+        setErr(""); setMsg(""); setBusy(true);
+        installLanguage(x.path).then((r) => {
+            if (!r || !r.ok) { setErr((r && r.error) || "Could not add the keyboard."); return null; }
+            setMsg(`Added ${r.language.title}.`);
+            return setLanguage(r.language.name);
+        }).then((r) => { if (r) load(); })
+          .catch(() => setErr("Could not add the keyboard."))
+          .finally(() => setBusy(false));
+    };
     const remove = (l) => DFL.showModal(jsx(DFL.ConfirmModal, {
         strTitle: `Remove ${l.title}?`,
         strDescription: "The language pack is deleted."
@@ -700,6 +712,12 @@ function LanguagesSection() {
             onRemove: !l.builtin && (() => remove(l)),
         })),
         st && st.languages.length > 1 && note("On the keyboard, the language key next to Fn changes it too."),
+        ...(st && st.extras ? st.extras : []).map((x) => row(jsx(DFL.ButtonItem, {
+            layout: "below", disabled: busy, onClick: () => addExtra(x), children: `Add ${x.title}`,
+        }))),
+        st && st.extras && st.extras.some((x) => x.name.indexOf("thumbkey") >= 0)
+            && note("Thumb-Key: big keys. Tap for the big letter, swipe toward a small one to type it. "
+                + "Your other keyboards stay; ✕ removes it again."),
         msg && note(msg),
         row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: add,
             children: busy ? "Working…" : "Add a language" })),
