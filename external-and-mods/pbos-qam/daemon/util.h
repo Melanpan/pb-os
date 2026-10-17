@@ -43,6 +43,8 @@ pj::Value read_json(const std::string& path);
 // path.tmp, then renamed over path; the folder is made first.
 bool write_text(const std::string& path, const std::string& text);
 bool write_json(const std::string& path, const pj::Value& v, int indent = 2);
+// One value written in place, as to a sysfs attribute (no temp file).
+bool write_sysfs(const std::string& path, std::string_view value);
 bool makedirs(const std::string& path, mode_t mode = 0755);
 bool remove_file(const std::string& path);
 bool remove_tree(const std::string& path);

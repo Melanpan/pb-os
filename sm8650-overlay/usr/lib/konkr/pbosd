@@ -721,7 +721,7 @@ def power_press(long: bool) -> None:
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-PROFILE_LABEL = {"lowpower": "Low Power", "balanced": "Balanced"}
+PROFILE_LABEL = {"lowpower": "Low Power", "balanced": "Full Power"}
 
 
 def notify_desktop(title: str, body: str) -> None:

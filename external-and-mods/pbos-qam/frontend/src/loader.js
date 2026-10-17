@@ -151,6 +151,7 @@ const BARRY_HEAD = "M3 0h1v1h-1zM9 0h1v1h-1zM2 1h3v1h-3zM8 1h3v1h-3zM2 2h9v1h-9z
 const plugins = [];
 const pluginWatchers = new Set();
 let lastOpen = null; // the plugin shown, kept while Steam runs
+let lastLeft = null; // the plugin just closed: its entry takes the focus back
 
 const openWatchers = new Set();
 
@@ -349,7 +350,7 @@ function filePicker(DFL, start, includeFiles, includeFolders, extensions, showHi
 function makePanel(DFL) {
     const { jsx, jsxs } = window.SP_JSX;
     const React = window.SP_REACT;
-    const { useState, useEffect, createContext, useContext } = React;
+    const { useState, useEffect, useRef, createContext, useContext } = React;
     const Visible = createContext(false);
     const GB = DFL.GamepadButton || {};
     const LB = GB.BUMPER_LEFT != null ? GB.BUMPER_LEFT : 5;
@@ -375,7 +376,19 @@ function makePanel(DFL) {
         const visible = useContext(Visible);
         useEffect(() => { pluginWatchers.add(setList); return () => pluginWatchers.delete(setList); }, []);
         useEffect(() => { openWatchers.add(setOpen); return () => openWatchers.delete(setOpen); }, []);
-        const show = (key) => { lastOpen = key; setOpen(key); };
+        const show = (key) => {
+            if (!key && lastOpen) lastLeft = lastOpen;
+            lastOpen = key;
+            setOpen(key);
+        };
+        const listRef = useRef(null);
+        // Back on the list: the entry just left has the focus, not the first.
+        useEffect(() => {
+            if (open || !lastLeft || !listRef.current) return;
+            const mark = listRef.current.querySelector(`[data-pbos-entry="${CSS.escape(lastLeft)}"]`);
+            const target = mark && mark.closest("[tabindex], button");
+            if (target) target.focus();
+        }, [open, list]);
         const flat = ordered(list).flatMap((g) => g.plugins);
         const key = (p) => `${p.section}/${p.id}`;
         const active = flat.find((p) => key(p) === open);
@@ -411,13 +424,13 @@ function makePanel(DFL) {
                 jsx("div", { style: { fontSize: "22px", display: "flex" }, children: jsx(Head, {}) }),
                 jsx("div", { style: { flex: 0.9 }, children: "PB-OS" }),
             ] }),
-            jsx("div", { style: { paddingTop: "8px" }, children: list.length === 0
+            jsx("div", { ref: listRef, style: { paddingTop: "8px" }, children: list.length === 0
                 ? jsx(DFL.PanelSection, { children: jsx(DFL.PanelSectionRow, { children: jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: "Loading…" }) }) })
                 // One list: what this device has, PB-OS Tools' entries then
                 // Barry Launcher's, without headings.
                 : jsx(DFL.PanelSection, { children: flat.map((p) => jsx(DFL.PanelSectionRow, { children: jsx(DFL.ButtonItem, {
-                    layout: "below", onClick: () => show(key(p)),
-                    children: jsxs("div", { style: { display: "flex", alignItems: "center", gap: "12px" }, children: [
+                    layout: "below", onClick: () => show(key(p)), autoFocus: key(p) === lastLeft,
+                    children: jsxs("div", { "data-pbos-entry": key(p), style: { display: "flex", alignItems: "center", gap: "12px" }, children: [
                         p.icon && jsx("div", { style: { display: "flex", width: "22px", justifyContent: "center" }, children: jsx(p.icon, {}) }),
                         jsx("div", { children: p.title }),
                     ] }),
@@ -510,7 +523,8 @@ async function probe(DFL) {
     const SC = window.SteamClient || {};
     const fn = (path) => path.split(".").reduce((o, k) => (o ? o[k] : undefined), SC);
     for (const path of ["Apps.RegisterForAppDetails", "Apps.RegisterForAppOverviewChanges", "Apps.RegisterForGameActionStart",
-        "Apps.SetAppLaunchOptions", "Apps.SpecifyCompatTool", "Settings.SpecifyGlobalCompatTool"]) {
+        "Apps.SetAppLaunchOptions", "Apps.SpecifyCompatTool", "Settings.SpecifyGlobalCompatTool",
+        "GameSessions.RegisterForAppLifetimeNotifications"]) {
         item(`SteamClient.${path}`, typeof fn(path) === "function");
     }
     item("settingsStore.m_Settings", () => window.settingsStore && window.settingsStore.m_Settings, "strCompatTool");

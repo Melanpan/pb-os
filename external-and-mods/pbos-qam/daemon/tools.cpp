@@ -19,9 +19,12 @@
 // Lights   stick lighting: pbosd's state on the KONKR Pocket FIT / AYANEO
 //          Pocket S2; the light engine (pbos_lights.py, its own unit on the
 //          system's Python) on the Retroid Pocket 6 / Nova and AYN Odin 2s.
-// Performance and Hardware: pbosd's settings (profile, fan, buttons, the
-//          MCU link); a profile change from anywhere shows a toast, heard
-//          from pbosd's state file (inotify).
+// Performance  a mode for when no game says otherwise and one per game
+//          (Full Power, Low Power): pbosd's profile on the KONKR Pocket FIT /
+//          AYANEO Pocket S2, clock caps written here everywhere else. The
+//          frontend says which game runs; a profile change from anywhere
+//          shows a toast (pbosd's state file is watched with inotify).
+// Hardware pbosd's buttons and MCU link, the fan.
 // Power    the charging indicator (sm8550-charge-rest) and charge control
 //          (sm8550-charge-control).
 // Proton   which PB-OS twin stands for which of Valve's Proton tools
@@ -835,6 +838,8 @@ Value clean_game_profile(const Value& p, const Value& info) {
         }
         if (clean.size()) out["env"] = clean;
     }
+    std::string mode = p["mode"].str();
+    if (one_of(mode, PROFILES)) out["mode"] = mode;
     if (out.size()) out["name"] = (p["name"].truthy() ? p["name"].str() : "").substr(0, 200);
     return out;
 }
@@ -858,6 +863,75 @@ Value game_profile_save(const std::string& appid, const Value& profile) {
     return out;
 }
 
+// ---------------------------------------------------------- performance --
+// Full Power ("balanced") has no caps. Low Power keeps the GPU at most at the step nearest
+// 70 % of its top and the CPU cores at most at ~2.0 GHz (pbosd's Low Power
+// has the same CPU cap; the little cores' top is below it). The default
+// mode is kept here; a game's own is "mode" in its profile.
+const std::string PERF_STATE = "/var/lib/pbos-qam/performance.json";
+constexpr long long LOW_CPU_KHZ = 2035200;
+constexpr double LOW_GPU_SHARE = 0.7;
+
+std::vector<long long> sorted_numbers(const std::string& text) {
+    std::vector<long long> out;
+    size_t i = 0;
+    while (i < text.size()) {
+        size_t j = text.find_first_of(" \n", i);
+        if (j == std::string::npos) j = text.size();
+        std::string w = text.substr(i, j - i);
+        if (is_digits(w)) out.push_back(std::atoll(w.c_str()));
+        i = j + 1;
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// The highest step at or below limit (the lowest step when none is).
+long long step_at_most(const std::vector<long long>& steps, double limit) {
+    long long best = steps.front();
+    for (long long f : steps)
+        if (f <= limit) best = f;
+    return best;
+}
+
+std::string gpu_devfreq() {
+    for (const auto& d : glob("/sys/class/devfreq/*gpu*"))
+        if (!sorted_numbers(rd(d + "/available_frequencies")).empty()) return d;
+    return "";
+}
+
+// The caps each mode sets here, in MHz: {gpu, cpu}; 0 = none.
+std::pair<long long, long long> low_caps_mhz() {
+    long long gpu = 0, cpu = 0;
+    std::string d = gpu_devfreq();
+    if (!d.empty()) {
+        auto f = sorted_numbers(rd(d + "/available_frequencies"));
+        gpu = step_at_most(f, f.back() * LOW_GPU_SHARE) / 1000000;
+    }
+    for (const auto& pol : glob("/sys/devices/system/cpu/cpufreq/policy*")) {
+        auto f = sorted_numbers(rd(pol + "/scaling_available_frequencies"));
+        if (!f.empty() && f.back() > LOW_CPU_KHZ) cpu = std::max(cpu, step_at_most(f, LOW_CPU_KHZ) / 1000);
+    }
+    return {gpu, cpu};
+}
+
+void apply_clock_caps(bool low) {
+    std::string d = gpu_devfreq();
+    if (!d.empty()) {
+        auto f = sorted_numbers(rd(d + "/available_frequencies"));
+        long long cap = low ? step_at_most(f, f.back() * LOW_GPU_SHARE) : f.back();
+        if (!write_sysfs(d + "/max_freq", std::to_string(cap))) log("tools: cannot cap the GPU at %lld", cap);
+    }
+    for (const auto& pol : glob("/sys/devices/system/cpu/cpufreq/policy*")) {
+        // The listed steps leave out boost frequencies, which stay off.
+        auto f = sorted_numbers(rd(pol + "/scaling_available_frequencies"));
+        if (f.empty()) continue;
+        long long cap = low && f.back() > LOW_CPU_KHZ ? step_at_most(f, LOW_CPU_KHZ) : f.back();
+        if (!write_sysfs(pol + "/scaling_max_freq", std::to_string(cap)))
+            log("tools: cannot cap %s at %lld", basename(pol).c_str(), cap);
+    }
+}
+
 // ---------------------------------------------------------------- section --
 class Tools : public Section {
 public:
@@ -879,6 +953,8 @@ public:
             host_->loop.post([this, kind] {
                 if (kind == "pbosd") watch_profile();
             });
+            // The default mode's caps from boot on; pbosd keeps its own.
+            if (kind != "pbosd") apply_mode();
         });
         // Look now and then; a new release gets one toast per version.
         loop.after(60, [this] { periodic_check(); });
@@ -901,6 +977,18 @@ public:
     void stop() override {
         stick_stop();
         if (lights_ == "multicolor") stop_engine();
+        // Full clocks while nothing keeps the mode, a reboot included; the
+        // default mode is set again at the next start.
+        bool capped;
+        {
+            std::lock_guard<std::mutex> g(lock_);
+            capped = lights_ != "pbosd" && active_ == "lowpower";
+            active_.clear();
+        }
+        if (capped) {
+            apply_clock_caps(false);
+            log("tools: performance caps lifted (stopping)");
+        }
     }
 
     Value call(const std::string& m, const Value& a) override {
@@ -1031,7 +1119,31 @@ public:
         if (m == "set_game_profile") {
             const Value res = game_profile_save(arg(a, 0, "").str(), a.at(1));
             log("tools: game profile %s: %s", arg(a, 0, "").str().c_str(), res["profile"].dump().c_str());
+            if (arg(a, 0, "").str() == running()) apply_mode();
             return res;
+        }
+        if (m == "get_performance") return performance();
+        if (m == "set_performance_default") {
+            std::string mode = arg(a, 0, "balanced").str();
+            if (one_of(mode, PROFILES)) {
+                Value st = read_json(PERF_STATE);
+                st["default"] = mode;
+                write_json(PERF_STATE, st);
+                apply_mode();
+            }
+            return performance();
+        }
+        if (m == "game_running") {
+            // The game Steam runs now ("" = none), from the frontend.
+            std::string appid = arg(a, 0, "").str();
+            if (!appid.empty() && !is_digits(appid)) appid.clear();
+            {
+                std::lock_guard<std::mutex> g(lock_);
+                if (appid == running_) return true;
+                running_ = appid;
+            }
+            apply_mode();
+            return true;
         }
         if (m == "get_proton") return proton_state();
         if (m == "get_proton_games") return proton_games_read();
@@ -1466,8 +1578,82 @@ private:
             log("tools: profile %s -> %s", profile_.c_str(), now.c_str());
             profile_ = now;
             emit("pbos_mode", Value(Value::Array{now}));
+            // Not set by a game's mode (the button, pbosctl): the new default.
+            bool ours;
+            {
+                std::lock_guard<std::mutex> g(lock_);
+                ours = now == active_ && game_mode(running_) == now;
+            }
+            if (!ours) {
+                Value st = read_json(PERF_STATE);
+                st["default"] = now;
+                write_json(PERF_STATE, st);
+                std::lock_guard<std::mutex> g(lock_);
+                active_ = now;
+            }
         });
         if (!id) log("tools: cannot watch %s; profile toasts are off", PBOSD_STATE.c_str());
+    }
+
+    std::string running() {
+        std::lock_guard<std::mutex> g(lock_);
+        return running_;
+    }
+
+    // The mode a game's profile sets ("" = none, or no game).
+    static std::string game_mode(const std::string& appid) {
+        if (appid.empty()) return "";
+        std::string mode = read_json(pbos_config("game-profiles.json"))["games"][appid]["mode"].str();
+        return one_of(mode, PROFILES) ? mode : "";
+    }
+
+    std::string default_mode() {
+        std::string mode = read_json(PERF_STATE)["default"].str();
+        if (one_of(mode, PROFILES)) return mode;
+        // pbosd devices start from pbosd's own profile.
+        return kind() == "pbosd" ? control_state()["profile"].str() : "balanced";
+    }
+
+    // The running game's mode, or the default: pbosd's profile on its
+    // devices (its fan curve goes with it), the clock caps everywhere else.
+    void apply_mode() {
+        std::string game = running();
+        std::string mode = game_mode(game);
+        if (mode.empty()) mode = default_mode();
+        std::string was;
+        {
+            std::lock_guard<std::mutex> g(lock_);
+            was = active_;
+            active_ = mode;
+        }
+        if (kind() == "pbosd") {
+            if (control_state()["profile"].str() != mode) set_pbosd("profile", mode);  // its watcher toasts
+            return;
+        }
+        apply_clock_caps(mode == "lowpower");
+        if (mode == was) return;
+        log("tools: performance %s%s", mode.c_str(), game.empty() ? "" : (" for " + game).c_str());
+        if (!was.empty()) emit("pbos_mode", Value(Value::Array{mode}));
+    }
+
+    Value performance() {
+        Value out = Value::object();
+        bool pbosd = kind() == "pbosd";
+        out["kind"] = pbosd ? "pbosd" : "clocks";
+        out["default"] = default_mode();
+        {
+            std::lock_guard<std::mutex> g(lock_);
+            out["active"] = active_;
+            out["game"] = running_;
+        }
+        if (!pbosd) {
+            auto [gpu, cpu] = low_caps_mhz();
+            std::string desc = "Lower clocks for longer play:";
+            if (gpu) desc += " GPU up to " + std::to_string(gpu) + " MHz";
+            if (cpu) desc += std::string(gpu ? "," : "") + " CPU cores up to " + std::to_string(cpu) + " MHz";
+            out["lowpower"] = desc;
+        }
+        return out;
     }
 
     Value get_control() {
@@ -1596,6 +1782,7 @@ private:
     uint64_t drive_timer_ = 0;
     int downloads_watch_ = 0, home_watch_ = 0;
     std::string profile_;
+    std::string running_, active_;  // the game Steam runs, the mode in force
     std::mutex stick_lock_, edges_lock_;
     Value stick_live_, stick_rest_;
     LineChild edges_;

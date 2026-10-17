@@ -197,6 +197,16 @@ bool write_text(const std::string& path, const std::string& text) {
     return rename(tmp.c_str(), path.c_str()) == 0;
 }
 
+bool write_sysfs(const std::string& path, std::string_view value) {
+    int fd = open(path.c_str(), O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    ssize_t n;
+    do n = write(fd, value.data(), value.size());
+    while (n < 0 && errno == EINTR);
+    close(fd);
+    return n == static_cast<ssize_t>(value.size());
+}
+
 bool write_json(const std::string& path, const pj::Value& v, int indent) {
     return write_text(path, v.dump(indent));
 }

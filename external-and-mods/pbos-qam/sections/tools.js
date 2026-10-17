@@ -62,6 +62,10 @@ const setProtonGames = callable("set_proton_games");
 // Per-game profiles, applied at launch by /usr/bin/pbos-game-launch.
 const getGameProfiles = callable("get_game_profiles");
 const setGameProfile = callable("set_game_profile");
+// Performance modes: the default, and which game runs (its mode wins).
+const getPerformance = callable("get_performance");
+const setPerformanceDefault = callable("set_performance_default");
+const gameRunning = callable("game_running");
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -113,7 +117,6 @@ const HardwareIcon = svg([
 ]);
 
 // A gamepad: per-game profiles. The d-pad and two face buttons are cut out.
-const GamesIcon = svg(jsx("path", { fillRule: "evenodd", d: "M7 6h10a5 5 0 0 1 4.9 4l1 5.2a2.9 2.9 0 0 1-5 2.5L15.6 15H8.4l-2.3 2.7a2.9 2.9 0 0 1-5-2.5l1-5.2A5 5 0 0 1 7 6zM6.2 8.4v1.8H4.4v1.6h1.8v1.8h1.6v-1.8h1.8v-1.6H7.8V8.4zM16.4 8.6a1.1 1.1 0 1 0 0 2.2a1.1 1.1 0 1 0 0-2.2zm2.2 2.4a1.1 1.1 0 1 0 0 2.2a1.1 1.1 0 1 0 0-2.2z" }));
 
 // A lightning bolt: power and charging.
 const PowerIcon = svg(jsx("path", { d: "M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z" }));
@@ -749,7 +752,7 @@ function LightsTab() {
 // Was the PB-OS Control plugin: a front for pbosd on the KONKR Pocket FIT.
 const PROFILES = [
     { data: "lowpower", label: "Low Power", desc: "About half the power: GPU up to 680 MHz, big cores up to 2 GHz, quiet fan" },
-    { data: "balanced", label: "Balanced", desc: "Full clocks on demand, game threads on the big cores" },
+    { data: "balanced", label: "Full Power", desc: "Full clocks on demand, game threads on the big cores" },
 ];
 const BUTTON_ACTIONS = [
     { data: "rgb-next", label: "Cycle stick lighting" },
@@ -777,50 +780,74 @@ function useControl() {
     return { st, setSt, apply, movedAt };
 }
 
-function PerformanceTab() {
+const MODES = [
+    { data: "balanced", label: "Full Power" },
+    { data: "lowpower", label: "Low Power" },
+];
+
+// pbosd's temperature, fan and GPU, and its fan setting (KONKR Pocket FIT /
+// AYANEO Pocket S2): the mode itself is the Default section's.
+function PbosdFan() {
     const { st, setSt, apply, movedAt } = useControl();
     const sendFan = useThrottled(useCallback((v) => { setFan("fixed", v).catch(() => {}); }, []));
-    if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
-    if (!st.available) return jsx(DFL.PanelSection, { children: note("This device has no performance settings here.") });
-    const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES[1];
+    if (!st || !st.available) return null;
     const fan = st.fan || { mode: "auto", fixed: 50 };
     const status = [
         st.temp_c != null ? `${st.temp_c} °C` : null,
         st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
         st.gpu_mhz != null ? `GPU ${st.gpu_mhz} MHz` : null,
     ].filter(Boolean).join(" · ");
-    return jsxs(SP_JSX.Fragment, { children: [
-        jsxs(DFL.PanelSection, { title: "Performance", children: [
-            row(jsx(DFL.DropdownItem, {
-                label: "Profile",
-                description: prof.desc,
-                rgOptions: PROFILES.map((p) => ({ data: p.data, label: p.label })),
-                selectedOption: prof.data,
-                onChange: (o) => apply(setProfile(o.data)),
-            })),
-            st.daemon ? note(status) : warn("pbosd is not running."),
-        ] }),
-        jsxs(DFL.PanelSection, { title: "Fan", children: [
-            row(jsx(DFL.DropdownItem, {
-                label: "Mode",
-                description: fan.mode === "fixed"
-                    ? "Fixed speed (switches back to automatic above 90 °C)"
-                    : "Automatic, follows the profile's temperature curve",
-                rgOptions: [{ data: "auto", label: "Automatic" }, { data: "fixed", label: "Fixed speed" }],
-                selectedOption: fan.mode,
-                onChange: (o) => apply(setFan(o.data, fan.fixed)),
-            })),
-            fan.mode === "fixed" ? row(jsx(DFL.SliderField, {
-                label: "Speed",
-                value: fan.fixed, min: 0, max: 100, step: 5, showValue: true, valueSuffix: "%",
-                onChange: (v) => {
-                    movedAt.current = Date.now();
-                    setSt({ ...st, fan: { ...fan, fixed: v } });
-                    sendFan(v);
-                },
-            })) : null,
-        ] }),
+    return jsxs(DFL.PanelSection, { title: "Fan", children: [
+        row(jsx(DFL.DropdownItem, {
+            label: "Mode",
+            description: fan.mode === "fixed"
+                ? "Fixed speed (switches back to automatic above 90 °C)"
+                : "Automatic, follows the performance mode's temperature curve",
+            rgOptions: [{ data: "auto", label: "Automatic" }, { data: "fixed", label: "Fixed speed" }],
+            selectedOption: fan.mode,
+            onChange: (o) => apply(setFan(o.data, fan.fixed)),
+        })),
+        fan.mode === "fixed" ? row(jsx(DFL.SliderField, {
+            label: "Speed",
+            value: fan.fixed, min: 0, max: 100, step: 5, showValue: true, valueSuffix: "%",
+            onChange: (v) => {
+                movedAt.current = Date.now();
+                setSt({ ...st, fan: { ...fan, fixed: v } });
+                sendFan(v);
+            },
+        })) : null,
+        st.daemon ? note(status) : warn("pbosd is not running."),
     ] });
+}
+
+// The mode while no game with its own mode runs.
+function DefaultSection() {
+    const [perf, setPerf] = useState(null);
+    useEffect(() => { getPerformance().then(setPerf).catch(() => setPerf({})); }, []);
+    if (!perf) return jsx(DFL.PanelSection, { title: "Default", children: note("Loading…") });
+    const pbosd = perf.kind === "pbosd";
+    const descOf = (mode) => pbosd
+        ? (PROFILES.find((p) => p.data === mode) || PROFILES[1]).desc
+        : (mode === "lowpower" ? perf.lowpower : "No caps: full clocks on demand");
+    const mode = perf.default || "balanced";
+    const items = [
+        row(jsx(DFL.DropdownItem, {
+            label: "Mode", description: descOf(mode),
+            rgOptions: MODES, selectedOption: mode,
+            onChange: (o) => setPerformanceDefault(o.data).then(setPerf).catch(() => {}),
+        })),
+        note(perf.game && perf.active && perf.active !== mode
+            ? `The running game has its own mode: ${(MODES.find((m) => m.data === perf.active) || {}).label || perf.active}.`
+            : "In force whenever no running game has a mode of its own (Per Game, below)."),
+    ];
+    return jsxs(SP_JSX.Fragment, { children: [
+        jsx(DFL.PanelSection, { title: "Default", children: items }),
+        pbosd ? jsx(PbosdFan, {}) : null,
+    ] });
+}
+
+function PerformanceTab() {
+    return jsxs(SP_JSX.Fragment, { children: [jsx(DefaultSection, {}), jsx(GamesTab, {})] });
 }
 
 // Face buttons, for people who physically moved the button caps: which
@@ -1484,7 +1511,7 @@ function GamesTab() {
         ...(running ? [{ data: running, label: `Now playing: ${label(running)}` }] : []),
         ...ids.map((id) => ({ data: id, label: label(id) })),
     ];
-    const picker = jsx(DFL.PanelSection, { title: "Performance", children: [
+    const picker = jsx(DFL.PanelSection, { title: "Per Game", children: [
         // The dropdown under the word, the full width: game names are long.
         row(jsx(DFL.DropdownItem, {
             label: "Game", strDefaultLabel: "Choose a game",
@@ -1492,7 +1519,7 @@ function GamesTab() {
             rgOptions: gameChoices, selectedOption: pick,
             onChange: (o) => setPick(o.data),
         })),
-        note("Settings for one game. They apply the next time it starts."),
+        note("Settings for one game. Its mode applies while it runs; the rest the next time it starts."),
     ] });
     if (!pick) return picker;
 
@@ -1517,6 +1544,17 @@ function GamesTab() {
         setProfiles({ ...profiles, [pick]: next });
         commit(pick, next);
     };
+
+    // Performance mode while this game runs.
+    const modeItems = [
+        row(jsx(DFL.DropdownItem, {
+            layout: "below", childrenContainerWidth: "max",
+            rgOptions: [{ data: "", label: "Use Default" }, ...MODES],
+            selectedOption: p.mode || "",
+            onChange: (o) => save({ mode: o.data || undefined }),
+        })),
+        note(p.mode ? "In force while this game runs; the default mode comes back when it ends." : "The Default mode, above."),
+    ];
 
     // x86 emulation.
     const doc = info.presets || {};
@@ -1647,6 +1685,7 @@ function GamesTab() {
 
     return jsxs(SP_JSX.Fragment, { children: [
         picker,
+        jsx(DFL.PanelSection, { title: "Mode", children: modeItems }),
         jsx(DFL.PanelSection, { title: "FEX Preset", children: fexItems }),
         jsx(DFL.PanelSection, { title: "CPU Cores", children: cpuItems }),
         jsx(DFL.PanelSection, { title: "Environment", children: envItems }),
@@ -1672,7 +1711,7 @@ function onMoveDone(direction, ok) {
 // plugin load, so it works with Quick Access closed and over games.
 const MODE_TOAST = {
     lowpower: { title: "🔋  Low Power", body: "About half the power, GPU and CPU capped" },
-    balanced: { title: "⚖️  Balanced", body: "Full clocks on demand" },
+    balanced: { title: "⚡  Full Power", body: "Full clocks on demand" },
 };
 function onMode(profile) {
     const t = MODE_TOAST[profile] || { title: profile, body: "" };
@@ -1775,7 +1814,9 @@ let protonEvents = [];
 // Each former tab is a plugin in the PB-OS list. Games first on every
 // device; the device's own ones (lighting, performance, hardware, power)
 // once the backend has said which it has.
-P.plugin({ id: "games", title: "Game Profiles", icon: GamesIcon, content: GamesTab, order: 10 });
+// Performance: the default mode (with pbosd's fan on the KONKR Pocket FIT /
+// AYANEO Pocket S2) and per-game settings.
+P.plugin({ id: "performance", title: "Performance", icon: PerformanceIcon, content: PerformanceTab, order: 10 });
 P.plugin({ id: "update", title: "Updates", icon: UpdateIcon, content: UpdateTab, order: 70 });
 P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: InstallTab, order: 80 });
 (async () => {
@@ -1785,8 +1826,6 @@ P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: Ins
     const [rest, cc] = await Promise.all([getCharging().catch(() => ({})), getChargeControl().catch(() => ({}))]);
     const power = !!rest.supported || !!cc.supported;
     if (lights) P.plugin({ id: "lights", title: "Lighting", icon: LightsIcon, content: LightsTab, order: 20 });
-    // pbosd's settings: KONKR Pocket FIT / AYANEO Pocket S2.
-    if (lights === "pbosd") P.plugin({ id: "performance", title: "Performance", icon: PerformanceIcon, content: PerformanceTab, order: 30 });
     // pbosd's buttons, or face buttons and sticks: Retroid Pocket 6 / Nova, AYN Thor.
     if (lights === "pbosd" || face) P.plugin({ id: "hardware", title: "Hardware", icon: HardwareIcon, content: HardwareTab, order: 40 });
     if (power) P.plugin({ id: "power", title: "Power", icon: PowerIcon, content: PowerTab, order: 50 });
@@ -1794,8 +1833,17 @@ P.plugin({ id: "install", title: "Move SteamOS", icon: InstallIcon, content: Ins
 
 // While Steam runs (as the Decky plugin did while loaded): Proton PB-OS
 // follows Valve's picks, and the backend's news shows as toasts.
+// The running game, for its performance mode: told now (Steam just loaded)
+// and on every start and end. After an end, Steam's running-app list takes a
+// moment to drop the game.
+function reportGame(appid) { gameRunning(appid != null ? String(appid) : (runningGame() || "")).catch(() => {}); }
+reportGame();
 protonSoon(null);
 protonEvents = [
+    SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {
+        if (n && n.bRunning) reportGame(n.unAppID);
+        else setTimeout(() => reportGame(), 1000);
+    }),
     SteamClient.Apps.RegisterForAppOverviewChanges(() => protonSoon(null)),
     SteamClient.Apps.RegisterForGameActionStart((_action, appid) => protonSoon([String(appid)])),
 ];

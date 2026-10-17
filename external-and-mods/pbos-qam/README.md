@@ -5,8 +5,8 @@ replaces the PB-OS Tools and Barry Launcher Decky plugins. The tab opens on
 one list, with one entry per former plugin tab. Each device lists only what
 it has:
 
-- From PB-OS Tools: Game Profiles, Lighting, Performance, Hardware, Power,
-  Updates, Move SteamOS.
+- From PB-OS Tools: Performance (a default mode and per-game settings),
+  Lighting, Hardware, Power, Updates, Move SteamOS.
 - From Barry Launcher (AYN Thor only): Dual Screen, Apps, Themes, Keyboard
   Languages, Companion Apps, Joystick RGB Dimmer, Emulators.
 
