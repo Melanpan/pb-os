@@ -22,6 +22,10 @@
 // 15 by default; 0: never), Barry goes back to the art, unless it is open
 // over an app or on the dashboard.
 //
+// The game art can be turned off (Barry's settings, heroArt, the PB-OS tab's
+// Dual Screen page): Barry's pages then stay up on their own background, as
+// before there was art, and the AYN button only goes to and from apps.
+//
 // Opening, the apps fly in toward the screen, the middle ones first
 // (Home.qml's dropIn, Barry.Input's TileDrop; a skin's home screen without
 // it slides up instead): shelld counts the openings, this puts Barry at
@@ -94,32 +98,30 @@ Window {
     // The art behind Barry: 0 in focus, 1 frosted (animated as Barry comes
     // and goes).
     property real frost: 0
-    property int standbySeconds: 15
+    // Barry's settings (settings.json, read again as it changes).
+    readonly property int standbySeconds: typeof Skin.settings.standbySeconds === "number" ? Skin.settings.standbySeconds : 15
+    readonly property bool heroOn: Skin.settings.heroArt !== false
+    // Barry's pages on screen: open, or always without the art.
+    readonly property bool barryShown: barryOpen || !heroOn
+    onHeroOnChanged: {
+        // From heroOn itself: barryShown's binding may not have caught up yet.
+        slide.stop()
+        slideOut.stop()
+        barryShift.y = 0
+        barry.opacity = barryOpen || !heroOn ? 1 : 0
+        frost = heroOn && barryOpen ? 1 : 0
+    }
 
     function setBarry(open, why) {
         win.post("/barry", { open: open, why: why })
     }
-    function readSettings() {
-        const x = new XMLHttpRequest()
-        x.onreadystatechange = function () {
-            if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
-                return
-            try {
-                const v = JSON.parse(x.responseText).standbySeconds
-                if (typeof v === "number")
-                    win.standbySeconds = v
-            } catch (e) {}
-        }
-        x.open("GET", "http://127.0.0.1:47823/settings")
-        x.send()
-    }
-    Component.onCompleted: readSettings()
 
     // The hero art: what shows while Barry is closed.
     SkinView {
         id: hero
         file: "Hero.qml"
         anchors.fill: parent
+        visible: win.heroOn
     }
     Binding { target: hero.item; property: "s"; value: win.s }
     Binding { target: hero.item; property: "shown"; value: !win.barryOpen || barry.opacity < 1 }
@@ -128,12 +130,12 @@ Window {
     Item {
         anchors.fill: hero
         TapHandler {
-            enabled: !win.barryOpen
+            enabled: win.heroOn && !win.barryOpen
             onTapped: win.setBarry(true, "tap on the game art")
         }
     }
     // The pages go see-through over the art (with no game, they stay solid).
-    readonly property real glass: SteamGame.available ? 0.2 : 1
+    readonly property real glass: win.heroOn && SteamGame.available ? 0.2 : 1
 
     // Barry: its three pages over the hero.
     Item {
@@ -149,7 +151,7 @@ Window {
             minPage: -1
             maxPage: 1
             threshold: 24 * win.s
-            swipeEnabled: win.barryOpen
+            swipeEnabled: win.barryShown
             onDragStarted: settleAnim.stop()
             onSettle: function (target, velocity) {
                 settleAnim.stop()
@@ -180,7 +182,7 @@ Window {
                 width: pages.width
                 height: pages.height
                 x: (pages.progress - 1) * pages.width
-                shown: win.barryOpen && (pages.progress > 0.001 || (pages.dragging && pages.page >= 0))
+                shown: win.barryShown && (pages.progress > 0.001 || (pages.dragging && pages.page >= 0))
                 visible: pages.progress > 0.001
                 onHideRequested: pages.goTo(0)
             }
@@ -201,13 +203,8 @@ Window {
     Binding { target: quick.item; property: "s"; value: win.s }
     Binding { target: quick.item; property: "glass"; value: win.glass }
     Binding { target: quick.item; property: "standbySeconds"; value: win.standbySeconds }
-    Connections {
-        target: quick.item
-        ignoreUnknownSignals: true
-        function onStandbyChosen(seconds) { win.standbySeconds = seconds }
-    }
     Binding { target: home.item; property: "glass"; value: win.glass }
-    Binding { target: quick.item; property: "shown"; value: win.barryOpen && pages.progress < -0.001 }
+    Binding { target: quick.item; property: "shown"; value: win.barryShown && pages.progress < -0.001 }
 
     NumberAnimation {
         id: settleAnim
@@ -283,7 +280,7 @@ Window {
     Timer {
         id: standby
         interval: Math.max(1, win.standbySeconds) * 1000
-        running: win.barryOpen && !win.barryOver && win.standbySeconds > 0
+        running: win.heroOn && win.barryOpen && !win.barryOver && win.standbySeconds > 0
                  && pages.page !== 1 && !pages.dragging
         onTriggered: win.setBarry(false, "untouched for " + win.standbySeconds + " s")
     }
@@ -313,16 +310,15 @@ Window {
                 try { answer = JSON.parse(x.responseText) } catch (e) { return }
                 const open = answer.open === true
                 if (win.homeSerial >= 0 && answer.serial !== win.homeSerial && open) {
-                    win.readSettings()
                     win.slideIn(answer.serial)
-                } else if (win.barryOpen && !open) {
+                } else if (win.barryOpen && !open && win.heroOn) {
                     slide.stop()
                     slideOut.start()
-                } else if (win.homeSerial < 0 && open) {
-                    // Open already as this started.
+                } else if (win.homeSerial < 0 && (open || !win.heroOn)) {
+                    // Open already as this started (or always, without art).
                     barryShift.y = 0
                     barry.opacity = 1
-                    win.frost = 1
+                    win.frost = win.heroOn ? 1 : 0
                 }
                 win.barryOver = answer.over === true
                 win.homeSerial = answer.serial

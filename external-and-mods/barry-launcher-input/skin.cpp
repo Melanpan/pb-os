@@ -142,6 +142,16 @@ QString Skin::viewStamp(const QString &dir) const
 
 void Skin::reload()
 {
+    {
+        QFile f(settingsPath());
+        QVariantMap s;
+        if (f.open(QIODevice::ReadOnly))
+            s = QJsonDocument::fromJson(f.readAll()).object().toVariantMap();
+        if (s != m_settings) {
+            m_settings = s;
+            emit settingsChanged();
+        }
+    }
     const QString name = chosenName();
     // The last folder with it wins (the user's over the shipped one).
     QString dir;

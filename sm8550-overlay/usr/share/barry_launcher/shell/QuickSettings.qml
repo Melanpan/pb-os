@@ -297,8 +297,9 @@ Rectangle {
             }
 
             // Standby: back to the game art
-            Heading { text: "BACK TO THE GAME ART" }
+            Heading { text: "BACK TO THE GAME ART"; visible: Skin.settings.heroArt !== false }
             RowLayout {
+                visible: Skin.settings.heroArt !== false
                 Layout.fillWidth: true
                 spacing: 12 * qs.s
                 Repeater {

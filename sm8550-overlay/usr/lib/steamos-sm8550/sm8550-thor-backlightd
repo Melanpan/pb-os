@@ -51,6 +51,14 @@ game's second window on the bottom screen (a DS or 3DS emulator's,
 gamescope's dual-screen branch), it hands the screen back to Barry
 Launcher's gamescope and takes it again once both are "0".
 
+Sleep: with Barry Launcher's bottomSleepSeconds set (its settings, the
+desktop user's BARRY_SETTINGS, the PB-OS tab's Dual Screen page), no touch
+on the bottom screen and no AYN press for that long turns the bottom
+backlight off, its touchscreen left on: the next touch, or an AYN press,
+wakes it (that press does nothing else; a touch also reaches whatever is
+under it). Not in Desktop Mode, nor while a game draws on the bottom screen
+(GAMESCOPE_BOTTOM_SCREEN_SHOWING).
+
 Charge rest: while sm8550-charge-rest has the device resting on the
 charger (CHARGE_REST), both screens are its to power off and back on, and
 this does nothing.
@@ -115,6 +123,9 @@ DESKTOP_READY = f"{RUN_DIR}/desktop-ready"
 DESKTOP_TOP = f"{RUN_DIR}/desktop-top"
 DESKTOP_READY_S = 10
 LONG_PRESS_S = 0.6
+BARRY_SETTINGS = os.path.expanduser("~steamos/.config/barry_launcher/settings.json")
+# Asleep is due, but a game draws on the bottom screen: looked at again after.
+SLEEP_CHECK_S = 5
 TOUCH_NAME = "bottom_touchscreen"
 AYN_KEYS_NAME = "gpio-keys-ayn"
 KEY_F24 = 194
@@ -422,6 +433,33 @@ def steam_xprop(*args: str) -> subprocess.CompletedProcess | None:
         return None
 
 
+def bottom_screen_game() -> bool:
+    """Steam's gamescope shows a game's window on the bottom screen
+    (GAMESCOPE_BOTTOM_SCREEN_SHOWING 1)."""
+    r = steam_xprop("GAMESCOPE_BOTTOM_SCREEN_SHOWING")
+    if r is None or r.returncode != 0:
+        return False
+    return r.stdout.rsplit("=", 1)[-1].strip() == "1"
+
+
+def sleep_seconds(cache: dict) -> int:
+    """Barry Launcher's bottomSleepSeconds (0: never), read again only when
+    its settings file changes."""
+    try:
+        mtime = os.stat(BARRY_SETTINGS).st_mtime_ns
+    except OSError:
+        return 0
+    if cache.get("mtime") != mtime:
+        cache["mtime"] = mtime
+        try:
+            with open(BARRY_SETTINGS, encoding="utf-8") as fh:
+                v = json.load(fh).get("bottomSleepSeconds", 0)
+        except (OSError, ValueError, AttributeError):
+            v = 0
+        cache["value"] = int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else 0
+    return cache["value"]
+
+
 def set_bottom_screen_yield(on: bool) -> bool:
     """GAMESCOPE_BOTTOM_SCREEN_YIELD on Steam's display; False if Game Mode
     is not running."""
@@ -562,6 +600,10 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
     top_refused = bottom_refused = False
     panel_retry_at = 0.0
     was_on = None
+    asleep = False
+    last_active = time.monotonic()  # a bottom touch or an AYN press
+    sleep_cache: dict = {}
+    game_checked = 0.0
     overlay_since: float | None = None
     pressed_at: float | None = None  # AYN held down since, until handled
     yield_sent: bool | None = None  # GAMESCOPE_BOTTOM_SCREEN_YIELD as last set
@@ -606,6 +648,12 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                 if etype != EV_KEY or code != KEY_F24:
                     continue
                 if value == 1:
+                    last_active = time.monotonic()
+                    if asleep:
+                        # Only wakes the bottom screen.
+                        asleep, pressed_at = False, None
+                        log("AYN button: bottom screen wakes")
+                        continue
                     pressed_at = time.monotonic()
                 elif value == 0 and pressed_at is not None:
                     pressed_at = None
@@ -639,6 +687,11 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                 touch_fd, data = None, b""
             touched = any(EVENT.unpack_from(data, off)[2] in (EV_KEY, EV_ABS)
                           for off in range(0, len(data) - EVENT.size + 1, EVENT.size))
+            if touched:
+                last_active = time.monotonic()
+                if asleep:
+                    asleep = False
+                    log("bottom touch: bottom screen wakes")
             if nudge is not None and nudge.poll() is not None:
                 nudge = None
             if touched and nudge is None and time.monotonic() - nudged_at >= NUDGE_S:
@@ -675,15 +728,39 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
             overlay_since = time.monotonic()
         elif not overlay:
             overlay_since = None
-        on = read(STATE, "on") != "off" or (
+        switch_on = read(STATE, "on") != "off" or (
             overlay_since is not None and time.monotonic() - overlay_since >= OVERLAY_DELAY_S
         )
-        if not on:
+        # Sleep: untouched for bottomSleepSeconds (not in Desktop Mode, nor
+        # while a game draws on the bottom screen).
+        limit = sleep_seconds(sleep_cache)
+        if asleep and limit == 0:
+            asleep = False  # the timer was turned off: awake at once
+            last_active = time.monotonic()
+            log("bottom screen wakes: sleep turned off")
+        if (not asleep and switch_on and limit > 0 and not desktop
+                and time.monotonic() - last_active >= limit
+                and time.monotonic() - game_checked >= SLEEP_CHECK_S):
+            game_checked = time.monotonic()
+            if bottom_screen_game():
+                last_active = time.monotonic()
+            else:
+                asleep = True
+                log(f"bottom screen asleep: untouched for {limit} s")
+        if not switch_on:
+            asleep = False
+            last_active = time.monotonic()  # turned on again: a fresh start
+        on = switch_on and not asleep
+        if not switch_on:
             if read(f"{BOTTOM}/bl_power") != BL_OFF:
                 write(f"{BOTTOM}/bl_power", BL_OFF)
             for p in touch_inhibited_paths():
                 if read(p) != "1":
                     write(p, "1")
+        elif asleep:
+            # Dark, but touch stays on: a touch wakes it.
+            if read(f"{BOTTOM}/bl_power") != BL_OFF:
+                write(f"{BOTTOM}/bl_power", BL_OFF)
         elif was_on is False:
             # Back on: at its level, then power up and allow touch.
             set_bottom(stock_bottom(screens["bottom"]))

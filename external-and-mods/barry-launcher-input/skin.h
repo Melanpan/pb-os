@@ -50,6 +50,9 @@ class Skin : public QObject {
     // "title", "swatch", "colors"}], the first the default), chosen per
     // skin in settings.json's "skinVariants"; "" for a skin without any.
     Q_PROPERTY(QString variant READ variant NOTIFY colorsChanged)
+    // All of settings.json (barry_launcher_statsd keeps it: "skin",
+    // "standbySeconds", "heroArt", ...), read again whenever it changes.
+    Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
 
 public:
     static Skin *instance();
@@ -62,6 +65,7 @@ public:
     QString font() const { return m_font; }
     QStringList trackpadHeat() const { return m_heat; }
     QString variant() const { return m_variant; }
+    QVariantMap settings() const { return m_settings; }
     QStringList problems() const { return m_problems; }
 
     // The view to load for `file` (e.g. "KeyPanel.qml"): the skin's own, or
@@ -77,6 +81,7 @@ signals:
     // A different skin, or its view files changed: views load again.
     void viewsChanged();
     void colorsChanged();
+    void settingsChanged();
 
 private:
     explicit Skin(QObject *parent = nullptr);
@@ -95,6 +100,7 @@ private:
     QString m_variant;
     QVariantMap m_colors;
     QStringList m_problems;
+    QVariantMap m_settings;
     QString m_stamp;  // the skin's view files and their times
     int m_revision = 0;
     QTimer m_settle;

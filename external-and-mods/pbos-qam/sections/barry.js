@@ -43,6 +43,8 @@ const checkLanguage = callable("check_language");
 const installLanguage = callable("install_language");
 const removeLanguage = callable("remove_language");
 const steamGame = callable("steam_game");
+const getBottomSettings = callable("get_bottom_settings");
+const setBottomSettings = callable("set_bottom_settings");
 const getSgdb = callable("get_sgdb");
 const setSgdbKey = callable("set_sgdb_key");
 // The PB-OS tab's file picker (select 0: a file), called as @decky/api's openFilePicker.
@@ -962,6 +964,48 @@ const slider = (label, value, min, onChange, extra) => row(jsx(DFL.SliderField, 
     label: `${label} (${value}%)`, value, min, max: 100, step: 5, onChange, ...extra,
 }));
 
+// Barry Launcher's bottom screen: the game art (on: the art is standby, a
+// tap wakes Barry; off: Barry's apps always shown) and the sleep timer.
+const SLEEP_CHOICES = [
+    { data: 0, label: "Never" },
+    { data: 30, label: "30 seconds" },
+    { data: 60, label: "1 minute" },
+    { data: 120, label: "2 minutes" },
+    { data: 300, label: "5 minutes" },
+    { data: 600, label: "10 minutes" },
+];
+
+function BottomSettings({ on }) {
+    const [bs, setBs] = useState(null);
+    useEffect(() => { getBottomSettings().then(setBs).catch(() => setBs(false)); }, []);
+    if (bs === false) return note("Barry Launcher isn't answering (is the bottom screen's session running?).");
+    if (!bs) return null;
+    const change = (patch) => {
+        setBs({ ...bs, ...patch });
+        setBottomSettings(patch).then((r) => { if (r) setBs(r); }).catch(() => {});
+    };
+    const sleep = SLEEP_CHOICES.some((c) => c.data === bs.bottomSleepSeconds)
+        ? bs.bottomSleepSeconds : SLEEP_CHOICES[0].data;
+    return [
+        row(jsx(DFL.ToggleField, {
+            label: "Game art",
+            description: bs.heroArt
+                ? "The bottom screen shows the selected game's art; a tap or the AYN button opens Barry Launcher over it."
+                : "Off: Barry Launcher's apps stay on the bottom screen.",
+            checked: !!bs.heroArt,
+            onChange: (v) => change({ heroArt: v }),
+        })),
+        row(jsx(DFL.DropdownItem, {
+            label: "Sleep after",
+            description: "No touch on the bottom screen this long turns it dark; a touch or the AYN button wakes it.",
+            rgOptions: SLEEP_CHOICES,
+            selectedOption: sleep,
+            disabled: !on,
+            onChange: (o) => change({ bottomSleepSeconds: o.data }),
+        })),
+    ];
+}
+
 function ScreensPage() {
     const { st, setSt, refresh, bright } = useBarryState();
     if (!st) return jsx(DFL.PanelSection, { children: note("Loading…") });
@@ -981,6 +1025,7 @@ function ScreensPage() {
             slider("Bottom screen brightness", st.brightness.bottom, 0, (v) => bright("bottom", v), { step: 1, disabled: !st.on }),
         ] : []),
         note("Steam's brightness slider sets both screens."),
+        jsx(BottomSettings, { on: !!st.on }),
     ] });
 }
 

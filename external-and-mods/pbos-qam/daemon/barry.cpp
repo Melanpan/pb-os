@@ -1346,6 +1346,27 @@ private:
             return shelld_answer("/apps/remove", body, 10);
         }
         if (m == "get_themes") return skins_state();
+        // The bottom screen's game art (heroArt) and its sleep timer
+        // (bottomSleepSeconds): Barry Launcher's settings (statsd).
+        if (m == "get_bottom_settings") {
+            Value st = http_json("GET", STATSD, "/settings", nullptr, 2);
+            Value out = Value::object();
+            out["heroArt"] = st["heroArt"].is_bool() ? st["heroArt"] : Value(true);
+            out["bottomSleepSeconds"] = st["bottomSleepSeconds"].as_int(0);
+            return out;
+        }
+        if (m == "set_bottom_settings") {
+            const Value& c = a.at(0);
+            Value body = Value::object();
+            if (c["heroArt"].is_bool()) body["heroArt"] = c["heroArt"];
+            if (c["bottomSleepSeconds"].is_number())
+                body["bottomSleepSeconds"] = std::max(0LL, std::min(86400LL, c["bottomSleepSeconds"].as_int(0)));
+            if (body.size()) {
+                http_json("POST", STATSD, "/settings", &body, 2);
+                log("barry: bottom screen settings %s", body.dump().c_str());
+            }
+            return call("get_bottom_settings", Value::array());
+        }
         if (m == "set_theme") {
             Value body = Value::object();
             body["skin"] = arg(a, 0, "").str();

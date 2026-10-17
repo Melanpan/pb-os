@@ -16,11 +16,16 @@ Python of its own:
                   skin's color variants [{id, title, swatch: [colors]}]
                   (the first the default), [] for none
   GET  /settings  {"skin": name, "idleSeconds": n, "standbySeconds": n,
+                  "heroArt": bool, "bottomSleepSeconds": n,
                   "skinVariants": {skin: id}}
   POST /settings  any of those keys; skin applies from the next opening,
                   idleSeconds 0 keeps the dashboard in until swiped away;
                   standbySeconds: untouched this long, Barry goes back to
                   the game art (0: never; not over an app or the dashboard);
+                  heroArt false: no game art, Barry's apps always shown;
+                  bottomSleepSeconds: no touch on the bottom screen (or AYN
+                  press) this long and sm8550-thor-backlightd turns its
+                  backlight off until the next one (0: never);
                   skinVariants is merged into the saved ones (Barry's
                   keyboards and pads change at once)
   GET  /controls  the quick controls:
@@ -81,7 +86,8 @@ SKIN_DIRS = [
     "/usr/share/barry_launcher/dashboard/skins",
 ]
 SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
-DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "standbySeconds": 15, "skinVariants": {}}
+DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "standbySeconds": 15, "heroArt": True,
+            "bottomSleepSeconds": 0, "skinVariants": {}}
 
 
 def read(path: str, default: str = "") -> str:
@@ -283,6 +289,11 @@ def clean(new: dict, strict: bool = True) -> dict:
     standby = new.get("standbySeconds")
     if isinstance(standby, (int, float)) and not isinstance(standby, bool) and 0 <= standby <= 3600:
         out["standbySeconds"] = int(standby)
+    if isinstance(new.get("heroArt"), bool):
+        out["heroArt"] = new["heroArt"]
+    sleep = new.get("bottomSleepSeconds")
+    if isinstance(sleep, (int, float)) and not isinstance(sleep, bool) and 0 <= sleep <= 86400:
+        out["bottomSleepSeconds"] = int(sleep)
     # {skin: variant id}, only skins that have that variant.
     chosen = new.get("skinVariants")
     if isinstance(chosen, dict):
