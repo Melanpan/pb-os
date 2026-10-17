@@ -114,7 +114,6 @@ if [[ "$KMS_ROTATION" == 1 ]]; then
 else
   export GAMESCOPE_USE_ROTATION_SHADER=1
 fi
-export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-1}"
 # Same physical size the working SM8550 session advertises (not connector mm).
 export GAMESCOPE_FAKE_OUTPUT_MM="${GAMESCOPE_FAKE_OUTPUT_MM:-177x100}"
 if [[ "$MANGOAPP" != 1 ]]; then
@@ -235,6 +234,22 @@ if (( MAX_HZ > 60 )); then
   export STEAM_DISPLAY_REFRESH_LIMITS="${STEAM_DISPLAY_REFRESH_LIMITS:-${MIN_HZ},${MAX_HZ}}"
 fi
 
+# External displays (DisplayPort over USB-C) take over the picture while one
+# is plugged in, as on a Steam Deck; the panel comes back on unplug. Our
+# gamescope skips external outputs whenever a DSI panel is connected unless
+# GAMESCOPE_ALLOW_EXTERNAL is set. The AYN Thor keeps its panels locked
+# (--force-internal): its bottom screen is leased to Barry Launcher.
+if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-1}"
+  PREFER_OUTPUT="$OUTPUT"
+  INTERNAL_ARGS=(--force-internal)
+else
+  export GAMESCOPE_FORCE_INTERNAL=0
+  export GAMESCOPE_ALLOW_EXTERNAL=1
+  PREFER_OUTPUT="DP-1,$OUTPUT"
+  INTERNAL_ARGS=()
+fi
+
 GAMESCOPE_SESSION_TARGET="${GAMESCOPE_SESSION_TARGET:-gamescope-session.target}"
 WATCH_SERVICE=""
 
@@ -245,8 +260,8 @@ WATCH_SERVICE=""
 # top, 63,000 wineserver calls/s under FEX). --scaler fit scales it, as on the Deck.
 GAMESCOPE_ARGS=(
   --backend drm
-  --prefer-output "$OUTPUT"
-  --force-internal
+  --prefer-output "$PREFER_OUTPUT"
+  "${INTERNAL_ARGS[@]}"
   --scaler fit
   --filter linear
   --steam
