@@ -158,6 +158,9 @@ def tree_digest(top):
     return h.hexdigest() if top.is_dir() else None
 
 
+LSFG_LAYER = 'usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json'
+
+
 # Decky Loader itself, in home like the plugins: full packages always carry it,
 # deltas when it differs from any release they install on (states from before
 # this have no 'decky', so the first deltas after it carry it). The updater
@@ -316,6 +319,9 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         differs from any of them, and deletes what any of them has that this
         release does not."""
         changed = sorted(rel for rel, e in new.items() if any(o['entries'].get(rel) != e for o in olds))
+        # Updaters through 0.5.4.7 deleted the lsfg-vk layer manifest on every delta
+        # that did not carry it: deltas always bring it back.
+        if LSFG_LAYER in new and LSFG_LAYER not in changed: changed = sorted(changed + [LSFG_LAYER])
         # Gone, or a different kind of entry now (a file that became a directory):
         # the device removes the old one before the new one is copied in.
         deleted = sorted({rel for o in olds for rel, e in o['entries'].items()

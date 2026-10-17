@@ -1141,6 +1141,7 @@ def decky_restore(home, work):
 # writes and checks only those, so it takes about as long as the change is big,
 # not as long as the system is big. plan.json in the transaction holds it.
 FULL_DELETE_TOPS = ('usr', 'opt', 'etc')  # a full package replaces these whole
+LSFG_LAYER = 'usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json'
 
 
 def managed(rel):
@@ -1658,12 +1659,12 @@ def apply(root, boot, home, work, manifest, plan, progress):
     for rel in remove:
         if (home / 'steamos' / rel).exists(): shutil.rmtree(home / 'steamos' / rel)
     decky_apply(home, work)
-    # Old frame-gen layer manifests, but never one this package installs:
-    # lsfg-vk 1.x ships /usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json.
+    # Old frame-gen layer manifests, but never the image's own lsfg-vk 1.x one:
+    # the plan owns it (a delta lists only changed files, so 'files' cannot tell).
     for prefix in (root / 'usr', root / 'usr/local', home / 'steamos/.local'):
         for name in ('VkLayer_LS_frame_generation.json', 'VkLayer_LS_frame_generation_arm64.json'):
             layer = prefix / 'share/vulkan/implicit_layer.d' / name
-            if layer.is_relative_to(root) and f'root/{layer.relative_to(root)}' in manifest['files']: continue
+            if layer == root / LSFG_LAYER: continue
             layer.unlink(missing_ok=True)
     progress.phase('check')
     verify_written(root, home, manifest, plan, install, progress.add, decky_decided(work))
