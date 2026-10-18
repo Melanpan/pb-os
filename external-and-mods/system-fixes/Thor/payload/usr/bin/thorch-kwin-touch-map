@@ -43,13 +43,22 @@ set_output_name() {
 }
 
 kwin_ready() {
-	qdbus6 org.kde.KWin /org/kde/KWin/InputDevice org.kde.KWin.InputDeviceManager.ListTouch \
-		>/dev/null 2>&1
+	# Both touchscreens known to KWin. (It has no ListTouch: asking for it
+	# failed every time, so the mapping came only after the 40 s wait, and
+	# the bottom screen's touches went to the top screen until then.)
+	local names by_path event
+	names="$(qdbus6 org.kde.KWin /org/kde/KWin/InputDevice \
+		org.kde.KWin.InputDeviceManager.devicesSysNames 2>/dev/null)" || return 1
+	for by_path in /dev/input/by-path/platform-a90000.i2c-event /dev/input/by-path/platform-98c000.i2c-event; do
+		event="$(readlink -f "${by_path}" 2>/dev/null || true)"
+		event="${event##*/}"
+		[[ "${event}" != event* ]] || grep -qx "${event}" <<<"${names}" || return 1
+	done
 }
 
-for _ in $(seq 1 40); do
+for _ in $(seq 1 160); do
 	kwin_ready && break
-	sleep 1
+	sleep 0.25
 done
 
 if [[ "${1:-}" == "--watch" ]]; then

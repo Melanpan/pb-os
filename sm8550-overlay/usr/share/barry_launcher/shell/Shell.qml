@@ -225,8 +225,10 @@ Window {
         PageSwipe {
             id: pages
             anchors.fill: parent
-            minPage: -1
-            maxPage: 1
+            // Desktop Mode: the apps only (the dashboard and quick settings
+            // are Game Mode's: their controls do nothing under KWin).
+            minPage: win.desktop ? 0 : -1
+            maxPage: win.desktop ? 0 : 1
             threshold: 24 * win.s
             // Not while the quick settings are being arranged (widgets drag).
             swipeEnabled: win.barryShown && !win.following && !(quick.item && quick.item.editing)

@@ -261,6 +261,8 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30 * home.s
         text: "swipe right: performance  ·  swipe left: quick settings  ·  AYN: close"
+        // Game Mode's pages and button (no side pages in Desktop Mode).
+        visible: Qt.application.arguments.indexOf("desktop") < 0
         color: home.c.text
         opacity: 0.4
         font { family: Skin.font; pixelSize: 24 * home.s }
