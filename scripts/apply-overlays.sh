@@ -771,6 +771,10 @@ if [[ "$SOC" != sm8650 ]]; then
   # client built here against the rootfs's libwayland.
   "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \
     || die "cannot build barry_launcher_imd (the rootfs needs gcc, wayland-scanner and wayland-protocols)"
+  # When Barry's keyboards come up (text focus over AT-SPI, KWin's input
+  # method, the touchscreens), built here against the rootfs's AT-SPI.
+  "${ROOT}/external-and-mods/barry-launcher-keyd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_keyd" \
+    || die "cannot build barry_launcher_keyd (the rootfs needs g++, pkg-config and the AT-SPI, GUdev and JSON-GLib headers)"
   # The quick settings' Record button: the top screen's PipeWire stream to
   # an MP4 through the hardware encoder, built against the rootfs's
   # PipeWire and GStreamer.

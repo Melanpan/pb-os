@@ -5,15 +5,13 @@ In Game Mode the bottom screen is a nested gamescope of its own; here it is
 one of KWin's outputs (BARRY_OUTPUT, DSI-1). KWin scripts, loaded over
 D-Bus, keep Barry's windows full screen on it (the keyboard along its
 bottom edge), bring one forward, and push the active app up above the
-keyboard. Text goes through barry_launcher_imd, KWin's input method, which
-says when a text field is active and what text surrounds the caret.
+keyboard. Text goes through barry_launcher_imd, KWin's input method (its
+client is barry_launcher_keyd; Barry.Input's Typer types through it).
 """
 from __future__ import annotations
 
 import json
 import os
-import socket
-import subprocess
 import threading
 import time
 
@@ -21,14 +19,6 @@ from gi.repository import Gio, GLib
 
 OUTPUT = os.environ.get("BARRY_OUTPUT", "DSI-1")
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-IM_SOCKET = os.path.join(RUNTIME, "barry_launcher_im.sock")
-IM_ENTRY = "/usr/share/applications/org.barry_launcher.keyboard.desktop"
-# barry_launcher_imd gone this long: KWin is asked to start it again, at most
-# this often. KWin stopped it when Barry was turned off just after Desktop
-# Mode started, and did not start it when Barry came back (2026-10-18):
-# without it no field brought the keyboard up.
-IM_KICK_S = 5.0
-IM_KICK_EVERY_S = 30.0
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
 HOME_TITLE = "Barry Launcher"
 # Window classes (Wayland app ids) of the apps Barry keeps on the bottom
@@ -328,118 +318,3 @@ def set_inset(inset: int) -> bool:
     if up:
         threading.Timer(0.4, lambda: _request({"inset": up})).start()
     return ok
-
-
-def restart_input_method() -> None:
-    """KWin starts its input method again when the setting changes: taken
-    away and given back, as Barry's off and on switch does."""
-    print("barry_launcher_imd is gone: KWin is asked to start it again", flush=True)
-    for value in (None, IM_ENTRY):
-        cmd = ["kwriteconfig6", "--notify", "--file", "kwinrc", "--group", "Wayland", "--key", "InputMethod"]
-        cmd += ["--delete"] if value is None else [value]
-        try:
-            subprocess.run(cmd, timeout=5, check=False)
-        except (OSError, subprocess.TimeoutExpired) as err:
-            print(f"cannot change KWin's input method: {err}", flush=True)
-            return
-        time.sleep(1.0)
-
-
-class InputMethod:
-    """barry_launcher_imd's side: whether a text field is active, the text
-    around its caret, and typing into it. Events are handed to on_event
-    (on the GLib main loop) as dicts."""
-
-    def __init__(self, on_event) -> None:
-        self.on_event = on_event
-        self.lock = threading.Lock()
-        self.sock: socket.socket | None = None
-        self.active = False
-        self.text: str | None = None
-        self.cursor = 0  # bytes into text
-
-    @property
-    def connected(self) -> bool:
-        return self.sock is not None
-
-    def run(self) -> None:
-        missing_since = time.monotonic()
-        kicked = 0.0
-        while True:
-            try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.connect(IM_SOCKET)
-            except OSError:
-                now = time.monotonic()
-                if now - missing_since >= IM_KICK_S and now - kicked >= IM_KICK_EVERY_S:
-                    kicked = now
-                    restart_input_method()
-                time.sleep(1.0)
-                continue
-            with self.lock:
-                self.sock = s
-            print("connected to barry_launcher_imd", flush=True)
-            buf = b""
-            try:
-                while True:
-                    data = s.recv(4096)
-                    if not data:
-                        break
-                    buf += data
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        try:
-                            ev = json.loads(line)
-                        except ValueError:
-                            continue
-                        self._update(ev)
-                        GLib.idle_add(self._deliver, ev)
-            except OSError:
-                pass
-            with self.lock:
-                self.sock = None
-                self.active = False
-                self.text = None
-            s.close()
-            missing_since = time.monotonic()
-            time.sleep(1.0)
-
-    def _update(self, ev: dict) -> None:
-        kind = ev.get("event")
-        with self.lock:
-            if kind == "activate":
-                self.active, self.text, self.cursor = True, None, 0
-            elif kind == "deactivate":
-                self.active, self.text, self.cursor = False, None, 0
-            elif kind == "surrounding":
-                self.text, self.cursor = ev.get("text", ""), int(ev.get("cursor", 0))
-
-    def _deliver(self, ev: dict) -> bool:
-        self.on_event(ev)
-        return False
-
-    def before_cursor(self) -> str | None:
-        with self.lock:
-            if self.text is None:
-                return None
-            return self.text.encode("utf-8")[: self.cursor].decode("utf-8", errors="ignore")
-
-    def send(self, line: str) -> bool:
-        line = line.replace("\n", " ")
-        with self.lock:
-            if self.sock is None:
-                return False
-            try:
-                self.sock.sendall((line + "\n").encode("utf-8"))
-                return True
-            except OSError:
-                return False
-
-    def commit(self, text: str) -> bool:
-        return self.send(f"COMMIT {text}")
-
-    def back(self, n: int, text: str = "") -> bool:
-        return self.send(f"BACK {n} {text}" if text else f"BACK {n}")
-
-    def key(self, name: str) -> bool:
-        return self.send(f"KEY {name}")
