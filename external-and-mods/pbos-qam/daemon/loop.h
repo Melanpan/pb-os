@@ -46,13 +46,17 @@ public:
     // Kernel uevents (block devices coming and going): cb(subsystem, action);
     // an empty subsystem when some were dropped (ENOBUFS).
     void on_uevent(std::function<void(const std::string&, const std::string&)> cb);
+    // The same with every KEY=value of the event (DEVNAME, DEVPATH,
+    // POWER_SUPPLY_*...); an empty map when some were dropped (ENOBUFS).
+    using UeventEnv = std::map<std::string, std::string>;
+    void on_uevent_env(std::function<void(const UeventEnv&)> cb);
     // A systemd unit changed state (started, stopped, failed).
     void on_unit_change(const std::string& unit, Fn cb);
     // The process exited (pidfd); false when it is already gone.
     bool on_exit(pid_t pid, Fn cb);
     // fd is readable (a socket of the caller's own; it stays open).
     void on_readable(int fd, std::function<void()> cb) { add_fd(fd, std::move(cb)); }
-    // SIGTERM, SIGINT and SIGHUP.
+    // SIGTERM, SIGINT, SIGHUP, SIGUSR1 and SIGUSR2.
     void on_signal(std::function<void(int)> cb) { signal_cb_ = std::move(cb); }
 
 private:
@@ -81,6 +85,8 @@ private:
     std::map<int, int> watch_ids_;               // id -> wd
     int next_watch_ = 1;
     std::vector<std::function<void(const std::string&, const std::string&)>> uevent_cbs_;
+    std::vector<std::function<void(const UeventEnv&)>> uevent_env_cbs_;
+    void open_uevents();
     sd_bus* bus_ = nullptr;
     std::vector<sd_bus_slot*> slots_;
     std::map<std::string, std::vector<Fn>> unit_cbs_;  // D-Bus object path -> cbs

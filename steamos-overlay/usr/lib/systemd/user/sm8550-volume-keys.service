@@ -5,7 +5,7 @@ Wants=pipewire.service wireplumber.service
 
 [Service]
 Type=simple
-ExecStart=/usr/lib/steamos/sm8550-volume-keys
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only volume-keys
 Restart=on-failure
 RestartSec=2
 

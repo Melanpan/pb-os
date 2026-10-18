@@ -5,7 +5,7 @@ ConditionPathExists=/sys/firmware/devicetree/base/compatible
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'grep -qa "qcom,sm8550" /sys/firmware/devicetree/base/compatible'
-ExecStart=/usr/lib/steamos-sm8550/sm8550-powerbuttond
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only power-button
 Restart=always
 RestartSec=2
 

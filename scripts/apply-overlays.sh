@@ -387,8 +387,12 @@ install_file "$OVL/usr/lib/steamos/sm8550-audio-setup" \
   "$R/usr/lib/steamos/sm8550-audio-setup" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-audio-pipewire" \
   "$R/usr/lib/steamos/sm8550-audio-pipewire" 0755
-install_file "$OVL/usr/lib/steamos/sm8550-volume-keys" \
-  "$R/usr/lib/steamos/sm8550-volume-keys" 0755
+# The platform daemons (volume keys and volume keeper; on SM8550 also the
+# fan, power button and charge control), C++ built here against the rootfs;
+# each unit runs its own module.
+"${ROOT}/external-and-mods/pbos-platformd/build.sh" "$R" "$R/usr/lib/pbos-platformd/pbos-platformd" \
+  || die "cannot build pbos-platformd (the rootfs needs g++ and the systemd and libpulse headers)"
+rm -f "$R/usr/lib/steamos/sm8550-volume-keys"
 install_file "$OVL/usr/lib/systemd/system/sm8550-audio-setup.service" \
   "$R/usr/lib/systemd/system/sm8550-audio-setup.service" 0644
 install_file "$OVL/usr/lib/systemd/user/sm8550-audio-pipewire.service" \
@@ -721,8 +725,6 @@ remove_thor_bottom_screen() {
 }
 if [[ "$SOC" != sm8650 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-fand" \
-    "$R/usr/lib/steamos-sm8550/sm8550-fand" 0755
   install_file "$SM8550_OVL/usr/share/sm8550-fand/fan.conf" \
     "$R/usr/share/sm8550-fand/fan.conf" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-fand.service" \
@@ -731,8 +733,6 @@ if [[ "$SOC" != sm8650 ]]; then
     install_file "$SM8550_OVL/usr/share/steamos-manager/devices/$t" \
       "$R/usr/share/steamos-manager/devices/$t" 0644
   done
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-powerbuttond" \
-    "$R/usr/lib/steamos-sm8550/sm8550-powerbuttond" 0755
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-charge-control" \
     "$R/usr/lib/steamos-sm8550/sm8550-charge-control" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-charge-control.service" \
@@ -880,8 +880,6 @@ if [[ "$SOC" != sm8650 ]]; then
   install_file "$SM8550_OVL/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" \
     "$R/usr/lib/systemd/system/systemd-suspend.service.d/20-sm8550-charge-rest.conf" 0644
   # Output volume across reboots (pro-audio outputs have no saved routes).
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-volume-keeper" \
-    "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-volume-keeper.service" \
     "$R/usr/lib/systemd/user/sm8550-volume-keeper.service" 0644
   mkdir -p "$R/usr/lib/systemd/user/default.target.wants"

@@ -79,6 +79,8 @@ Loop::Loop() {
     sigaddset(&set, SIGTERM);
     sigaddset(&set, SIGINT);
     sigaddset(&set, SIGHUP);
+    sigaddset(&set, SIGUSR1);
+    sigaddset(&set, SIGUSR2);
     sigaddset(&set, SIGPIPE);
     pthread_sigmask(SIG_BLOCK, &set, nullptr);
     sig_ = signalfd(-1, &set, SFD_CLOEXEC | SFD_NONBLOCK);
@@ -278,27 +280,35 @@ void Loop::drain_inotify() {
     }
 }
 
-void Loop::on_uevent(std::function<void(const std::string&, const std::string&)> cb) {
+void Loop::open_uevents() {
+    if (uevent_ >= 0) return;
+    uevent_ = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, NETLINK_KOBJECT_UEVENT);
     if (uevent_ < 0) {
-        uevent_ = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, NETLINK_KOBJECT_UEVENT);
-        if (uevent_ < 0) {
-            log("uevents: %s", std::strerror(errno));
-            return;
-        }
-        sockaddr_nl addr{};
-        addr.nl_family = AF_NETLINK;
-        addr.nl_groups = 1;  // the kernel's own events
-        int rcvbuf = 1 << 20;  // room for a resume's burst (needs root; else the default stays)
-        setsockopt(uevent_, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof rcvbuf);
-        if (bind(uevent_, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
-            log("uevents: %s", std::strerror(errno));
-            close(uevent_);
-            uevent_ = -1;
-            return;
-        }
-        add_fd(uevent_, [this] { drain_uevents(); });
+        log("uevents: %s", std::strerror(errno));
+        return;
     }
-    uevent_cbs_.push_back(std::move(cb));
+    sockaddr_nl addr{};
+    addr.nl_family = AF_NETLINK;
+    addr.nl_groups = 1;  // the kernel's own events
+    int rcvbuf = 1 << 20;  // room for a resume's burst (needs root; else the default stays)
+    setsockopt(uevent_, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof rcvbuf);
+    if (bind(uevent_, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
+        log("uevents: %s", std::strerror(errno));
+        close(uevent_);
+        uevent_ = -1;
+        return;
+    }
+    add_fd(uevent_, [this] { drain_uevents(); });
+}
+
+void Loop::on_uevent(std::function<void(const std::string&, const std::string&)> cb) {
+    open_uevents();
+    if (uevent_ >= 0) uevent_cbs_.push_back(std::move(cb));
+}
+
+void Loop::on_uevent_env(std::function<void(const UeventEnv&)> cb) {
+    open_uevents();
+    if (uevent_ >= 0) uevent_env_cbs_.push_back(std::move(cb));
 }
 
 void Loop::drain_uevents() {
@@ -308,16 +318,23 @@ void Loop::drain_uevents() {
         if (n < 0 && errno == ENOBUFS) {
             // Some were dropped (a burst, as at resume): an empty subsystem.
             for (auto& cb : uevent_cbs_) cb("", "");
+            for (auto& cb : uevent_env_cbs_) cb({});
             continue;
         }
         if (n <= 0) break;
         buf[n] = 0;
         std::string subsystem, action;
+        UeventEnv env;
         for (char* p = buf; p < buf + n; p += std::strlen(p) + 1) {
             if (!std::strncmp(p, "SUBSYSTEM=", 10)) subsystem = p + 10;
             else if (!std::strncmp(p, "ACTION=", 7)) action = p + 7;
+            if (!uevent_env_cbs_.empty()) {
+                const char* eq = std::strchr(p, '=');
+                if (eq) env.emplace(std::string(p, eq - p), std::string(eq + 1));
+            }
         }
         for (auto& cb : uevent_cbs_) cb(subsystem, action);
+        for (auto& cb : uevent_env_cbs_) cb(env);
     }
 }
 
