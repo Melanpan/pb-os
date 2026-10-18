@@ -1,6 +1,7 @@
 // AYN-style ring: label, value and unit inside a 270° arc.
 import QtQuick
 import QtQuick.Shapes
+import Barry.Input
 
 Item {
     id: g
@@ -46,21 +47,21 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: -41 * g.scale_
         text: g.label
-        color: "#eef0f4"
-        font { family: "Noto Sans"; pixelSize: 20 * g.scale_; bold: true }
+        color: Skin.colors.text
+        font { family: Skin.font || "Noto Sans"; pixelSize: 20 * g.scale_; bold: true }
     }
     Text {
         anchors.centerIn: parent
         text: g.value
-        color: "#eef0f4"
-        font { family: "Noto Sans"; pixelSize: 40 * g.scale_; bold: true }
+        color: Skin.colors.text
+        font { family: Skin.font || "Noto Sans"; pixelSize: 40 * g.scale_; bold: true }
     }
     Text {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: 38 * g.scale_
         text: g.unit
-        color: "#eef0f4"
-        font { family: "Noto Sans"; pixelSize: 18 * g.scale_ }
+        color: Skin.colors.text
+        font { family: Skin.font || "Noto Sans"; pixelSize: 18 * g.scale_ }
     }
 }

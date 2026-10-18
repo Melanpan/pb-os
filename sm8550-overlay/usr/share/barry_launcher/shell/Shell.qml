@@ -16,15 +16,28 @@
 // starts it (or brings it forward) through barry_launcher_shelld, and Barry
 // closes; the AYN button opens Barry over it and closes back to it.
 //
+// Over an app, a swipe in from the left edge pulls in the dashboard, from
+// the right edge the quick settings, like a phone's side panels, following
+// the finger (Barry.Input's EdgeSwipe reads the touchscreen while the app has
+// the touches); let go far enough or fast enough it stays, else it goes back.
+// Swiped back toward the apps, Barry closes back to the app. Only one window
+// shows on the bottom screen, so shelld takes a picture of the app as the
+// finger comes down (POST /side-prepare; GET /home's under) and the page
+// slides over that, and back off it, instead of the app giving way to the
+// game art.
+//
 // The game art is standby. A tap on it wakes Barry too: its pages come over
 // the art, which stays behind as if behind frosted glass (Hero.qml's
 // frost), its logo gone. Untouched for standbySeconds (Barry's settings,
 // 15 by default; 0: never), Barry goes back to the art, unless it is open
-// over an app or on the dashboard.
+// over an app or on a side page (the dashboard and the quick settings stay
+// until swiped back to the apps).
 //
 // The game art can be turned off (Barry's settings, heroArt, the PB-OS tab's
 // Dual Screen page): Barry's pages then stay up on their own background, as
-// before there was art, and the AYN button only goes to and from apps.
+// before there was art, and the AYN button only goes to and from apps. In
+// Desktop Mode ("desktop" argument, barry_launcher_desktop) it is always
+// off: the art is Game Mode's, for the game selected in Steam.
 //
 // Opening, the apps fly in toward the screen, the middle ones first
 // (Home.qml's dropIn, Barry.Input's TileDrop; a skin's home screen without
@@ -95,12 +108,21 @@ Window {
     // What shelld says (GET /home).
     property bool barryOpen: false
     property bool barryOver: false  // open over an app it closes back to
+    property int openPage: 0        // the page it opened on (a side swipe over an app)
+    property string underShot: ""   // the app as it showed, under a side panel (file URL)
+    property bool underCover: false // that picture over everything, Barry closed (see underClear)
+    property bool appFront: false   // an app in front, Barry closed: side swipes are on (GET /home)
+    property bool following: false  // the side page follows the finger (EdgeSwipe)
+    property string edgeResult: ""  // let go before Barry showed: "open" or "cancel"
+    // Opened on a side page from an app: swiped back, it closes to the app.
+    readonly property bool sidePanel: barryOpen && barryOver && openPage !== 0
     // The art behind Barry: 0 in focus, 1 frosted (animated as Barry comes
     // and goes).
     property real frost: 0
     // Barry's settings (settings.json, read again as it changes).
     readonly property int standbySeconds: typeof Skin.settings.standbySeconds === "number" ? Skin.settings.standbySeconds : 15
-    readonly property bool heroOn: Skin.settings.heroArt !== false
+    readonly property bool desktop: Qt.application.arguments.indexOf("desktop") >= 0
+    readonly property bool heroOn: !desktop && Skin.settings.heroArt !== false
     // Barry's pages on screen: open, or always without the art.
     readonly property bool barryShown: barryOpen || !heroOn
     onHeroOnChanged: {
@@ -114,6 +136,45 @@ Window {
 
     function setBarry(open, why) {
         win.post("/barry", { open: open, why: why })
+    }
+
+    // A side page pulled in over an app (see the top).
+    EdgeSwipe {
+        id: edgeSwipe
+        armed: win.appFront && !win.barryOpen
+        edge: 45
+        threshold: 24
+        onEdgeTouched: win.post("/side-prepare", {})
+        onStarted: function (side) {
+            win.edgeResult = ""
+            win.post("/barry", { open: true, page: side,
+                                 why: side > 0 ? "swipe in from the left edge" : "swipe in from the right edge" })
+        }
+        onReleased: function (side, progress, velocity) {
+            // Far enough, or flicked inward: it stays.
+            const stays = progress > 0.3 || velocity > 500
+            if (win.following) {
+                win.following = false
+                pages.goTo(stays ? side : 0)
+            } else {
+                win.edgeResult = stays ? "open" : "cancel"
+            }
+        }
+        onCancelled: {
+            if (win.following) {
+                win.following = false
+                pages.goTo(0)
+            } else {
+                win.edgeResult = "cancel"
+            }
+        }
+    }
+    Binding {
+        target: pages
+        property: "progress"
+        value: edgeSwipe.side * edgeSwipe.progress
+        when: win.following && edgeSwipe.active
+        restoreMode: Binding.RestoreNone
     }
 
     // The hero art: what shows while Barry is closed.
@@ -145,13 +206,30 @@ Window {
         visible: opacity > 0
         transform: Translate { id: barryShift }
 
+        // A side panel's app, as it showed: the page slides over it.
+        Image {
+            id: under
+            anchors.fill: parent
+            source: win.underShot
+            visible: win.underShot !== ""
+            asynchronous: false
+            cache: false
+            fillMode: Image.Stretch
+            Rectangle {
+                anchors.fill: parent
+                color: "black"
+                opacity: 0.3 * Math.min(1, Math.abs(pages.progress))
+            }
+        }
+
         PageSwipe {
             id: pages
             anchors.fill: parent
             minPage: -1
             maxPage: 1
             threshold: 24 * win.s
-            swipeEnabled: win.barryShown
+            // Not while the quick settings are being arranged (widgets drag).
+            swipeEnabled: win.barryShown && !win.following && !(quick.item && quick.item.editing)
             onDragStarted: settleAnim.stop()
             onSettle: function (target, velocity) {
                 settleAnim.stop()
@@ -160,7 +238,9 @@ Window {
                 const opening = target !== 0
                 settleAnim.to = target
                 settleAnim.duration = opening ? 460 : 380
-                settleAnim.easing.overshoot = opening ? 1.4 : 0.8
+                // A side panel going back to its app: no spring past the
+                // middle (the other side page would peek in over the app).
+                settleAnim.easing.overshoot = win.sidePanel && !opening ? 0 : opening ? 1.4 : 0.8
                 settleAnim.start()
             }
 
@@ -173,6 +253,8 @@ Window {
                     id: home
                     file: "Home.qml"
                     anchors.fill: parent
+                    // A side panel over an app slides back to the app, not the apps.
+                    visible: !win.sidePanel
                     onLoaded: if (win.tiles !== null) item.tiles = win.tiles
                 }
             }
@@ -211,6 +293,9 @@ Window {
         target: pages
         property: "progress"
         easing.type: Easing.OutBack
+        // A side panel swiped (or sent) back to the middle: Barry closes
+        // to the app once the page is off it.
+        onFinished: if (win.sidePanel && pages.page === 0) win.setBarry(false, "side panel swiped away")
     }
     Binding { target: home.item; property: "s"; value: win.s }
     Binding { target: home.item; property: "running"; value: win.running }
@@ -227,19 +312,64 @@ Window {
 
     property int homeSerial: -1  // the last opening seen; -1: none yet
 
-    function slideIn(serial) {
+    // Opening on the apps, no tile takes a tap while they fly in; opened by
+    // a swipe up from the bottom edge, none for a while where that thumb
+    // lifted (lifted: [x, y] from shelld), for it comes back down there,
+    // onto Trackpad, Keyboard or Deck (Barry.Input's PageSwipe).
+    function holdTaps(page, lifted) {
+        if (page !== 0)
+            return
+        pages.holdTaps(600)
+        if (Array.isArray(lifted) && lifted.length === 2)
+            pages.holdTapsBelow(lifted[0], lifted[1], 200 * win.s, 1500)
+    }
+
+    function slideIn(serial, page, under) {
         slideOut.stop()
         slide.stop()
-        // Barry opens on the apps.
+        sideIn.stop()
+        win.underCover = false
+        if (page !== 0) {
+            // A side panel over an app: the app's picture at once (or, had
+            // none come, the art), and the page slides in from its edge over
+            // it once the window shows.
+            win.underShot = under ? "file://" + under + "?" + serial : ""
+            settleAnim.stop()
+            pages.goTo(page)
+            settleAnim.stop()
+            pages.progress = 0
+            barryShift.y = 0
+            barry.opacity = 1
+            win.frost = 0
+            const r = new XMLHttpRequest()
+            r.onreadystatechange = function () {
+                if (r.readyState !== XMLHttpRequest.DONE)
+                    return
+                if (edgeSwipe.active) {
+                    win.following = true  // the finger is still on it
+                } else if (win.edgeResult === "cancel") {
+                    pages.goTo(0)         // let go short: back to the app
+                } else {
+                    sideIn.to = page
+                    sideIn.start()
+                }
+            }
+            r.open("POST", api + "/home-ready")
+            r.setRequestHeader("Content-Type", "application/json")
+            r.send(JSON.stringify({ serial: serial }))
+            return
+        }
+        win.underShot = ""
+        // Barry opens on the apps, or the side page a swipe in asked for.
         settleAnim.stop()
-        pages.goTo(0)
+        pages.goTo(page)
         settleAnim.stop()
-        pages.progress = 0
+        pages.progress = page
         // A home screen with dropIn() (the built-in one, and skins that
         // use Barry.Input's TileDrop): its tiles fly in over a quick fade.
-        // Else Barry slides up into place.
-        const drops = !!home.item && typeof home.item.dropIn === "function"
-        barryShift.y = drops ? 0 : 0.18 * height
+        // Else Barry slides up into place; a side page just fades in.
+        const drops = page === 0 && !!home.item && typeof home.item.dropIn === "function"
+        barryShift.y = drops || page !== 0 ? 0 : 0.18 * height
         barry.opacity = 0
         const x = new XMLHttpRequest()
         x.onreadystatechange = function () {
@@ -253,6 +383,44 @@ Window {
         x.setRequestHeader("Content-Type", "application/json")
         x.send(JSON.stringify({ serial: serial }))
     }
+
+    // A side panel coming in over its app's picture.
+    NumberAnimation {
+        id: sideIn
+        target: pages
+        property: "progress"
+        duration: 340
+        easing.type: Easing.OutCubic
+    }
+    // Back at the app (shelld shows it again as Barry closes), Barry's
+    // window keeps the app's picture over everything (underCover; it takes
+    // no touches): gamescope shows a window's last frame for a moment as it
+    // comes forward, and the next side swipe then shows the app (the game
+    // art flashed there on the test Thor). Hiding the apps page instead
+    // kept PageSwipe from seeing swipes. The picture goes, and Barry looks
+    // closed again (as slideOut leaves it), as Barry opens or once no app is
+    // in front (it quit: Barry's window shows on its own).
+    Image {
+        anchors.fill: parent
+        z: 50
+        source: win.underShot
+        visible: win.underCover && win.underShot !== ""
+        asynchronous: false
+        cache: false
+        fillMode: Image.Stretch
+    }
+    function underClear() {
+        win.underCover = false
+        win.underShot = ""
+        if (win.heroOn) {
+            barry.opacity = 0
+            win.frost = 0
+        }
+    }
+    // Only while the picture covers a closed Barry: as a side page opens,
+    // /home stops saying "app" before it says "open" (the side page showed
+    // the art on the test Thor).
+    onAppFrontChanged: if (!appFront && underCover) underClear()
 
     ParallelAnimation {
         id: slide
@@ -274,19 +442,30 @@ Window {
         anchors.fill: parent
         z: 100
         PointHandler {
-            onActiveChanged: if (active) standby.restart()
+            onActiveChanged: if (active) win.standbyAgain()
         }
     }
+    // Back to the art after standbySeconds untouched: only on the apps page,
+    // not over an app. Started and stopped here, never bound: restart() on a
+    // Timer whose running is bound breaks the binding, and a touch or a page
+    // change then ran it on the side pages too (they closed after 15 s).
+    readonly property bool standbyWanted: heroOn && barryOpen && !barryOver && standbySeconds > 0
+                                          && pages.page === 0 && !pages.dragging
+    function standbyAgain() {
+        if (standbyWanted)
+            standby.restart()
+        else
+            standby.stop()
+    }
+    onStandbyWantedChanged: standbyAgain()
     Timer {
         id: standby
         interval: Math.max(1, win.standbySeconds) * 1000
-        running: win.heroOn && win.barryOpen && !win.barryOver && win.standbySeconds > 0
-                 && pages.page !== 1 && !pages.dragging
-        onTriggered: win.setBarry(false, "untouched for " + win.standbySeconds + " s")
+        onTriggered: if (win.standbyWanted) win.setBarry(false, "untouched for " + win.standbySeconds + " s")
     }
     Connections {
         target: pages
-        function onPageChanged() { standby.restart() }
+        function onPageChanged() { win.standbyAgain() }
     }
 
     Timer {
@@ -309,8 +488,16 @@ Window {
                 let answer = null
                 try { answer = JSON.parse(x.responseText) } catch (e) { return }
                 const open = answer.open === true
+                const page = answer.page === 1 || answer.page === -1 ? answer.page : 0
                 if (win.homeSerial >= 0 && answer.serial !== win.homeSerial && open) {
-                    win.slideIn(answer.serial)
+                    win.openPage = page
+                    win.holdTaps(page, answer.lifted)
+                    win.slideIn(answer.serial, page, typeof answer.under === "string" ? answer.under : "")
+                } else if (win.barryOpen && !open && win.sidePanel) {
+                    // A side panel closing back to its app: nothing fades
+                    // (that showed the game art); the app comes forward.
+                    sideIn.stop()
+                    win.underCover = true
                 } else if (win.barryOpen && !open && win.heroOn) {
                     slide.stop()
                     slideOut.start()
@@ -321,6 +508,9 @@ Window {
                     win.frost = win.heroOn ? 1 : 0
                 }
                 win.barryOver = answer.over === true
+                win.appFront = answer.app === true
+                if (!open)
+                    win.openPage = 0
                 win.homeSerial = answer.serial
                 win.barryOpen = open
             }

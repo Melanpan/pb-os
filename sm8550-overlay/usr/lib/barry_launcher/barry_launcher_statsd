@@ -17,7 +17,7 @@ Python of its own:
                   (the first the default), [] for none
   GET  /settings  {"skin": name, "idleSeconds": n, "standbySeconds": n,
                   "heroArt": bool, "bottomSleepSeconds": n,
-                  "skinVariants": {skin: id}}
+                  "skinVariants": {skin: id}, "quickLayout": [...] or null}
   POST /settings  any of those keys; skin applies from the next opening,
                   idleSeconds 0 keeps the dashboard in until swiped away;
                   standbySeconds: untouched this long, Barry goes back to
@@ -27,7 +27,18 @@ Python of its own:
                   press) this long and sm8550-thor-backlightd turns its
                   backlight off until the next one (0: never);
                   skinVariants is merged into the saved ones (Barry's
-                  keyboards and pads change at once)
+                  keyboards and pads change at once); quickLayout: the
+                  quick settings page's widgets in order, [{"id", "span":
+                  1-4}] (null: the default, DEFAULT_QUICK_LAYOUT, which
+                  GET returns then; ids: QuickSettings.qml's own widgets
+                  and "w-<name>" for a widget pack's)
+  GET  /widgets   {"widgets": [{id, name, title, kind, minSpan, span,
+                  builtin, ...}]}: every widget the quick settings page can
+                  show: Barry's own (kind "barry", BARRY_WIDGETS) and those
+                  from packs (kind "pack", WIDGET_DIRS, the user's winning,
+                  with author, url, height; see
+                  /usr/share/barry_launcher/widgets/README.md; id "w-<name>",
+                  as in quickLayout); builtin: shipped, not removable
   GET  /controls  the quick controls:
                   {"fan": {"profile": "balanced", "profiles": [...]} or null,
                    "lighting": {"enabled", "color": "rrggbb", "brightness",
@@ -37,6 +48,17 @@ Python of its own:
                   (choice 0: none made; games get the panel's highest)
   POST /controls  {"fanProfile": name}, {"lighting": {...any of its keys}}
                   or {"refreshHz": 60|120}; replies as GET
+  GET  /quick     the quick settings' system switches (barry_quick):
+                  {"wifi": {"enabled"} or null, "bluetooth": {"enabled"}
+                   or null, "volume": {"system": 0-100, "muted", "apps":
+                   0-100} or null, "capture": {"recording", "seconds",
+                   "last": what became of the last recording}}
+                  (null: the device has none, or its service is down)
+  POST /quick     {"wifi": bool}, {"bluetooth": bool}, {"volume":
+                  {"system"/"apps": 0-100}}, {"screenshot": true} (the top
+                  screen to ~/Pictures/Screenshots) or {"record": bool} (the
+                  top screen to ~/Videos); replies as GET, with "saved": the
+                  screenshot's file and "error": what went wrong
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin,
 so a web page cannot change the fan or the settings.
@@ -66,9 +88,13 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import barry_quick  # noqa: E402
 
 PORT = 47823
 API = 1
@@ -85,9 +111,31 @@ SKIN_DIRS = [
     os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher/skins"),
     "/usr/share/barry_launcher/dashboard/skins",
 ]
+# The quick settings page's widget packs, the user's first (a pack of theirs
+# replaces a shipped one of the same name).
+WIDGET_DIRS = [
+    os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"), "barry_launcher/widgets"),
+    "/usr/share/barry_launcher/widgets",
+]
+# Barry's own widgets (QuickSettings.qml draws them), for the PB-OS tab's
+# Widgets page: id, title, the fewest units wide and how wide they come.
+BARRY_WIDGETS = [
+    ("wifi", "Wi-Fi", 1, 1), ("bluetooth", "Bluetooth", 1, 1), ("screenshot", "Screenshot", 1, 1),
+    ("record", "Record", 1, 1), ("brightness", "Brightness", 2, 2), ("volume", "Volume", 2, 2),
+    ("lights", "Lights", 2, 2), ("fan", "Fan", 2, 2), ("standby", "Back to the game art", 2, 4),
+    ("battery", "Charging", 2, 2), ("game", "Game profile", 2, 2),
+]
+# As QuickSettings.qml's defaultLayout (that page reads settings.json
+# itself): what quickLayout null means.
+DEFAULT_QUICK_LAYOUT = [
+    {"id": "wifi", "span": 1}, {"id": "bluetooth", "span": 1}, {"id": "screenshot", "span": 1},
+    {"id": "record", "span": 1}, {"id": "brightness", "span": 2}, {"id": "volume", "span": 2},
+    {"id": "lights", "span": 2}, {"id": "fan", "span": 2}, {"id": "battery", "span": 2},
+    {"id": "game", "span": 2}, {"id": "standby", "span": 4},
+]
 SETTINGS = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"), "barry_launcher/settings.json")
 DEFAULTS = {"skin": "ayn", "idleSeconds": 0, "standbySeconds": 15, "heroArt": True,
-            "bottomSleepSeconds": 0, "skinVariants": {}}
+            "bottomSleepSeconds": 0, "skinVariants": {}, "quickLayout": None}
 
 
 def read(path: str, default: str = "") -> str:
@@ -274,7 +322,52 @@ def settings() -> dict:
         out.update(clean(saved, strict=False))
     if not any(s["name"] == out["skin"] for s in skins()):
         out["skin"] = DEFAULTS["skin"]
+    if out["quickLayout"] is None:
+        out["quickLayout"] = [dict(w) for w in DEFAULT_QUICK_LAYOUT]
     return out
+
+
+def widgets() -> list[dict]:
+    """Barry's own widgets, then the widget packs: a folder with
+    widget.json and its QML (main, Widget.qml by default). A pack that is
+    not right is left out."""
+    own = [{"id": i, "name": i, "title": t, "kind": "barry", "minSpan": low, "span": span, "builtin": True}
+           for i, t, low, span in BARRY_WIDGETS]
+    found: dict[str, dict] = {}
+    for base in WIDGET_DIRS:
+        for d in sorted(glob.glob(f"{base}/*/widget.json")):
+            d = os.path.dirname(d)
+            name = os.path.basename(d)
+            if name in found or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", name):
+                continue
+            try:
+                with open(f"{d}/widget.json", encoding="utf-8") as fh:
+                    meta = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            main = meta.get("main", "Widget.qml")
+            if not isinstance(main, str) or not re.fullmatch(r"[A-Za-z0-9_-]+\.qml", main) or not os.path.isfile(f"{d}/{main}"):
+                continue
+
+            def number(key: str, lo: int, hi: int, default: int) -> int:
+                v = meta.get(key, default)
+                return max(lo, min(hi, int(v))) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+            low = number("minSpan", 1, 4, 2)
+            found[name] = {
+                "id": f"w-{name}",
+                "name": name,
+                "kind": "pack",
+                "title": str(meta.get("title", name))[:40],
+                "author": str(meta.get("author", ""))[:60],
+                "url": "file://" + os.path.join(d, main),
+                "minSpan": low,
+                "span": max(low, number("span", 1, 4, low)),
+                "height": number("height", 60, 800, 160),
+                "builtin": base != WIDGET_DIRS[0],
+            }
+    return own + list(found.values())
 
 
 def clean(new: dict, strict: bool = True) -> dict:
@@ -294,6 +387,16 @@ def clean(new: dict, strict: bool = True) -> dict:
     sleep = new.get("bottomSleepSeconds")
     if isinstance(sleep, (int, float)) and not isinstance(sleep, bool) and 0 <= sleep <= 86400:
         out["bottomSleepSeconds"] = int(sleep)
+    # The quick settings' widgets: [{id, span}], ids unique.
+    layout = new.get("quickLayout", False)
+    if layout is None:
+        out["quickLayout"] = None
+    elif isinstance(layout, list) and len(layout) <= 32:
+        good = [{"id": w["id"], "span": int(w["span"])} for w in layout
+                if isinstance(w, dict) and isinstance(w.get("id"), str) and re.fullmatch(r"[a-z][a-zA-Z0-9_-]{0,47}", w["id"])
+                and isinstance(w.get("span"), int) and not isinstance(w.get("span"), bool) and 1 <= w["span"] <= 4]
+        if len({w["id"] for w in good}) == len(good) and (not strict or len(good) == len(layout)):
+            out["quickLayout"] = good
     # {skin: variant id}, only skins that have that variant.
     chosen = new.get("skinVariants")
     if isinstance(chosen, dict):
@@ -366,6 +469,7 @@ def set_controls(body: dict) -> tuple[int, dict]:
 
 class Handler(BaseHTTPRequestHandler):
     stats: Stats
+    quick: barry_quick.Quick
 
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj).encode()
@@ -396,8 +500,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"current": next((s for s in found if s["name"] == name), None), "skins": found})
         elif path == "/settings":
             self._json(200, settings())
+        elif path == "/widgets":
+            self._json(200, {"widgets": widgets()})
         elif path == "/controls":
             self._json(200, controls())
+        elif path == "/quick":
+            self._json(200, self.quick.get())
         else:
             self._json(404, {"error": "not found"})
 
@@ -413,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(403, {"error": "local JSON requests only"})
         elif path == "/controls":
             self._json(*set_controls(body))
+        elif path == "/quick":
+            self._json(*self.quick.set(body))
         elif path == "/overlay":
             try:
                 with open(OVERLAY, "w", encoding="utf-8") as fh:
@@ -445,6 +555,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     Handler.stats = Stats()
+    Handler.quick = barry_quick.Quick()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     srv.serve_forever()

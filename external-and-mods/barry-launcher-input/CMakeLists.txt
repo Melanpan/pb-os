@@ -39,6 +39,7 @@ qt_add_qml_module(barryinput
     skin.cpp skin.h
     heattrail.cpp heattrail.h
     pageswipe.cpp pageswipe.h
+    edgeswipe.cpp edgeswipe.h
     steamgame.cpp steamgame.h
     pbosqam.cpp pbosqam.h
   QML_FILES

@@ -754,8 +754,10 @@ if [[ "$SOC" != sm8650 ]]; then
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
-  # (barry_apps, also barry-app's), imported by barry_launcher_shelld.
-  for f in barry_glide.py barry_desktop.py barry_apps.py; do
+  # (barry_apps, also barry-app's), imported by barry_launcher_shelld; the
+  # quick settings' Wi-Fi, Bluetooth, volume and capture (barry_quick),
+  # imported by barry_launcher_statsd.
+  for f in barry_glide.py barry_desktop.py barry_apps.py barry_quick.py; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0644
   done
   # barry-app: install and make Barry Launcher apps from a terminal.
@@ -764,6 +766,11 @@ if [[ "$SOC" != sm8650 ]]; then
   # client built here against the rootfs's libwayland.
   "${ROOT}/external-and-mods/barry-launcher-imd/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_launcher_imd" \
     || die "cannot build barry_launcher_imd (the rootfs needs gcc, wayland-scanner and wayland-protocols)"
+  # The quick settings' Record button: the top screen's PipeWire stream to
+  # an MP4 through the hardware encoder, built against the rootfs's
+  # PipeWire and GStreamer.
+  "${ROOT}/external-and-mods/barry-capture/build.sh" "$R" "$R/usr/lib/barry_launcher/barry_capture" \
+    || die "cannot build barry_capture (the rootfs needs gcc, pkg-config and the PipeWire and GStreamer headers)"
   # Barry.Input: the keyboards and trackpad, a QML module the shell's QML
   # calls straight into (uinput, XTest, the input method), built here
   # against the rootfs's Qt.

@@ -10,13 +10,24 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /launch    {"app": name}: start the app, or bring the running one
                   forward
   POST /close     {"app": name}: quit it
-  GET  /home      {"serial": n, "open": bool, "over": bool}: Barry is open
-                  (its pages over the hero art), over an app it closes back
-                  to, and serial counts the times it came up, for its
-                  slide-in
+  GET  /home      {"serial": n, "open": bool, "over": bool, "page": n,
+                  "under": path, "app": bool, "lifted": [x, y] | null}:
+                  Barry is open (its pages over
+                  the hero art), over an app it closes back to, and serial
+                  counts the times it came up, for its slide-in; page is the
+                  one it opened on (0 the apps, 1 the dashboard, -1 the quick
+                  settings: a swipe in from a side over an app), under a
+                  picture of that app as it showed (a PNG path, or ""), for
+                  the page to slide in over, and app whether an app (not a
+                  tool) is in front with Barry closed: side swipes are on;
+                  lifted where (screen pixels) the swipe up from the bottom
+                  edge that opened it lifted, for no tap there just after
   POST /home      open Barry
-  POST /barry     {"open": bool, "why": str}: open or close Barry (the
-                  shell: a tap on the game art, its standby timeout)
+  POST /barry     {"open": bool, "why": str, "page": n}: open or close Barry
+                  (the shell: a tap on the game art, its standby timeout, a
+                  side swipe over an app with its page)
+  POST /side-prepare {}: a finger came down at a side edge over an app:
+                  take the app's picture now, for the side page it may pull
   POST /apps/install {"path": archive}: install or update a user app
                   (barry_apps), {"ok": bool, "app": manifest | "error": str}
   POST /apps/remove  {"app": id}: remove a user app and its data
@@ -70,6 +81,10 @@ Steam's keyboard).
 Without Steam, gamescope treats every window
 as its own app and shows the most recently mapped one (stacking order does
 not count), so switching is unmapping and mapping the wanted window again.
+Closing Barry back to an app is the other way round: Barry's own window is
+unmapped, and the app, mapped under it all along, shows again as it was.
+Mapping the app again repaints it from nothing: Signal showed a black or
+half-drawn frame each time a side page closed.
 
 Barry opens and closes over the home window, whose base is the selected
 game's hero art (Shell.qml): BARRY_FLAG says whether it is open. A short
@@ -78,7 +93,11 @@ the change (a file monitor) and brings the home window forward. Closing
 goes back to the app that was in front when Barry opened, if it still
 runs; otherwise the hero art stays. This writes the flag too: an app
 started from Barry closes it, and a swipe up from the bottom edge over an
-app opens it.
+app opens it. A swipe in from the left edge over an app opens it on the
+performance dashboard, from the right edge on the quick settings, as a
+phone's side panels: Barry.Input's EdgeSwipe follows the finger and the
+shell asks (POST /side-prepare, /barry with a page); Shell.qml closes back
+to the app when they are swiped away.
 
 User apps (barry_apps: QML apps installed from an archive, by the barry-app
 command or the Barry Launcher plugin) join the home screen after the built-in
@@ -351,6 +370,17 @@ REVEAL_ROW_MAX = 160  # the most pixels high a field's bar (its message box, say
 HOME_SWIPE_EDGE = 45
 HOME_SWIPE_MIN = 150
 HOME_SWIPE_S = 0.8
+PAGE_DASHBOARD, PAGE_QUICK = 1, -1  # Shell.qml's PageSwipe pages
+# The app as it showed, taken just before a side swipe brings Barry forward:
+# only one window shows on the bottom screen, so the side page slides in over
+# this picture of the app instead (Shell.qml), not over the game art.
+UNDER_SHOT = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
+                          "barry_launcher_under.png")
+UNDER_SHOT_S = 1.0  # the most a side swipe waits for gamescope's answer, and again for the file
+UNDER_FRESH_S = 3.0  # a picture taken at the finger's touch-down still counts this long
+# The app's fields regain focus as Barry opens over it or gives it back:
+# that is no tap on them (the keyboard came up in Firefox).
+SIDE_QUIET_S = 1.5
 EV_SYN, EV_KEY, EV_ABS, BTN_TOUCH = 0, 1, 3, 0x14A
 BTN_LEFT, BTN_RIGHT = 0x110, 0x111
 # Presses that count as clicks on the top screen (TOP_CLICK_S): a finger on
@@ -402,6 +432,12 @@ class State:
         self.barry_lock = threading.Lock()  # one open or close at a time
         self.front: str | None = None  # the app shown (None: the home window)
         self.back_app: str | None = None  # in front when Barry opened
+        self.open_page = 0  # the page Barry opened on (GET /home)
+        self.open_lifted: tuple[int, int] | None = None  # where the swipe up that opened it lifted
+        self.under = ""  # UNDER_SHOT when it shows the app Barry opened over
+        self.under_taken = 0.0  # monotonic: when UNDER_SHOT was last taken (0: none)
+        self.under_lock = threading.Lock()  # one picture at a time
+        self.home_win = ""  # Barry's window, unmapped while an app it closed back to shows
         self.home_ready = threading.Event()
         self.im = None  # Desktop Mode: barry_desktop.InputMethod
         self.im_top = False  # Desktop Mode: the active field was tapped on the top screen
@@ -463,15 +499,18 @@ def write_barry_flag(open_: bool) -> None:
         log(f"cannot write {BARRY_FLAG}: {err}")
 
 
-def open_barry(why: str) -> None:
-    """Barry's pages over whatever shows; the app in front is remembered,
-    for closing back to it. A tool (the trackpad, the Deck controls) is not
-    an app to come back to: it closes, and closing Barry shows the hero art
-    (else the AYN button only ever went between Barry and the tool)."""
+def open_barry(why: str, page: int = 0, lifted: tuple[int, int] | None = None) -> None:
+    """Barry's pages over whatever shows, on page (0 the apps); the app in
+    front is remembered, for closing back to it. A tool (the trackpad, the
+    Deck controls) is not an app to come back to: it closes, and closing
+    Barry shows the hero art (else the AYN button only ever went between
+    Barry and the tool)."""
     with STATE.barry_lock:
         if STATE.barry_open:
             return
         STATE.barry_open = True
+        STATE.open_page = page
+        STATE.open_lifted = lifted
         front = STATE.front
         STATE.back_app = front if front and running(front) and not APPS.get(front, {}).get("tool") else None
         log(f"{why}: Barry opens{f' over {front}' if STATE.back_app else ''}")
@@ -487,11 +526,16 @@ def close_barry(why: str, back: bool = True) -> None:
         if not STATE.barry_open:
             return
         STATE.barry_open = False
+        STATE.open_page = 0
+        STATE.open_lifted = None
+        STATE.under = ""
         app, STATE.back_app = STATE.back_app, None
         write_barry_flag(False)
         if back and app and running(app):
+            STATE.quiet_until = time.monotonic() + SIDE_QUIET_S
             log(f"{why}: Barry closes, back to {app}")
-            bring_forward(app)
+            if DESKTOP or not step_aside(app):
+                bring_forward(app)
         else:
             log(f"{why}: Barry closes")
 
@@ -586,11 +630,23 @@ def activate(args: list[str]) -> bool:
     return r.returncode == 0
 
 
+def app_windows(app: str) -> list[list[str]]:
+    """The xdotool searches for a running app's window, in order (Game
+    Mode)."""
+    spec = APPS.get(app, {})
+    if "flatpak" in spec:
+        # Its window, or a launch dialog still waiting for an answer.
+        return [["--classname", spec["window"]], ["--classname", DIALOG_CLASS]]
+    pid = str(running(app).pid)
+    if "qml" in spec or "qmlfile" in spec or "main" in spec:
+        return [["--pid", pid, "--name", spec["window"]]]
+    return [["--pid", pid, "--classname", "Navigator"]]
+
+
 def bring_forward(app: str | None) -> bool:
     """Bring an app's window (None: the home screen) forward."""
     STATE.front = app
     spec = APPS.get(app, {}) if app else {}
-    proc = running(app) if app else None
     if DESKTOP:
         if app is None:
             return barry_desktop.activate(caption=f"^{HOME_TITLE}$")
@@ -600,13 +656,35 @@ def bring_forward(app: str | None) -> bool:
             return barry_desktop.activate(caption=spec["window"])
         return barry_desktop.activate(classes=[f"barry-{app}"])
     if app is None:
+        win, STATE.home_win = STATE.home_win, ""
+        if win:
+            # Unmapped by step_aside: mapping it is enough.
+            r = subprocess.run(["xdotool", "windowmap", "--sync", win], capture_output=True, text=True)
+            if r.returncode == 0:
+                return True
         return activate(["--name", f"^{HOME_TITLE}$"])
-    if "flatpak" in spec:
-        # Its window, or a launch dialog still waiting for an answer.
-        return activate(["--classname", spec["window"]]) or activate(["--classname", DIALOG_CLASS])
-    if "qml" in spec or "qmlfile" in spec or "main" in spec:
-        return activate(["--pid", str(proc.pid), "--name", spec["window"]])
-    return activate(["--pid", str(proc.pid), "--classname", "Navigator"])
+    return any(activate(args) for args in app_windows(app))
+
+
+def step_aside(app: str) -> bool:
+    """Barry closes back to app: its own window is unmapped, and gamescope
+    shows the most recently mapped window left, the app's (mapped under
+    Barry all along), as it was. Mapping the app again (bring_forward)
+    makes it paint anew: Signal showed a black or half-drawn frame as a
+    side page closed. Only with the app's window mapped (Signal can close to
+    its tray), else nothing would show."""
+    if not any(window_shown(args) for args in app_windows(app)):
+        return False
+    r = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", f"^{HOME_TITLE}$"],
+                       capture_output=True, text=True)
+    wins = r.stdout.split()
+    if len(wins) != 1:
+        return False
+    if subprocess.run(["xdotool", "windowunmap", "--sync", wins[0]], capture_output=True).returncode != 0:
+        return False
+    STATE.home_win = wins[0]
+    STATE.front = app
+    return True
 
 
 def go_home(raise_window: bool = True) -> None:
@@ -1397,7 +1475,11 @@ class Handler(BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         if path == "/home":
             self._json(200, {"serial": STATE.home_serial, "open": barry_up(),
-                             "over": barry_up() and STATE.back_app is not None})
+                             "over": barry_up() and STATE.back_app is not None,
+                             "page": STATE.open_page if barry_up() else 0,
+                             "under": STATE.under if barry_up() else "",
+                             "app": app_in_front(),
+                             "lifted": list(STATE.open_lifted) if barry_up() and STATE.open_lifted else None})
         elif path == "/keyboard":
             # Keyboard.qml polls with its panel height (?h=).
             h = urllib.parse.parse_qs(query).get("h", [""])[0]
@@ -1453,9 +1535,16 @@ class Handler(BaseHTTPRequestHandler):
             if DESKTOP:
                 self._json(409, {"error": "Game Mode only"})
             else:
-                threading.Thread(target=open_barry if body.get("open") else close_barry, args=(why,),
-                                 daemon=True).start()
+                page = body.get("page")
+                if body.get("open") and page in (PAGE_DASHBOARD, PAGE_QUICK):
+                    threading.Thread(target=open_side, args=(page, why), daemon=True).start()
+                else:
+                    threading.Thread(target=open_barry if body.get("open") else close_barry, args=(why,),
+                                     daemon=True).start()
                 self._json(200, {"ok": True})
+        elif path == "/side-prepare":
+            threading.Thread(target=side_prepare, daemon=True).start()
+            self._json(200, {"ok": True})
         elif path == "/home-ready":
             if body.get("serial") == STATE.home_serial:
                 STATE.home_ready.set()
@@ -1579,7 +1668,8 @@ def raw_to_screen(raw_x: int, raw_y: int) -> tuple[int, int]:
 
 
 def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
-    """A one-finger touch lifted: a tap, or a swipe up from the bottom edge."""
+    """A one-finger touch lifted: a tap, or a swipe up from the bottom edge.
+    (Side swipes are Barry.Input's EdgeSwipe: they follow the finger.)"""
     if abs(end[0] - start[0]) + abs(end[1] - start[1]) < TAP_SLOP:
         GLib.idle_add(on_tap, *end)
         return
@@ -1587,10 +1677,10 @@ def touch_ended(start: tuple, end: tuple, seconds: float) -> None:
     screen_h = int(os.environ.get("THOR_BOTTOM_HEIGHT", "1080"))
     start_y, end_y = screen_h - 1 - start[0], screen_h - 1 - end[0]
     if start_y >= screen_h - HOME_SWIPE_EDGE and start_y - end_y >= HOME_SWIPE_MIN and seconds <= HOME_SWIPE_S:
-        GLib.idle_add(on_home_swipe)
+        GLib.idle_add(on_home_swipe, raw_to_screen(*end))
 
 
-def on_home_swipe() -> bool:
+def on_home_swipe(lifted: tuple[int, int]) -> bool:
     if DESKTOP:
         log("swipe up from the bottom edge: home")
         go_home()
@@ -1600,8 +1690,80 @@ def on_home_swipe() -> bool:
         # A tap or the AYN button wakes Barry there.
         log("swipe up from the bottom edge over the game art: ignored")
     else:
-        threading.Thread(target=open_barry, args=("swipe up from the bottom edge",), daemon=True).start()
+        # Where it lifted: the thumb comes back down there on its way to
+        # the edge, onto the bottom row's tiles (Shell.qml: no tap there
+        # just after).
+        threading.Thread(target=open_barry, args=("swipe up from the bottom edge", 0, lifted),
+                         daemon=True).start()
     return False
+
+
+def under_shot() -> str:
+    """A picture of the bottom screen as it shows now (this gamescope's
+    screenshot): UNDER_SHOT, or "" if none came in time."""
+    with STATE.under_lock:
+        shot = take_under_shot()
+        STATE.under_taken = time.monotonic() if shot else 0.0
+        return shot
+
+
+def take_under_shot() -> str:
+    try:
+        os.remove(UNDER_SHOT)
+    except OSError:
+        pass
+    started = time.monotonic()
+    try:
+        subprocess.run(["gamescopectl", "screenshot", UNDER_SHOT], capture_output=True, timeout=UNDER_SHOT_S)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        log(f"no picture of the app for the side page: {err}")
+        return ""
+    # gamescope writes the file itself, a moment after it says so.
+    end = time.monotonic() + UNDER_SHOT_S
+    size = -1
+    while time.monotonic() < end:
+        try:
+            now = os.path.getsize(UNDER_SHOT)
+        except OSError:
+            now = -1
+        if now > 0 and now == size:
+            log(f"picture of the app for the side page in {time.monotonic() - started:.2f} s")
+            return UNDER_SHOT
+        size = now
+        time.sleep(0.03)
+    log("no picture of the app for the side page: gamescope wrote none in time")
+    return ""
+
+
+def app_in_front() -> bool:
+    """An app (not a tool: the trackpad, the Deck controls) shows, Barry
+    closed: side swipes pull Barry's side pages over it."""
+    app = STATE.front
+    return (not DESKTOP and not barry_up() and app is not None and running(app) is not None
+            and not APPS.get(app, {}).get("tool"))
+
+
+def side_prepare() -> None:
+    """A finger at a side edge over an app: its picture now, so the page it
+    may pull comes without waiting for one."""
+    if app_in_front():
+        under_shot()
+
+
+def open_side(page: int, why: str) -> None:
+    """A side page over the app in front, sliding in over its picture: the
+    one taken at the finger's touch-down if it is fresh, else one now."""
+    if not app_in_front():
+        return
+    with STATE.under_lock:
+        fresh = STATE.under_taken and time.monotonic() - STATE.under_taken < UNDER_FRESH_S
+    shot = UNDER_SHOT if fresh and os.path.exists(UNDER_SHOT) else under_shot()
+    with STATE.barry_lock:
+        STATE.under = shot
+    STATE.quiet_until = time.monotonic() + SIDE_QUIET_S
+    open_barry(why, page)
+    if not STATE.barry_open:
+        STATE.under = ""
 
 
 def text_field(acc) -> tuple[bool, bool]:
@@ -2011,6 +2173,8 @@ def main() -> None:
                 del STATE.apps[name]
                 if STATE.front == name:
                     STATE.front = None  # gamescope shows the home window again
+                    if STATE.home_win and not barry_up():
+                        bring_forward(None)  # unmapped as Barry closed back to it
                 if name in STATE.services:
                     threading.Thread(target=barry_apps.stop_service, args=(STATE.services.pop(name),),
                                      daemon=True).start()

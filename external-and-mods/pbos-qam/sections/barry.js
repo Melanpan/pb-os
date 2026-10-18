@@ -42,6 +42,11 @@ const setLanguage = callable("set_language");
 const checkLanguage = callable("check_language");
 const installLanguage = callable("install_language");
 const removeLanguage = callable("remove_language");
+const getWidgets = callable("get_widgets");
+const setWidgetShown = callable("set_widget_shown");
+const checkWidget = callable("check_widget");
+const installWidget = callable("install_widget");
+const removeWidget = callable("remove_widget");
 const steamGame = callable("steam_game");
 const getBottomSettings = callable("get_bottom_settings");
 const setBottomSettings = callable("set_bottom_settings");
@@ -384,6 +389,13 @@ const LanguagesIcon = () => svg([
     jsx("circle", { cx: 12, cy: 12, r: 9 }, "o"),
     jsx("path", { d: "M3 12h18" }, "e"),
     jsx("path", { d: "M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" }, "m"),
+]);
+
+// Four tiles, one wide: the quick settings page's widgets.
+const WidgetsIcon = () => svg([
+    jsx("rect", { x: 3, y: 3, width: 8, height: 8, rx: 2 }, "a"),
+    jsx("rect", { x: 13, y: 3, width: 8, height: 8, rx: 2 }, "b"),
+    jsx("rect", { x: 3, y: 13, width: 18, height: 8, rx: 2 }, "c"),
 ]);
 
 // LB and RB: the controller's bumpers, in Steam's button numbering.
@@ -839,6 +851,72 @@ function LanguagesSection() {
     ] });
 }
 
+// The quick settings page's widgets (Barry Launcher, swipe left from the
+// apps), Barry's own and the packs': each one's row puts it on the page or
+// takes it off (✓ = on it), so one taken off there comes back here; ✕
+// deletes a pack you added, and one is added the way a theme is. On the
+// page itself, a long press moves, resizes and removes them.
+const WIDGET_EXTENSIONS = [...ARCHIVE_EXTENSIONS, "json"];
+
+function WidgetsSection() {
+    const [st, setSt] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState("");
+    const [msg, setMsg] = useState("");
+    const load = useCallback(() => {
+        getWidgets().then((r) => {
+            if (r && r.ok) { setSt(r); setErr(""); }
+            else setErr((r && r.error) || "Barry Launcher isn't answering.");
+        }).catch(() => setErr("Barry Launcher isn't answering."));
+    }, []);
+    useEffect(load, [load]);
+    const toggle = (w) => {
+        setErr(""); setMsg("");
+        setWidgetShown(w.id, !w.on).then((r) => {
+            if (r && r.ok) { setSt(r); setMsg(`${w.title} is ${w.on ? "off" : "on"} the quick settings page.`); }
+            else setErr((r && r.error) || "Could not change the page.");
+        }).catch(() => setErr("Could not change the page."));
+    };
+    // A widget's .zip or .tar.gz, or the widget.json in its folder. A widget
+    // is always code (QML), so it is always asked first; once added it goes
+    // on the page.
+    const add = () => addPack({
+        noun: "widget", extensions: WIDGET_EXTENSIONS, check: checkWidget,
+        install: (path) => installWidget(path).then((r) => {
+            if (!r || !r.ok) return r;
+            return setWidgetShown(`w-${r.widget.name}`, true).then(() => r).catch(() => r);
+        }),
+        code: (w) => `${w.title} is a widget with its own code, which runs on this device `
+            + "as you. Add it only if you trust where it came from.",
+        setBusy, setErr, setMsg, load,
+    });
+    const remove = (w) => DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: `Remove ${w.title}?`,
+        strDescription: "The widget is deleted" + (w.on ? " and leaves the quick settings page." : "."),
+        strOKButtonText: "Remove",
+        onOK: () => {
+            setErr(""); setMsg("");
+            removeWidget(w.name).then((r) => {
+                if (r && r.ok) { setSt(r); setMsg(`Removed ${w.title}.`); }
+                else setErr((r && r.error) || "Could not remove the widget.");
+            }).catch(() => setErr("Could not remove the widget."));
+        },
+    }));
+    return jsxs(DFL.PanelSection, { title: "Widgets", children: [
+        err && note(err),
+        ...(st ? st.widgets : []).map((w) => pickRow({
+            title: w.author && !w.builtin ? `${w.title} (${w.author})` : w.title,
+            on: w.on, onPick: () => toggle(w), onRemove: w.kind === "pack" && !w.builtin && (() => remove(w)),
+        })),
+        msg && note(msg),
+        row(jsx(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: add,
+            children: busy ? "Working…" : "Add a widget" })),
+        note("✓: on Barry Launcher's quick settings page (swipe left from the apps). There, a long press "
+            + "lets you drag widgets around, resize them, and remove them with ✕. A widget pack comes as a .zip (or .tar.gz), or as a folder: pick the widget.json in it. "
+            + "With a USB drive plugged in, the files open there; otherwise in Downloads."),
+    ] });
+}
+
 // The Games tab's picks. A dropdown's list remounts the panel, which would
 // otherwise put the Game back on the last one played.
 const gamePicks = { game: null, app: null, close: true };
@@ -1077,6 +1155,7 @@ P.plugin({ id: "screens", title: "Dual Screen", icon: ThorIcon, content: Screens
 P.plugin({ id: "art", title: "Bottom Screen Art", icon: ThemesIcon, content: ArtPage, order: 15 });
 P.plugin({ id: "apps", title: "Apps", icon: AppsIcon, content: AppsSection, order: 20 });
 P.plugin({ id: "themes", title: "Themes", icon: ThemesIcon, content: ThemesSection, order: 30 });
+P.plugin({ id: "widgets", title: "Widgets", icon: WidgetsIcon, content: WidgetsSection, order: 35 });
 P.plugin({ id: "languages", title: "Keyboard Languages", icon: LanguagesIcon, content: LanguagesSection, order: 40 });
 P.plugin({ id: "games", title: "Companion Apps", icon: GamesIcon, content: GamesSection, order: 50 });
 P.plugin({ id: "emulators", title: "Emulators", icon: HandheldIcon, content: TwoScreenSection, order: 70 });

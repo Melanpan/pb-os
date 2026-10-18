@@ -1,17 +1,21 @@
 pragma ComponentBehavior: Bound
 // Built-in skin, laid out like AYN's Android dashboard: status bar, current
 // FPS, temperature, fan, gauges for CPU, GPU, power and memory, and quick
-// controls (QuickControls.qml).
+// controls (QuickControls.qml). Its colors and font are the installed
+// theme's (Barry.Input's Skin; the defaults are this skin's own look), so a
+// theme without a dashboard of its own gets this one in its colors.
 import QtQuick
 import QtQuick.Layouts
+import Barry.Input
 
 Rectangle {
     id: root
     property var dashboard
     readonly property var st: dashboard ? dashboard.stats : ({})
     readonly property real s: Math.min(width / 1240, height / 1080)
+    readonly property var c: Skin.colors
 
-    color: "#0d0e12"
+    color: c.surface
 
     function rate(bps) {
         const units = ["B/s", "KB/s", "MB/s", "GB/s"]
@@ -21,14 +25,14 @@ Rectangle {
     }
 
     component Label: Text {
-        color: "#eef0f4"
-        font.family: "Noto Sans"
+        color: root.c.text
+        font.family: Skin.font || "Noto Sans"
     }
 
     component Tile: Rectangle {
         property string title
         property string value: "–"
-        color: "#1b1d24"
+        color: root.c.panel
         radius: 28 * root.s
         Layout.preferredWidth: 300 * root.s
         Layout.fillHeight: true
@@ -87,8 +91,8 @@ Rectangle {
                 radius: 28 * root.s
                 gradient: Gradient {
                     orientation: Gradient.Vertical
-                    GradientStop { position: 0; color: "#5a5f6b" }
-                    GradientStop { position: 1; color: "#3a3d45" }
+                    GradientStop { position: 0; color: root.c.pressed }
+                    GradientStop { position: 1; color: root.c.raised }
                 }
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -96,12 +100,12 @@ Rectangle {
                     width: pill.implicitWidth + 36 * root.s
                     height: pill.implicitHeight + 12 * root.s
                     radius: height / 2
-                    color: "#6b2fb3"
+                    color: root.c.lit
                     Label {
                         id: pill
                         anchors.centerIn: parent
                         text: "GAME MODE"
-                        color: "white"
+                        color: root.c.litText
                         font { pixelSize: 22 * root.s; bold: true }
                     }
                 }
@@ -148,7 +152,7 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 206 * root.s
-            color: "#1b1d24"
+            color: root.c.panel
             radius: 28 * root.s
             RowLayout {
                 anchors.fill: parent

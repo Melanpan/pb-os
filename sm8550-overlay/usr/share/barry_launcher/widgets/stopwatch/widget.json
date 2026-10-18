@@ -1,0 +1,8 @@
+{
+  "title": "Stopwatch",
+  "author": "PB-OS",
+  "api": 1,
+  "minSpan": 2,
+  "span": 2,
+  "height": 210
+}

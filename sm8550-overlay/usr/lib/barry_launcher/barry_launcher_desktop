@@ -91,7 +91,8 @@ top_screen_first
 export BARRY_DESKTOP=1 BARRY_OUTPUT="${BARRY_OUTPUT:-DSI-1}"
 shell_qml=/usr/share/barry_launcher/shell
 /usr/lib/barry_launcher/barry_launcher_shelld &
-QT_QPA_PLATFORM=wayland qml6 "$shell_qml/Shell.qml" &
+# "desktop": no game art (Game Mode's standby, Shell.qml).
+QT_QPA_PLATFORM=wayland qml6 "$shell_qml/Shell.qml" -- desktop &
 sleep 1  # home first, so it stays under the apps
 QT_QPA_PLATFORM=wayland qml6 "$shell_qml/Keyboard.qml" -- desktop &
 wait

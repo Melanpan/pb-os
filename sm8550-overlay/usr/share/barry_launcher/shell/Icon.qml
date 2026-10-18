@@ -3,7 +3,8 @@
 // chat, trackpad, keyboard, app (a user app without an icon of its own),
 // the keyboard keys, and the apps' logos as line
 // art in the same style: firefox, discord, signal (outlines from Tabler
-// Icons, MIT), and dino; all drawn on a 24-unit grid and scaled.
+// Icons, MIT), and dino; the quick settings' wifi, bluetooth, camera,
+// record, square, sun and volume (Tabler too); all drawn on a 24-unit grid and scaled.
 import QtQuick
 import QtQuick.Shapes
 
@@ -47,6 +48,18 @@ Shape {
               + "c-1.447 -1.447 -3.447 -2.342 -5.657 -2.342c-2.21 0 -4.21 .895 -5.657 2.342"
               + "c-1.447 1.447 -2.342 3.447 -2.342 5.657c0 .666 .075 1.308 .223 1.909c.156 .637 .383 1.244 .676 1.805"
               + "l.519 .993l-.571 2.445",
+        // The quick settings' icons (Tabler Icons outlines).
+        wifi: "M12 18h.01M9.172 15.172a4 4 0 0 1 5.656 0M6.343 12.343a8 8 0 0 1 11.314 0"
+            + "M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0",
+        bluetooth: "M7 8l10 8l-5 4l0 -16l5 4l-10 8",
+        camera: "M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9"
+              + "a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0",
+        square: "M7 7h10v10h-10z",
+        record: "M5 12a7 7 0 1 0 14 0a7 7 0 1 0 -14 0M9.5 12a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0",
+        sun: "M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0M3 12h1m8 -9v1m8 8h1m-9 8v1"
+           + "m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7",
+        volume: "M15 8a5 5 0 0 1 0 8M17.7 5a9 9 0 0 1 0 14M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2"
+              + "l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5",
         // Head with an open jaw, back, tail, belly; legs, arm and eye apart.
         dino: "M15.5 9.5H19.5V8.5H16.5V7H21V4Q21 2.5 19.5 2.5H13.5Q12 2.5 12 4V10"
             + "L9 12L6 13.2L2 10.5L3 14.8Q6 17.5 9.5 17H13L15.5 13.5Z"

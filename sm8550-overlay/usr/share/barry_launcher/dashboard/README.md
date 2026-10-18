@@ -125,6 +125,10 @@ display not reachable); leave that control out. Change them with
   `brightness` x `dimmer` (20-100, set by the Barry Launcher plugin) on a
   perceptual curve, so brightness 100 is as bright as the dimmer allows
 
+The built-in skins show only the fan and refresh rows: the lights are on
+Barry's quick settings page (the page right of the apps). A skin of your own
+may still show them.
+
 ## Minimal skin
 
 ```qml

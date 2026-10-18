@@ -10,8 +10,9 @@
 // Barry Launcher's Keyboard app in place of Steam's on-screen keyboard (the
 // frontend asks whether it can and opens it there), its home apps, user
 // apps and apps that open with games (barry_launcher_shelld keeps them), its
-// themes (barry_launcher_statsd lists them) and its keyboards' language
-// packs: added from a USB drive or Downloads, unpacked safely into the
+// themes (barry_launcher_statsd lists them), its keyboards' language packs
+// and its quick settings page's widget packs: added from a USB drive or
+// Downloads, unpacked safely into the
 // user's ~/.local/share/barry_launcher, removed again. The game selected in
 // Steam, for the bottom screen's hero art (heroart.cpp), and the user's
 // SteamGridDB key for it.
@@ -795,7 +796,7 @@ void usb_unmount() {
     }
 }
 
-// What install_theme and install_language add: a folder known by the file at
+// What install_theme, install_language and install_widget add: a folder known by the file at
 // its top (marker), unpacked from an archive or picked by that file.
 struct PackKind {
     const char* noun;
@@ -804,6 +805,7 @@ struct PackKind {
 };
 const PackKind THEME = {"theme", "skin.json", 40};
 const PackKind LANGUAGE = {"language", "keyboard.json", 32};
+const PackKind WIDGET = {"widget", "widget.json", 40};
 
 struct PackError : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -1215,6 +1217,121 @@ Value remove_language(const std::string& name) {
     return after;
 }
 
+// -------------------------------------------------------------- widgets --
+// The quick settings page's widget packs (QML; see the README in
+// /usr/share/barry_launcher/widgets). statsd lists them (the user's
+// winning over a shipped one) and keeps the page's layout (quickLayout, a
+// pack's id there "w-<name>"); Barry Launcher reads both and follows.
+std::string widgets_dir() { return home() + "/.local/share/barry_launcher/widgets"; }
+
+Value check_widget(const Value& meta, const std::string& src) {
+    // As statsd's widgets(): its QML file at the top, sizes in range.
+    std::string main = meta["main"].truthy() ? meta["main"].str() : "Widget.qml";
+    static const std::regex file(R"([A-Za-z0-9_-]+\.qml)");
+    if (!std::regex_match(main, file)) throw PackError("widget.json's main must be a .qml file in the widget's top folder");
+    if (!is_file(src + "/" + main)) throw PackError("no " + main + " in it (widget.json's main)");
+    for (const char* key : {"minSpan", "span"})
+        if (meta.has(key) && (!meta[key].is_number() || meta[key].as_int(0) < 1 || meta[key].as_int(0) > 4))
+            throw PackError(std::string("widget.json's ") + key + " must be 1 to 4");
+    if (meta.has("height") && (!meta["height"].is_number() || meta["height"].as_int(0) < 60 || meta["height"].as_int(0) > 800))
+        throw PackError("widget.json's height must be 60 to 800");
+    Value v = Value::object();
+    v["title"] = meta["title"].truthy() ? meta["title"].str() : "";
+    v["author"] = meta["author"].truthy() ? meta["author"].str() : "";
+    return v;
+}
+
+Value quick_layout() {
+    Value layout = http_json("GET", STATSD, "/settings", nullptr, 2)["quickLayout"];
+    return layout.is_array() ? layout : Value::array();
+}
+
+Value widgets_state() {
+    // Every widget, Barry's own (kind "barry") and the packs', whether it
+    // is on the quick settings page, and whether it is one the user added
+    // (only those can be removed).
+    Value listed = http_json("GET", STATSD, "/widgets", nullptr, 2);
+    // (Each list held here: a temporary's items() would be gone in the loop.)
+    std::set<std::string> on;
+    Value layout_now = quick_layout();
+    for (const auto& w : layout_now.items()) on.insert(w["id"].str());
+    Value list = Value::array();
+    for (const auto& w : listed["widgets"].items()) {
+        Value t = Value::object();
+        t["id"] = w["id"];
+        t["kind"] = w["kind"];
+        t["name"] = w["name"];
+        t["title"] = w["title"].truthy() ? w["title"] : w["name"];
+        t["author"] = w["author"];
+        t["builtin"] = w["builtin"];
+        t["on"] = on.count(w["id"].str()) > 0;
+        list.push(t);
+    }
+    Value out = Value::object();
+    out["ok"] = true;
+    out["widgets"] = list;
+    return out;
+}
+
+Value set_widget_shown(const std::string& id, bool shown) {
+    // Put a widget (by its id) on the quick settings page (at its end, as
+    // wide as it comes) or take it off.
+    Value listed = http_json("GET", STATSD, "/widgets", nullptr, 2);
+    const Value* pack = nullptr;
+    for (const auto& w : listed["widgets"].items())
+        if (w["id"].str() == id) pack = &w;
+    if (!pack) return *Value::parse(R"({"ok": false, "error": "That widget isn't there."})");
+    Value layout = Value::array();
+    bool had = false;
+    Value old_layout = quick_layout();
+    for (const auto& w : old_layout.items()) {
+        if (w["id"].str() == id) {
+            had = true;
+            if (!shown) continue;
+        }
+        layout.push(w);
+    }
+    if (shown && !had) {
+        Value w = Value::object();
+        w["id"] = id;
+        w["span"] = (*pack)["span"].as_int(2);
+        layout.push(w);
+    }
+    Value body = Value::object();
+    body["quickLayout"] = layout;
+    http_json("POST", STATSD, "/settings", &body, 2);
+    log("barry: widget %s %s the quick settings page", id.c_str(), shown ? "on" : "off");
+    return widgets_state();
+}
+
+Value install_widget(const std::string& path, bool check_only) {
+    return install_pack(path, check_only, WIDGET, widgets_dir(), check_widget);
+}
+
+Value remove_widget(const std::string& name) {
+    // Delete a widget the user added (never a shipped one), and take it off
+    // the page unless a shipped one of that name takes its place.
+    Value state = widgets_state();
+    const Value* widget = nullptr;
+    for (const auto& w : state["widgets"].items())
+        if (w["kind"].str() == "pack" && w["name"].str() == name) widget = &w;
+    if (!widget || (*widget)["builtin"].truthy())
+        return *Value::parse(R"({"ok": false, "error": "Only a widget you added can be removed."})");
+    remove_tree(widgets_dir() + "/" + name);
+    Value after = widgets_state();
+    for (const auto& w : after["widgets"].items())
+        if (w["kind"].str() == "pack" && w["name"].str() == name) return after;
+    // Gone from statsd's list too: off the page by its id.
+    Value layout = Value::array();
+    Value old_layout = quick_layout();
+    for (const auto& w : old_layout.items())
+        if (w["id"].str() != "w-" + name) layout.push(w);
+    Value body = Value::object();
+    body["quickLayout"] = layout;
+    http_json("POST", STATSD, "/settings", &body, 2);
+    return widgets_state();
+}
+
 // ------------------------------------------------------- the keyboard --
 std::string steam_display_user() {
     // The user running Game Mode's main gamescope (Steam's :0), if any.
@@ -1406,6 +1523,19 @@ private:
         if (m == "themes_done") {
             usb_unmount();
             return Value();
+        }
+        if (m == "get_widgets") return widgets_state();
+        if (m == "set_widget_shown") return set_widget_shown(arg(a, 0, "").str(), arg(a, 1, true).truthy());
+        if (m == "check_widget") return install_widget(arg(a, 0, "").str(), true);
+        if (m == "install_widget") return install_widget(arg(a, 0, "").str(), false);
+        if (m == "remove_widget") {
+            try {
+                return remove_widget(arg(a, 0, "").str());
+            } catch (const NetError& e) {
+                return error("Could not remove the widget (" + e.msg + ").");
+            } catch (const std::exception& e) {
+                return error("Could not remove the widget (" + std::string(e.what()) + ").");
+            }
         }
         if (m == "check_theme") return install_skin(arg(a, 0, "").str(), true);
         if (m == "install_theme") return install_skin(arg(a, 0, "").str(), false);
