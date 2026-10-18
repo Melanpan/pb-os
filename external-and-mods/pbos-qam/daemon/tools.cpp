@@ -17,8 +17,8 @@
 //          the Easy UFS Installer's scripts, as the transient unit
 //          pbos-utils-move; its end is heard from systemd (D-Bus).
 // Lights   stick lighting: pbosd's state on the KONKR Pocket FIT / AYANEO
-//          Pocket S2; the light engine (pbos_lights.py, its own unit on the
-//          system's Python) on the Retroid Pocket 6 / Nova and AYN Odin 2s.
+//          Pocket S2; the light engine (lights.cpp, pbos-qamd --lights as
+//          its own unit) on the Retroid Pocket 6 / Nova and AYN Odin 2s.
 // Performance  a mode for when no game says otherwise and one per game
 //          (Full Power, Low Power): pbosd's profile on the KONKR Pocket FIT /
 //          AYANEO Pocket S2, clock caps written here everywhere else. The
@@ -74,7 +74,7 @@ constexpr double SIZES_TTL = 600;
 const std::string PBOSD_STATE = "/var/lib/pbosd/state.json";
 const std::string LIGHTS_STATE = "/var/lib/pbos-utils/lights.json";
 const std::string ENGINE_UNIT = "pbos-utils-lights";
-const std::string ENGINE = "/usr/lib/pbos-qam/pbos_lights.py";
+const std::string ENGINE = "/usr/lib/pbos-qam/pbos-qamd";
 const std::string MCU_BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf";
 const std::string CHARGE_REST = "/usr/lib/steamos-sm8550/sm8550-charge-rest";
 const std::string PREVIEW_UNIT = "pbos-utils-charge-preview";
@@ -133,7 +133,7 @@ Value parse_or(const std::string& text, Value def) {
 }
 
 // ------------------------------------------------------------------ lights --
-// As pbos_lights.py (the engine keeps its own copy of these).
+// As lights.cpp (the engine keeps its own copy of these).
 Value effects_json(const char* kind) {
     if (std::string(kind) == "pbosd")
         return *Value::parse(R"([
@@ -288,7 +288,7 @@ void start_engine() {
     RunOpts o;
     o.env = clean_env();
     auto r = run({"systemd-run", "--unit=" + ENGINE_UNIT, "--collect", "-p", "Restart=on-failure", "-p",
-                  "RestartSec=2", "/usr/bin/python3", "-u", ENGINE},
+                  "RestartSec=2", ENGINE, "--lights"},
                  o);
     if (r.code != 0) log("tools: light engine: %s", trim(r.err).c_str());
 }

@@ -37,12 +37,14 @@ public:
     void cancel(uint64_t id);
 
     // inotify: cb(mask, name) for each event on path (a folder's entries
-    // carry their name). 0 when the path cannot be watched.
+    // carry their name). 0 when the path cannot be watched. A watcher whose
+    // mask has IN_Q_OVERFLOW hears when the queue overflowed (name empty).
     using WatchFn = std::function<void(uint32_t mask, const std::string& name)>;
     int watch(const std::string& path, uint32_t mask, WatchFn cb);
     void unwatch(int id);
 
-    // Kernel uevents (block devices coming and going): cb(subsystem, action).
+    // Kernel uevents (block devices coming and going): cb(subsystem, action);
+    // an empty subsystem when some were dropped (ENOBUFS).
     void on_uevent(std::function<void(const std::string&, const std::string&)> cb);
     // A systemd unit changed state (started, stopped, failed).
     void on_unit_change(const std::string& unit, Fn cb);

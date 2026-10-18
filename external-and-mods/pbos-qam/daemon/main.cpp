@@ -20,6 +20,8 @@
 //                     check, see STEAM-INTERNALS.md).
 // pbos-qamd --call SECTION METHOD [ARGS]
 //                     one backend call without Steam, for testing.
+// pbos-qamd --lights  the stick light engine (lights.cpp), the unit
+//                     pbos-utils-lights the tools section starts.
 
 #include <poll.h>
 #include <sys/eventfd.h>
@@ -34,6 +36,7 @@
 
 #include "barrylink.h"
 #include "cdp.h"
+#include "lights.h"
 #include "loop.h"
 #include "section.h"
 #include "util.h"
@@ -446,6 +449,7 @@ int main(int argc, char** argv) {
         bool as_json = argc > 2 && !std::strcmp(argv[2], "--json");
         return pq::check(as_json);
     }
+    if (argc > 1 && !std::strcmp(argv[1], "--lights")) return pq::run_lights();
     if (argc > 1 && !std::strcmp(argv[1], "--version")) {
         std::printf("pbos-qamd %s\n", pq::kVersion);
         return 0;

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # PB-OS Quick Access: the PB-OS tab in Steam's Quick Access menu (was the
 # PB-OS Tools and Barry Launcher Decky plugins), on every device.
-#   /usr/lib/pbos-qam/pbos-qamd         the daemon, built here in the rootfs
-#   /usr/lib/pbos-qam/pbos_lights.py    the stick light engine (its own unit)
+#   /usr/lib/pbos-qam/pbos-qamd         the daemon, built here in the rootfs; also
+#                                       the stick light engine (--lights, its own unit)
 #   /usr/share/pbos-qam/pbos-qam.js     the frontend loader (prebuilt, frontend/build.sh)
 #   /usr/share/pbos-qam/sections/*.js   each section's frontend
 # Usage: install-pbos-qam.sh <rootfs>
@@ -22,7 +22,6 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 rm -rf "$R/usr/lib/pbos-qam" "$R/usr/share/pbos-qam"
 "$SRC/build.sh" "$R" "$R/usr/lib/pbos-qam/pbos-qamd" \
   || die "cannot build pbos-qamd (the rootfs needs g++, systemd and libarchive headers)"
-install -m 0644 "$SRC/pbos_lights.py" "$R/usr/lib/pbos-qam/pbos_lights.py"
 install -D -m 0644 "$SRC/frontend/dist/pbos-qam.js" "$R/usr/share/pbos-qam/pbos-qam.js"
 for f in "$SRC"/sections/*.js; do
   install -D -m 0644 "$f" "$R/usr/share/pbos-qam/sections/$(basename "$f")"

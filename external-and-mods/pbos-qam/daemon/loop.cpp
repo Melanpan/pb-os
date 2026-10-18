@@ -251,6 +251,14 @@ void Loop::drain_inotify() {
             auto* ev = reinterpret_cast<inotify_event*>(p);
             p += sizeof(inotify_event) + ev->len;
             std::string name = ev->len ? std::string(ev->name) : std::string();
+            if (ev->mask & IN_Q_OVERFLOW) {
+                // Events were lost: every watcher that asked hears it.
+                auto all = watches_;  // a callback may change the watches
+                for (auto& [wd, list] : all)
+                    for (auto& w : list)
+                        if (w.mask & IN_Q_OVERFLOW) w.cb(IN_Q_OVERFLOW, "");
+                continue;
+            }
             auto it = watches_.find(ev->wd);
             if (it == watches_.end()) continue;
             if (ev->mask & IN_IGNORED) {
@@ -280,6 +288,8 @@ void Loop::on_uevent(std::function<void(const std::string&, const std::string&)>
         sockaddr_nl addr{};
         addr.nl_family = AF_NETLINK;
         addr.nl_groups = 1;  // the kernel's own events
+        int rcvbuf = 1 << 20;  // room for a resume's burst (needs root; else the default stays)
+        setsockopt(uevent_, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof rcvbuf);
         if (bind(uevent_, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
             log("uevents: %s", std::strerror(errno));
             close(uevent_);
@@ -295,6 +305,11 @@ void Loop::drain_uevents() {
     char buf[8192];
     while (true) {
         ssize_t n = recv(uevent_, buf, sizeof buf - 1, 0);
+        if (n < 0 && errno == ENOBUFS) {
+            // Some were dropped (a burst, as at resume): an empty subsystem.
+            for (auto& cb : uevent_cbs_) cb("", "");
+            continue;
+        }
         if (n <= 0) break;
         buf[n] = 0;
         std::string subsystem, action;
