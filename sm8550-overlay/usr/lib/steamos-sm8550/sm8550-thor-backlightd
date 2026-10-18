@@ -154,6 +154,12 @@ YIELD_RETRY_S = 2
 PANEL_RETRY_S = 0.5
 # Whether Desktop Mode (Plasma) is up is looked at this often.
 MODE_CHECK_S = 2
+# Game Mode's start: Steam puts its own level back, fading in from half
+# over half a minute or more, through the same file its slider writes.
+# Until its file shows exactly the level SCREENS has from it (or this long
+# has passed since this or Game Mode started), that is not a move of its
+# slider, so each screen keeps its own brightness.
+STEAM_RESTORE_S = 120
 # A new brightness is reached in a glide this long, a step every GLIDE_MS:
 # sliders send a few values a second, and each jump showed as a tick.
 GLIDE_S = 0.15
@@ -627,6 +633,7 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
         steam_value = screens["steam"]
     shadow_bottom(bottom_path, steam_value)
     steam_fd = watch(STEAM_BOTTOM)
+    restoring_until = time.monotonic() + STEAM_RESTORE_S  # see STEAM_RESTORE_S
     # What the top panel held after this last wrote it (or found it), so a
     # different value there is a change from gamescope.
     wrote_top = top_set()
@@ -825,6 +832,7 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                         write(DESKTOP_START, json.dumps(screens) + "\n")
                 else:
                     clear_desktop()
+                    restoring_until = time.monotonic() + STEAM_RESTORE_S
                 if not desktop and screens["steam"] > 0:
                     # Plasma's bottom slider wrote into Steam's file: it
                     # gets back what Steam last wrote, which a move of
@@ -881,7 +889,16 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
         moved = False
         if steam_now is not None and steam_now != steam_value:
             steam_value = steam_now
-            level, moved = level_of(steam_now, bottom_max), True
+            if restoring_until and steam_now == screens["steam"]:
+                log(f"Steam's level back at {steam_now}: each screen keeps its own")
+                restoring_until = 0.0
+            elif restoring_until and time.monotonic() < restoring_until:
+                pass  # Steam still putting its level back
+            else:
+                if restoring_until:
+                    log("Steam's level not back after Game Mode's start: its slider sets both again")
+                    restoring_until = 0.0
+                level, moved = level_of(steam_now, bottom_max), True
         elif top_now != wrote_top and top_now > 0:
             level, wrote_top, moved = level_of(top_now, top_max), top_now, True
         if moved:
