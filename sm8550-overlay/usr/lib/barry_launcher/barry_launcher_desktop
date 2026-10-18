@@ -59,19 +59,22 @@ kwriteconfig6 --file kwinrulesrc --group "$rule" --key titlematch 3
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocus false
 kwriteconfig6 --file kwinrulesrc --group "$rule" --key acceptfocusrule 2
 qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1
-# The bottom screen is Barry's: it meets the top screen only at the top
-# screen's bottom-right corner, so the pointer, and windows dragged with it,
-# stay on the top one, while Display Settings sees the screens touching (it
-# refuses a layout with a gap). Touches still go to it by name. The corner
-# comes from the top screen's size, so it follows its scale. Run again once
+# The output's position and size: "x y w h".
+geometry() {
+  kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
+    | awk -v o="$1" '$1 == "Output:" { n = $3 } n == o && $1 == "Geometry:" { print $2, $3; exit }' \
+    | sed -E 's/^(-?[0-9]+),(-?[0-9]+) ([0-9]+)x([0-9]+)$/\1 \2 \3 \4/'
+}
+# The bottom screen sits right under the top one, centered (1536x864 over
+# 992x864 at 125 % puts it at 272,864). The position comes from both
+# screens' sizes, so it follows their scale. Run again once
 # thorch-display-setup has set the layout at login.
-corner_layout() {
-  local geo
-  geo="$(kscreen-doctor -o 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' \
-    | awk '$1 == "Output:" { o = $3 } o == "DSI-2" && $1 == "Geometry:" { print $2, $3; exit }')"
-  [[ "$geo" =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] || return 0
-  kscreen-doctor "output.DSI-1.position.$((BASH_REMATCH[1] + BASH_REMATCH[3])),$((BASH_REMATCH[2] + BASH_REMATCH[4]))" \
-    >/dev/null 2>&1
+under_layout() {
+  local tx ty tw th bw
+  read -r tx ty tw th <<<"$(geometry DSI-2)"
+  read -r _ _ bw _ <<<"$(geometry DSI-1)"
+  [[ -n "$th" && -n "$bw" ]] || return 0
+  kscreen-doctor "output.DSI-1.position.$((tx + (tw - bw) / 2)),$((ty + th))" >/dev/null 2>&1
 }
 # Plasma puts its panel (taskbar) on screen 0, the first output in KWin's
 # order, and moves it when that order changes. The shipped layout makes the
@@ -85,9 +88,9 @@ top_screen_first() {
   [[ -n "$prio" && "$prio" != 1 ]] || return 0
   kscreen-doctor output.DSI-2.priority.1 output.DSI-1.priority.2 >/dev/null 2>&1
 }
-corner_layout
+under_layout
 top_screen_first
-(sleep 6; corner_layout; top_screen_first) &
+(sleep 6; under_layout; top_screen_first) &
 export BARRY_DESKTOP=1 BARRY_OUTPUT="${BARRY_OUTPUT:-DSI-1}"
 shell_qml=/usr/share/barry_launcher/shell
 /usr/lib/barry_launcher/barry_launcher_shelld &

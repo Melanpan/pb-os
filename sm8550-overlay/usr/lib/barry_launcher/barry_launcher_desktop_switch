@@ -43,9 +43,9 @@ geometry() {
     | awk -v o="$1" '$1 == "Output:" { n = $3 } n == o && $1 == "Geometry:" { print $2, $3; exit }' \
     | sed -E 's/^(-?[0-9]+),(-?[0-9]+) ([0-9]+)x([0-9]+)$/\1 \2 \3 \4/'
 }
-# Barry's layout puts the bottom screen at the top one's bottom-right corner
-# (barry_launcher_desktop): from there it moves under the top screen,
-# centered. A layout set in Display Settings meanwhile is kept.
+# Barry's layout before 0.5.4.8 put the bottom screen at the top one's
+# bottom-right corner: from there it moves under the top screen, centered,
+# like barry_launcher_desktop does now. Any other layout is kept.
 layout_under() {
   local tx ty tw th bx by bw bh
   read -r tx ty tw th <<<"$(geometry DSI-2)"
@@ -106,7 +106,7 @@ turn_off() {
 turn_on() {
   kwriteconfig6 --file barry_launcherrc --group Desktop --key Enabled true
   live || return 0
-  # barry_launcher_desktop takes the keyboard, the corner layout and the
+  # barry_launcher_desktop takes the keyboard, the layout and the
   # bottom screen back.
   systemctl --user start "$unit"
   notify "On in Desktop Mode."
