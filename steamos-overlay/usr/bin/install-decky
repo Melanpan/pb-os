@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Install Decky PluginLoader on SteamOS Frame (aarch64).
-# PluginLoader is x86_64 — systemd must start it via Box64/FEX, not raw binfmt.
+# PluginLoader is the native arm64 build from Project Barry's fork
+# (github.com/project-barry/decky-loader): upstream's own arm64 build needs a
+# newer glibc than SteamOS has. The loader then updates itself from the fork.
 # Steam Client channel (not SteamOS) selects Decky's update branch:
 #   Steam Client stable → loader.json branch 0
 #   Steam Client beta   → loader.json branch 1
-# The binary installed is always the newest GitHub PluginLoader (do not downgrade).
+# The binary installed is always the fork's newest PluginLoader-arm64 (do not downgrade).
 #
 # Usage:
 #   install-decky                 # ask Steam Client channel, then install
@@ -44,53 +46,13 @@ PLUGIN_UNIT_USR="/usr/lib/systemd/system/plugin_loader.service"
 PLUGIN_UNIT_ETC="/etc/systemd/system/plugin_loader.service"
 SYSTEM_DROPINS="/usr/share/steamos-odin/plugin_loader.service.d"
 BUNDLE_ROOT="/usr/share/steamos-odin/decky-plugins"
-DECKY_LOADER_REPO="SteamDeckHomebrew/decky-loader"
+DECKY_LOADER_REPO="project-barry/decky-loader"
+DECKY_ASSET="PluginLoader-arm64"
 DECKY_BRANCH="${DECKY_BRANCH:-}"
 OVERLAY_ETC="/var/lib/overlays/etc/upper"
 
 systemctl_root() {
   env -u DBUS_SESSION_BUS_ADDRESS systemctl --no-ask-password "$@"
-}
-
-box64_detected() {
-  command -v box64 >/dev/null 2>&1 && return 0
-  [[ -f /etc/binfmt.d/box64.conf || -f /usr/lib/binfmt.d/box64.conf ]] && return 0
-  [[ -x /usr/local/bin/box64 || -x /usr/bin/box64 ]] && return 0
-  return 1
-}
-
-fex_detected() {
-  command -v FEX >/dev/null 2>&1 && return 0
-  [[ -f /usr/lib/binfmt.d/FEX-x86_64.conf ]] && return 0
-  return 1
-}
-
-require_emulator() {
-  if box64_detected; then
-    log "Box64 detected"
-    return 0
-  fi
-  if fex_detected; then
-    warn "Only FEXEmu detected — Box64 is recommended"
-    return 0
-  fi
-  die "Decky needs Box64 or FEXEmu to run the x86_64 PluginLoader"
-}
-
-emulator_bin() {
-  if [[ -x /usr/bin/box64 ]]; then
-    printf '%s' /usr/bin/box64
-    return 0
-  fi
-  if [[ -x /usr/local/bin/box64 ]]; then
-    printf '%s' /usr/local/bin/box64
-    return 0
-  fi
-  if command -v FEX >/dev/null 2>&1; then
-    command -v FEX
-    return 0
-  fi
-  return 1
 }
 
 normalize_branch() {
@@ -181,7 +143,7 @@ elevate_if_needed() {
   exec pkexec --disable-internal-agent "$SCRIPT_PATH" "$@"
 }
 
-# Newest PluginLoader asset (GitHub lists newest first). Channel only sets loader.json.
+# Newest PluginLoader-arm64 asset (GitHub lists newest first). Channel only sets loader.json.
 fetch_newest_loader() {
   local json version url
   json="$(curl -fsSL "https://api.github.com/repos/${DECKY_LOADER_REPO}/releases")" \
@@ -189,34 +151,24 @@ fetch_newest_loader() {
   version="$(printf '%s' "$json" | python3 -c 'import json,sys
 rels=json.load(sys.stdin)
 for r in rels:
-    if any(a.get("name")=="PluginLoader" for a in r.get("assets") or []):
+    if any(a.get("name")=="'"$DECKY_ASSET"'" for a in r.get("assets") or []):
         print(r["tag_name"]); break
 ')"
   url="$(printf '%s' "$json" | python3 -c 'import json,sys
 rels=json.load(sys.stdin)
 for r in rels:
     for a in r.get("assets") or []:
-        if a.get("name")=="PluginLoader":
+        if a.get("name")=="'"$DECKY_ASSET"'":
             print(a["browser_download_url"]); raise SystemExit
 ')"
-  [[ -n "$version" && -n "$url" ]] || die "No PluginLoader asset on GitHub"
+  [[ -n "$version" && -n "$url" ]] || die "No ${DECKY_ASSET} asset on GitHub"
   printf '%s\n%s\n' "$version" "$url"
 }
 
+# Same as the shipped unit (plugin_loader.service): native, and the Box64
+# lines only for an x86-64 PluginLoader put there by hand (binfmt runs it).
 write_plugin_loader_unit() {
-  local dest="$1" emu start cache=""
-  emu="$(emulator_bin || true)"
-  if [[ -n "$emu" ]]; then
-    start="${emu} ${PLUGIN_LOADER}"
-  else
-    start="${PLUGIN_LOADER}"
-  fi
-  if [[ "$emu" == */box64 ]]; then
-    # Runs as root with HOME=~steamos: keep box64's code cache out of ~/.cache,
-    # or it creates ~/.cache root-owned and KDE can't build its app list
-    # (empty Desktop Mode menu). Same lines as the shipped unit.
-    cache=$'Environment=BOX64_DYNACACHE_FOLDER=/var/cache/decky-box64\nCacheDirectory=decky-box64'
-  fi
+  local dest="$1"
   mkdir -p "$(dirname "$dest")"
   cat >"$dest" <<EOF
 [Unit]
@@ -231,7 +183,7 @@ Restart=always
 RestartSec=5
 KillMode=control-group
 TimeoutStopSec=8
-ExecStart=${start}
+ExecStart=${PLUGIN_LOADER}
 WorkingDirectory=${HOMEBREW_ROOT}/services
 Environment=UNPRIVILEGED_PATH=${HOMEBREW_ROOT}
 Environment=PRIVILEGED_PATH=${HOMEBREW_ROOT}
@@ -242,7 +194,9 @@ Environment=XDG_CONFIG_HOME=${REAL_HOME}/.config
 Environment=XDG_DATA_HOME=${REAL_HOME}/.local/share
 Environment=XDG_RUNTIME_DIR=/run/user/${REAL_UID}
 Environment=BOX64_NOBANNER=1
-${cache}
+Environment=BOX64_DYNACACHE_FOLDER=/var/cache/decky-box64
+CacheDirectory=decky-box64
+Environment=BOX64_EMULATED_LIBS=liblzma.so.5
 
 [Install]
 WantedBy=multi-user.target
@@ -312,13 +266,9 @@ enable_cef() {
 }
 
 install_loader() {
-  local branch version url emu
+  local branch version url
   branch="$(normalize_branch "${DECKY_BRANCH:-release}")"
-  require_emulator
   command -v curl >/dev/null 2>&1 || die "curl is required"
-  emu="$(emulator_bin || true)"
-  [[ -n "$emu" ]] || die "box64/FEX binary not found"
-  log "Emulator: ${emu}"
 
   mapfile -t meta < <(fetch_newest_loader)
   version="${meta[0]}"
@@ -429,10 +379,10 @@ Usage: install-decky [install|install-stable|install-beta|verify|uninstall]
   (no args) / install   Ask Steam Client channel, then install
   install-stable        Decky update channel = Steam Client stable
   install-beta          Decky update channel = Steam Client beta
-  verify                Rewrite the systemd unit (Box64) and check the service
+  verify                Rewrite the systemd unit and check the service
   uninstall             Remove Decky and ~/homebrew
 
-PluginLoader is always the newest GitHub build, started via Box64.
+PluginLoader is always the newest native arm64 build from project-barry/decky-loader.
 Bundled plugins: SM8550-LED and SM8550-Power.
 EOF
     ;;

@@ -1159,14 +1159,19 @@ rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-in
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
 # that most people never found. (PB-OS's own settings are the PB-OS tab,
 # pbos-qamd, without Decky; Decky stays for decky-lsfg-vk and the user's
-# own plugins.)
-DECKY_VERSION=v3.2.10
-DECKY_SHA256=c2cf316a53e1c1d318c6dda8821c827e5db275922987f9097956d7a1576e8258
-DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
+# own plugins.) A native arm64 build from Project Barry's fork: upstream's
+# own arm64 build needs a newer glibc than SteamOS has, and its x86-64 one
+# ran under Box64. The fork rebuilds each upstream release unchanged
+# (github.com/project-barry/decky-loader, pbos-upstream-release.yml), and the
+# loader updates itself from the fork's releases.
+DECKY_REPO=project-barry/decky-loader
+DECKY_VERSION=v3.3.0
+DECKY_SHA256=3cc7a2f43658446b87b5ac2efb17953716888299985641b3548f7c9cfdab5229
+DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-arm64-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then
   mkdir -p "${DECKY_LOADER%/*}"
   curl -fL -o "$DECKY_LOADER.part" \
-    "https://github.com/SteamDeckHomebrew/decky-loader/releases/download/${DECKY_VERSION}/PluginLoader" &&
+    "https://github.com/${DECKY_REPO}/releases/download/${DECKY_VERSION}/PluginLoader-arm64" &&
     mv "$DECKY_LOADER.part" "$DECKY_LOADER"
 fi
 [[ -s "$DECKY_LOADER" ]] || die "Decky loader ${DECKY_VERSION} missing and download failed"

@@ -1065,8 +1065,11 @@ def plugin_dirs(work, manifest):
 # Decky Loader itself: the image's homebrew/services/PluginLoader and its
 # version. Packages carry it (deltas when it changed). It goes in only over an
 # older Decky, never over the same or a newer one (Decky also updates itself
-# from its own settings). Decided once at the backup (backup/decky.json), so
-# the apply, its check and a rollback agree.
+# from its own settings), except over an x86-64 one: older images ran
+# upstream's x86-64 build under Box64, which may have updated itself past
+# ours; the native arm64 build replaces it whatever its version. Decided
+# once at the backup (backup/decky.json), so the apply, its check and a
+# rollback agree.
 DECKY = 'homebrew/services'
 DECKY_FILES = (('PluginLoader', 0o755), ('.loader.version', 0o644))
 
@@ -1078,12 +1081,22 @@ def decky_version(v):
     return (int(m[1]), int(m[2]), int(m[3]), 0 if m[4] else 1) if m else None
 
 
+def elf_machine(path):
+    """An ELF file's e_machine (183 aarch64, 62 x86-64); None when unreadable."""
+    try:
+        with open(path, 'rb') as f: head = f.read(20)
+    except OSError: return None
+    return int.from_bytes(head[18:20], 'little') if len(head) == 20 and head[:4] == b'\x7fELF' else None
+
+
 def decky_install(home, work, manifest):
     """Whether this update puts its Decky Loader on this device."""
     new = decky_version(manifest.get('decky_loader'))
     src = work / 'payload/home/steamos' / DECKY
     if new is None or not all((src / name).is_file() for name, _ in DECKY_FILES): return False
-    try: old = decky_version((home / 'steamos' / DECKY / '.loader.version').read_text())
+    dst = home / 'steamos' / DECKY
+    if elf_machine(src / 'PluginLoader') == 183 and elf_machine(dst / 'PluginLoader') == 62: return True
+    try: old = decky_version((dst / '.loader.version').read_text())
     except OSError: old = None
     return old is None or new > old
 

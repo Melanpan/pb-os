@@ -28,7 +28,7 @@ A device knows its version (`/usr/share/pb-os/version`) and its feature release 
 
 The apply step runs the updater that comes in the package, so fixes to it reach devices with the update itself.
 
-**Decky Loader** (`~/homebrew/services/PluginLoader`, the version pinned in `scripts/apply-overlays.sh`) comes with updates too. A full package always carries it; a delta carries it when the pinned version differs from that of any release the delta installs on, so a device that skips releases still gets it. It is installed only over an older Decky Loader, never over the same or a newer one (Decky can also update itself from its own settings), owned by root like Decky's own updater leaves it. A rollback puts the previous one back.
+**Decky Loader** (`~/homebrew/services/PluginLoader`, the version pinned in `scripts/apply-overlays.sh`) comes with updates too. A full package always carries it; a delta carries it when the pinned version differs from that of any release the delta installs on, so a device that skips releases still gets it. It is installed only over an older Decky Loader, never over the same or a newer one (Decky can also update itself from its own settings), except over an x86-64 one: older images ran upstream's x86-64 build under Box64, and the native arm64 build replaces it whatever its version. It is owned by root like Decky's own updater leaves it. A rollback puts the previous one back.
 
 ## Cleaning up
 

@@ -15,10 +15,11 @@ LB/RB step through the entries.
 
 ## Why not Decky
 
-On these ARM devices Decky's PluginLoader is an x86-64 program that runs
-under box64. Each Decky plugin's Python backend is therefore emulated, and
-it is a process of its own. pbos-qamd is one native C++ process, the
-backend for every section. Decky Loader still ships, for decky-lsfg-vk and
+Decky's PluginLoader used to be an x86-64 program running under box64 on
+these ARM devices; it is native arm64 now (Project Barry's fork,
+project-barry/decky-loader), but each Decky plugin's Python backend is still
+a process of its own. pbos-qamd is one native C++ process, the backend for
+every section. Decky Loader still ships, for decky-lsfg-vk and
 the user's own plugins, but PB-OS's settings no longer depend on it.
 
 ## Parts

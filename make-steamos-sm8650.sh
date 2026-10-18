@@ -605,8 +605,8 @@ if [[ "$IMAGE_ONLY" -eq 0 ]]; then
 fi
 # Always refresh runtime bits before packing
 [[ -x "${R}/usr/local/bin/box64" ]] || install_box64_rootfs
-# Decky's plugin_loader.service execs /usr/bin/box64. A rootfs that already
-# had box64 skips install_box64_rootfs, so make the link here too.
+# install-decky's older plugin_loader units exec /usr/bin/box64. A rootfs that
+# already had box64 skips install_box64_rootfs, so make the link here too.
 ln -sfn /usr/local/bin/box64 "${R}/usr/bin/box64"
 prepare_runtime
 # The release this image is; update packages built from this rootfs carry it.

@@ -93,7 +93,7 @@ Inherited from **SteamOS-Ubuntu**. See
 | Source | URL | What we use |
 |--------|-----|-------------|
 | **SteamOS-Ubuntu** | https://github.com/MaSieS4Fun/SteamOS-Ubuntu | SM8550-Power and SM8550-LED as shipped here |
-| **SteamDeckHomebrew / decky-loader** | https://github.com/SteamDeckHomebrew/decky-loader | PluginLoader (x86_64 via Box64); the PB-OS tab's Quick Access tab hook and toaster follow its frontend (`tabs-hook.tsx`, `toaster.tsx`, GPL-2.0) |
+| **SteamDeckHomebrew / decky-loader** | https://github.com/SteamDeckHomebrew/decky-loader | PluginLoader, rebuilt unchanged as a native arm64 binary in [project-barry/decky-loader](https://github.com/project-barry/decky-loader) (GPL-2.0); the PB-OS tab's Quick Access tab hook and toaster follow its frontend (`tabs-hook.tsx`, `toaster.tsx`, GPL-2.0) |
 | **SteamDeckHomebrew / decky-frontend-lib** | https://github.com/SteamDeckHomebrew/decky-frontend-lib | @decky/ui (LGPL-2.1), bundled in the PB-OS tab's loader (`external-and-mods/pbos-qam/frontend/dist/pbos-qam.js`) |
 | **SteamGridDB / decky-steamgriddb** | https://github.com/SteamGridDB/decky-steamgriddb | Artwork plugin (GPL-3.0-or-later), 1.8.1 from the Decky store, unchanged, in the images and update packages; the Thor's bottom-screen hero art fetches from [SteamGridDB](https://www.steamgriddb.com)'s API with the user's own key |
 | **Hooandee / panel-de-control** | https://github.com/Hooandee/panel-de-control | Power-plugin design reference |
@@ -111,7 +111,7 @@ Inherited from **SteamOS-Ubuntu**. See
 | **Mesa / Freedreno Turnip** | https://gitlab.freedesktop.org/mesa/mesa | Adreno 740 Vulkan (host-provided `.so` at image apply) |
 | **MangoHud** | https://github.com/flightlessmango/MangoHud | Performance overlay |
 | **lsfg-vk** | https://github.com/PancakeTAS/lsfg-vk | Vulkan frame generation |
-| **ptitSeb / box64** | https://github.com/ptitSeb/box64 | x86_64 for Decky PluginLoader |
+| **ptitSeb / box64** | https://github.com/ptitSeb/box64 | x86_64 programs on ARM (Decky PluginLoader until it went native) |
 | **thorch-os/thorch** | https://github.com/thorch-os/thorch | AYN Thor dual-screen / touch extras |
 | **Tabler Icons** (MIT) | https://github.com/tabler/tabler-icons | Outline Firefox, Discord and Signal logos on Barry Launcher's home screen (`shell/Icon.qml`); the cloud outline in the Cloud theme's mark (`dashboard/skins/cloud/Cloud.qml`) |
 | **Thumb-Key** (GNU AGPL 3.0) | https://github.com/dessalines/thumb-key | The letter and number layouts of Barry Launcher's optional Thumb-Key keyboard (`keyboards-extra/en-thumbkey/`, converted by `tools/thumbkey-to-barry.py`); the keys are drawn and read by Barry's own code, none of Thumb-Key's |
