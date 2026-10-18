@@ -133,8 +133,34 @@ Rectangle {
         movedAt = Date.now()
         both = value
         screens = { top: value, bottom: value }
-        PbosQam.call("barry", "set_brightness", ["top", value])
-        PbosQam.call("barry", "set_brightness", ["bottom", value])
+        sendBrightness("top", value)
+        sendBrightness("bottom", value)
+    }
+
+    // set_brightness, one call at a time: pbos-qamd runs each call on a
+    // thread of its own and each rewrites both screens' file, so two at
+    // once (Both screens, or a quick drag) lost one screen's value, and a
+    // drag's calls could land out of order. A move while a call is out
+    // waits; only each screen's latest value goes.
+    property var brightnessPending: ({})
+    property bool brightnessBusy: false
+    function sendBrightness(screen, value) {
+        brightnessPending[screen] = value
+        flushBrightness()
+    }
+    function flushBrightness() {
+        if (brightnessBusy)
+            return
+        const screen = ["top", "bottom"].find(function (s) { return brightnessPending[s] !== undefined })
+        if (!screen)
+            return
+        const value = brightnessPending[screen]
+        delete brightnessPending[screen]
+        brightnessBusy = true
+        PbosQam.call("barry", "set_brightness", [screen, value], function () {
+            qs.brightnessBusy = false
+            qs.flushBrightness()
+        })
     }
 
     function setLight(patch) {
@@ -190,7 +216,7 @@ Rectangle {
         const next = Object.assign({}, screens)
         next[screen] = value
         screens = next
-        PbosQam.call("barry", "set_brightness", [screen, value])
+        sendBrightness(screen, value)
     }
 
     function setCharge(patch) {
