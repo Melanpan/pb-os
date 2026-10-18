@@ -106,4 +106,22 @@ if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; the
   amixer -c "$card_id" cset name='TX_DEC0 Volume' 92 >/dev/null 2>&1
   log "card ${card_id} Thor mic mixers applied"
 fi
+
+# Retroid Pocket Nova: the built-in mic (one WCD938x DMIC, DMIC6 on
+# SoundWire line 10) on both channels of capture PCM 2. PipeWire runs the
+# card in pro-audio, so no UCM device sets these. The DT routes the mic and
+# its MIC BIAS4, so DAPM powers both only while something records.
+if grep -qa 'retroidpocket,rpnova' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  amixer -c "$card_id" cset name='MultiMedia3 Mixer TX_CODEC_DMA_TX_3' 1 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='DMIC6 Switch' 1 >/dev/null 2>&1
+  amixer -c "$card_id" cset name='DMIC7_MIXER Switch' 1 >/dev/null 2>&1
+  for dec in 0 1; do
+    amixer -c "$card_id" cset name="TX DEC${dec} MUX" SWR_MIC >/dev/null 2>&1
+    amixer -c "$card_id" cset name="TX SMIC MUX${dec}" SWR_MIC10 >/dev/null 2>&1
+    amixer -c "$card_id" cset name="TX_AIF1_CAP Mixer DEC${dec}" 1 >/dev/null 2>&1
+    amixer -c "$card_id" cset name="DEC${dec} MODE" ADC_DEFAULT >/dev/null 2>&1
+    amixer -c "$card_id" cset name="TX_DEC${dec} Volume" 92 >/dev/null 2>&1
+  done
+  log "card ${card_id} Nova mic mixers applied"
+fi
 exit 0

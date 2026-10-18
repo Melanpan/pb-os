@@ -67,3 +67,19 @@
 		};
 	};
 };
+
+/*
+ * The built-in mic: one WCD938x DMIC, DMIC6 on SoundWire line 10
+ * (TX SWR_INPUT10), powered by MIC BIAS4 (1.8 V). The codec's DMIC widgets
+ * count from 1, so DMIC6 is clocked by the "DMIC7" widget (the DMIC6/7 clock).
+ * The first four routes are qcs8550-ayn-common.dtsi's.
+ */
+&{/sound} {
+	audio-routing =
+			"IN1_HPHL", "HPHL_OUT",
+			"IN2_HPHR", "HPHR_OUT",
+			"AMIC2", "MIC BIAS2",
+			"TX SWR_INPUT1", "ADC2_OUTPUT",
+			"TX SWR_INPUT10", "DMIC7_OUTPUT",
+			"DMIC7", "MIC BIAS4";
+};
