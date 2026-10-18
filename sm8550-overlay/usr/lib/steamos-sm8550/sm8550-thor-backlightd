@@ -49,7 +49,9 @@ app open, written by barry_launcher_shelld) is "1", Steam's gamescope also
 gets GAMESCOPE_BOTTOM_SCREEN_YIELD on its root: should it be drawing a
 game's second window on the bottom screen (a DS or 3DS emulator's,
 gamescope's dual-screen branch), it hands the screen back to Barry
-Launcher's gamescope and takes it again once both are "0".
+Launcher's gamescope and takes it again once both are "0". In Desktop Mode
+a short press turns Barry Launcher off or on there (DESKTOP_SWITCH): off,
+the bottom screen is a plain second screen of the desktop.
 
 Sleep: with Barry Launcher's bottomSleepSeconds set (its settings, the
 desktop user's BARRY_SETTINGS, the PB-OS tab's Dual Screen page), no touch
@@ -124,6 +126,9 @@ DESKTOP_TOP = f"{RUN_DIR}/desktop-top"
 DESKTOP_READY_S = 10
 LONG_PRESS_S = 0.6
 BARRY_SETTINGS = os.path.expanduser("~steamos/.config/barry_launcher/settings.json")
+# Barry Launcher on or off in Desktop Mode (as its menu entry and the PB-OS
+# tab do), run as the desktop user.
+DESKTOP_SWITCH = "/usr/lib/barry_launcher/barry_launcher_desktop_switch"
 # Asleep is due, but a game draws on the bottom screen: looked at again after.
 SLEEP_CHECK_S = 5
 TOUCH_NAME = "bottom_touchscreen"
@@ -406,6 +411,37 @@ def desktop_mode() -> bool:
     return kwin
 
 
+def desktop_user() -> pwd.struct_passwd | None:
+    """The user running Plasma's KWin."""
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                if os.path.basename(fh.read().split(b"\0")[0]) == b"kwin_wayland":
+                    return pwd.getpwuid(os.stat(f"/proc/{pid}").st_uid)
+        except (OSError, KeyError):
+            continue
+    return None
+
+
+def toggle_desktop_barry() -> subprocess.Popen | None:
+    """Barry Launcher off (the bottom screen the desktop's) or on again."""
+    user = desktop_user()
+    if user is None or not os.access(DESKTOP_SWITCH, os.X_OK):
+        return None
+    runtime = f"/run/user/{user.pw_uid}"
+    try:
+        return subprocess.Popen(
+            ["runuser", "-u", user.pw_name, "--", "env", f"HOME={user.pw_dir}", f"XDG_RUNTIME_DIR={runtime}",
+             f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus", "BARRY_SWITCH_QUIET=1",
+             DESKTOP_SWITCH, "toggle"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as err:
+        log(f"cannot switch Barry Launcher: {err}")
+        return None
+
+
 def nudge_steam() -> subprocess.Popen | None:
     user = steam_display_user()
     if user is None:
@@ -606,6 +642,7 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
     game_checked = 0.0
     overlay_since: float | None = None
     pressed_at: float | None = None  # AYN held down since, until handled
+    switching: subprocess.Popen | None = None  # DESKTOP_SWITCH running
     yield_sent: bool | None = None  # GAMESCOPE_BOTTOM_SCREEN_YIELD as last set
     yield_retry_at = 0.0  # after Game Mode was not found
     desktop, mode_checked = False, -MODE_CHECK_S
@@ -658,7 +695,12 @@ def run(bl_fd: int, bottom_path: str, alone_paths: tuple[str, str], bottom_max: 
                 elif value == 0 and pressed_at is not None:
                     pressed_at = None
                     if desktop:
-                        log("AYN button: short press (no action in Desktop Mode)")
+                        if switching is not None and switching.poll() is None:
+                            log("AYN button: short press (Barry Launcher still switching)")
+                        else:
+                            switching = toggle_desktop_barry()
+                            log("AYN button: Barry Launcher on or off in Desktop Mode"
+                                if switching else "AYN button: short press (no desktop user)")
                     else:
                         opening = read(OVERLAY, "0") != "1"
                         # Pressed while the bottom screen is off: it wakes

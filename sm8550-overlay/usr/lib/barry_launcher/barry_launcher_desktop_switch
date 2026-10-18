@@ -32,8 +32,9 @@ state() {
   live && now=true
   printf '{"supported": true, "enabled": %s, "live": %s}\n' "$on" "$now"
 }
+# The AYN button switches quietly (BARRY_SWITCH_QUIET, sm8550-thor-backlightd).
 notify() {
-  live && notify-send -a "Barry Launcher" -i input-touchpad "Barry Launcher" "$1" >/dev/null 2>&1 &
+  [[ -z "${BARRY_SWITCH_QUIET:-}" ]] && live && notify-send -a "Barry Launcher" -i input-touchpad "Barry Launcher" "$1" >/dev/null 2>&1 &
 }
 
 # The output's position and size: "x y w h".
@@ -100,7 +101,7 @@ turn_off() {
   touch_back
   layout_under
   top_screen_first
-  notify "Off in Desktop Mode: the bottom screen is part of the desktop. Turn it on again from the menu (Barry Launcher On/Off) or in PB-OS Tools."
+  notify "Off in Desktop Mode: the bottom screen is part of the desktop. Turn it on again with the AYN button, from the menu (Barry Launcher On/Off) or in PB-OS Tools."
 }
 turn_on() {
   kwriteconfig6 --file barry_launcherrc --group Desktop --key Enabled true
