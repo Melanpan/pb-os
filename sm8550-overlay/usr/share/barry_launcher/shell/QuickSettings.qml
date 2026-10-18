@@ -183,6 +183,10 @@ Rectangle {
 
     function setBrightness(screen, value) {
         movedAt = Date.now()
+        // "Both screens" keeps where it showed (else, at the average, it
+        // moved along with this one).
+        if (both < 0 && screens)
+            both = Math.round((screens.top + screens.bottom) / 2)
         const next = Object.assign({}, screens)
         next[screen] = value
         screens = next
