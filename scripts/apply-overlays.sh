@@ -712,7 +712,12 @@ remove_thor_bottom_screen() {
     "$R/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness" \
     "$R/usr/lib/systemd/user/sm8550-thor-desktop-brightness.service" \
     "$R/usr/lib/systemd/user/plasma-workspace.target.wants/sm8550-thor-desktop-brightness.service" \
-    "$R/usr/share/applications/org.barry_launcher.keyboard.desktop"
+    "$R/usr/share/applications/org.barry_launcher.keyboard.desktop" \
+    "$R/usr/lib/systemd/user/barry_launcher_audio.service" \
+    "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_audio.service" \
+    "$R/usr/lib/systemd/system/pbos-thor-audio.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-thor-audio.service"
+  rm -rf "$R/usr/share/pb-os/thor-audio"
 }
 if [[ "$SOC" != sm8650 ]]; then
   log "== SM8550 overlay (fan curve, power button, thread boost, steamos-manager devices, Thor touch)"
@@ -750,7 +755,7 @@ if [[ "$SOC" != sm8650 ]]; then
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
   for f in barry_launcher_session barry_launcher_statsd barry_launcher_shelld \
-    barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
+    barry_launcher_desktop barry_launcher_desktop_switch barry_launcher_audio barry-app; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
@@ -791,6 +796,21 @@ if [[ "$SOC" != sm8650 ]]; then
   # (barry_launcher_inputd) before Barry.Input: gone from a reused rootfs.
   rm -f "$R/usr/lib/systemd/user/barry_launcher_inputd.service" \
     "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_inputd.service"
+  # A volume for each screen: PipeWire's "Top screen" output (its config
+  # linked into /etc at boot, Thor only) and barry_launcher_audio, which
+  # plays the bottom screen's apps past it.
+  install_file "$SM8550_OVL/usr/share/pb-os/thor-audio/60-pbos-top-screen.conf" \
+    "$R/usr/share/pb-os/thor-audio/60-pbos-top-screen.conf" 0644
+  install_file "$SM8550_OVL/usr/lib/systemd/system/pbos-thor-audio.service" \
+    "$R/usr/lib/systemd/system/pbos-thor-audio.service" 0644
+  mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+  ln -sfn ../pbos-thor-audio.service \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-thor-audio.service"
+  install_file "$SM8550_OVL/usr/lib/systemd/user/barry_launcher_audio.service" \
+    "$R/usr/lib/systemd/user/barry_launcher_audio.service" 0644
+  mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+  ln -sfn ../barry_launcher_audio.service \
+    "$R/usr/lib/systemd/user/default.target.wants/barry_launcher_audio.service"
   install_file "$SM8550_OVL/usr/share/applications/barry_launcher_desktop.desktop" \
     "$R/usr/share/applications/barry_launcher_desktop.desktop" 0644
   # Barry on or off in Desktop Mode (also in PB-OS Tools, Hardware tab).

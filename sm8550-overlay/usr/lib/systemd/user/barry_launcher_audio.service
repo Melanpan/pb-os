@@ -1,0 +1,13 @@
+[Unit]
+Description=Barry Launcher: a volume for each AYN Thor screen
+After=pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+ExecStart=/usr/lib/barry_launcher/barry_launcher_audio
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

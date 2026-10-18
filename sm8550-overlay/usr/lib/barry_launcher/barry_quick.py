@@ -5,21 +5,19 @@ barry_launcher_statsd on /quick (its docstring has the JSON).
   Bluetooth   the adapter's Powered property on BlueZ's D-Bus (busctl), as
               Steam switches it
   Volume      "system": the default output's volume (wpctl), the one
-              Steam's volume bar moves; "apps": the bottom screen's apps'
-              own volume, kept apart from it: each of their streams (through
-              pipewire-pulse) is set to apps / system, so what they play at
-              stays where the slider is while the system volume moves (up to
-              STREAM_MAX of a stream's own, so below about two thirds of the
-              apps' volume the system volume still turns them down too).
-              Kept in APPS_STATE, given to every new stream of theirs as it
-              starts and set again as the output's volume changes
+              Steam's volume bar moves: on the AYN Thor that is "Top
+              screen", the top screen's own output; "apps": the bottom
+              screen's apps' volume, kept in APPS_STATE. barry_launcher_audio
+              plays their streams past "Top screen", straight on the real
+              output at that volume, so the two never move each other; it
+              rereads APPS_STATE when told (SIGUSR1)
   Screenshot  the top screen (gamescopectl screenshot on the top screen's
               gamescope) to ~/Pictures/Screenshots
   Record      the top screen with everything playing (barry_capture, on the
               top gamescope's PipeWire stream) to ~/Videos
 
 A bottom-screen app is any process under the gamescope Barry Launcher runs
-in (statsd runs in it too). A stream knows only the process id its app
+in (barry_launcher_session, statsd too). A stream knows only the process id its app
 gives, which inside a Flatpak sandbox (Signal, Discord) is the sandbox's own,
 so a stream is an app's when its id and program match one of those
 processes, by its id outside or inside its sandbox.
@@ -48,7 +46,7 @@ SINK = "@DEFAULT_AUDIO_SINK@"
 GAMESCOPE_NAMES = ("gamescope", "gamescope-wl")
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
 MIN_FREE_TO_RECORD = 2 * 1024**3
-STREAM_MAX = 150  # % of a stream's own volume (PipeWire amplifies above 100)
+AUDIO_UNIT = "barry_launcher_audio.service"
 
 
 def run(*cmd: str, timeout: float = 4) -> subprocess.CompletedProcess | None:
@@ -171,8 +169,9 @@ def ns_pid(pid: int) -> int | None:
     return None
 
 
-def bottom_gamescope(tree: dict[int, int]) -> int | None:
-    pid = os.getpid()
+def bottom_gamescope(tree: dict[int, int], pid: int | None = None) -> int | None:
+    """The gamescope `pid` (this process by default) runs in."""
+    pid = os.getpid() if pid is None else pid
     while pid > 1:
         if comm(pid) in GAMESCOPE_NAMES:
             return pid
@@ -180,103 +179,73 @@ def bottom_gamescope(tree: dict[int, int]) -> int | None:
     return None
 
 
+def barry_gamescope(tree: dict[int, int]) -> int | None:
+    """Barry Launcher's gamescope, seen from outside it: the one
+    barry_launcher_session runs in."""
+    for pid in tree:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                if b"/barry_launcher_session" not in fh.read():
+                    continue
+        except OSError:
+            continue
+        root = bottom_gamescope(tree, pid)
+        if root is not None:
+            return root
+    return None
+
+
+def bottom_apps(inside: bool = True) -> set[tuple[int, str]]:
+    """(process id, program) for every bottom-screen process, by its id
+    outside its sandbox and inside it. `inside`: this process runs in
+    Barry's gamescope (statsd); else it is looked up."""
+    tree = proc_tree()
+    root = bottom_gamescope(tree) if inside else barry_gamescope(tree)
+    if root is None:
+        return set()
+    children: dict[int, list[int]] = {}
+    for pid, ppid in tree.items():
+        children.setdefault(ppid, []).append(pid)
+    out, todo = set(), list(children.get(root, []))
+    while todo:
+        pid = todo.pop()
+        todo.extend(children.get(pid, []))
+        name = comm(pid)
+        out.add((pid, name))
+        inner = ns_pid(pid)
+        if inner is not None:
+            out.add((inner, name))
+    return out
+
+
+def is_app_stream(props: dict, apps: set[tuple[int, str]]) -> bool:
+    """A stream's (pactl's properties) is a bottom-screen app's."""
+    try:
+        pid = int(props.get("application.process.id", ""))
+    except ValueError:
+        return False
+    # /proc's comm is the program's name cut to 15 characters.
+    program = os.path.basename(props.get("application.process.binary", ""))[:15]
+    return (pid, program) in apps or (not program and any(a[0] == pid for a in apps))
+
+
+def apps_volume() -> int:
+    """The bottom screen's apps' volume, 0-100 (100 when never set)."""
+    try:
+        with open(APPS_STATE, encoding="utf-8") as fh:
+            v = json.load(fh).get("appsVolume", 100)
+        return int(v) if isinstance(v, (int, float)) and 0 <= v <= 100 else 100
+    except (OSError, ValueError, AttributeError):
+        return 100
+
+
 class AppsVolume:
-    """The bottom screen's apps' volume: set on their streams now, and on
-    each new one as pipewire-pulse announces it (pactl subscribe)."""
+    """The bottom screen's apps' volume: kept in APPS_STATE, which
+    barry_launcher_audio applies to their streams."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        try:
-            with open(APPS_STATE, encoding="utf-8") as fh:
-                v = json.load(fh).get("appsVolume", 100)
-            self.pct = int(v) if isinstance(v, (int, float)) and 0 <= v <= 100 else 100
-        except (OSError, ValueError, AttributeError):
-            self.pct = 100
-        threading.Thread(target=self._watch, daemon=True).start()
-
-    def _apps(self) -> set[tuple[int, str]]:
-        """(process id, program) for every bottom-screen process, by its id
-        outside its sandbox and inside it."""
-        tree = proc_tree()
-        root = bottom_gamescope(tree)
-        if root is None:
-            return set()
-        children: dict[int, list[int]] = {}
-        for pid, ppid in tree.items():
-            children.setdefault(ppid, []).append(pid)
-        out, todo = set(), list(children.get(root, []))
-        while todo:
-            pid = todo.pop()
-            todo.extend(children.get(pid, []))
-            name = comm(pid)
-            out.add((pid, name))
-            inner = ns_pid(pid)
-            if inner is not None:
-                out.add((inner, name))
-        return out
-
-    def _streams(self, only: int | None = None) -> list[int]:
-        r = run("pactl", "-f", "json", "list", "sink-inputs")
-        try:
-            streams = json.loads(r.stdout) if r and r.returncode == 0 else []
-        except ValueError:
-            return []
-        apps = self._apps()
-        out = []
-        for s in streams:
-            if only is not None and s.get("index") != only:
-                continue
-            p = s.get("properties", {})
-            try:
-                pid = int(p.get("application.process.id", ""))
-            except ValueError:
-                continue
-            # /proc's comm is the program's name cut to 15 characters.
-            program = os.path.basename(p.get("application.process.binary", ""))[:15]
-            if (pid, program) in apps or (not program and any(a[0] == pid for a in apps)):
-                out.append(s["index"])
-        return out
-
-    def stream_pct(self) -> int:
-        """A stream's own volume for the apps to play at self.pct whatever the
-        system volume: apps / system (both on the same cubic scale, so the
-        ratio holds for the sound too)."""
-        vol = system_volume()
-        system = vol[0] if vol else 100
-        if system <= 0:
-            return self.pct  # silent anyway; keep the plain value
-        return max(0, min(STREAM_MAX, round(self.pct * 100 / system)))
-
-    def _apply(self, only: int | None = None) -> None:
-        pct = self.stream_pct()
-        for index in self._streams(only):
-            run("pactl", "set-sink-input-volume", str(index), f"{pct}%")
-
-    def _watch(self) -> None:
-        new = re.compile(r"Event 'new' on sink-input #(\d+)")
-        # The output's volume changed (the top slider, Steam's volume bar,
-        # the volume keys): the apps' streams follow, to stay where they are.
-        sink = re.compile(r"Event 'change' on sink #\d+")
-        last_system = None
-        while True:
-            try:
-                proc = subprocess.Popen(["pactl", "subscribe"], stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True)
-            except OSError:
-                return
-            for line in proc.stdout:
-                m = new.match(line)
-                if m:
-                    with self.lock:
-                        self._apply(int(m.group(1)))
-                elif sink.match(line):
-                    vol = system_volume()
-                    if vol and vol[0] != last_system:
-                        last_system = vol[0]
-                        with self.lock:
-                            self._apply()
-            proc.wait()
-            time.sleep(3)  # PipeWire restarting: listen again
+        self.pct = apps_volume()
 
     def set(self, pct: int) -> None:
         with self.lock:
@@ -286,7 +255,7 @@ class AppsVolume:
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump({"appsVolume": pct}, fh)
             os.replace(tmp, APPS_STATE)
-            self._apply()
+        run("systemctl", "--user", "kill", "--signal=USR1", AUDIO_UNIT)
 
 
 # Screenshot and recording: the top screen
