@@ -85,7 +85,7 @@ Item {
   follows whatever theme is in use. Don't hard-code colors.
 - Data: `barry_launcher_statsd` answers on `http://127.0.0.1:47823`
   (XMLHttpRequest): `/stats` (battery, CPU, GPU, temperatures, fan, memory,
-  network, and `time.utcOffset`, the system's time zone now: JavaScript's
+  network, and `time.utcOffset`, in seconds east of UTC, the system's time zone now: JavaScript's
   `Date` keeps the one Barry started with), `/quick` (Wi-Fi, Bluetooth,
   volume). The docstring at the top of
   `/usr/lib/barry_launcher/barry_launcher_statsd` has them all.

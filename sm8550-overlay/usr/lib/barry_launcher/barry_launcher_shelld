@@ -516,7 +516,6 @@ def open_barry(why: str, page: int = 0, lifted: tuple[int, int] | None = None) -
         log(f"{why}: Barry opens{f' over {front}' if STATE.back_app else ''}")
         write_barry_flag(True)
         go_home(raise_window=front is not None)
-        leave_tools("")
 
 
 def close_barry(why: str, back: bool = True) -> None:
@@ -698,6 +697,9 @@ def go_home(raise_window: bool = True) -> None:
         STATE.home_ready.clear()
     STATE.home_ready.wait(HOME_READY_S)
     STATE.set_keyboard(False)
+    # In both modes: Desktop Mode's Home too (a trackpad left open behind
+    # Barry kept the touchscreen, 2026-10-18).
+    leave_tools("")
     # Unmapping and mapping the window again (bring_forward) shows black
     # for a moment: only when something else is in front.
     if raise_window and not bring_forward(None):
@@ -706,7 +708,7 @@ def go_home(raise_window: bool = True) -> None:
 
 def leave_tools(but: str) -> None:
     """The trackpad and the Deck controls are tools, not apps to come back
-    to: Barry opening, or another app starting, closes them. Their exit
+    to: going home, or another app starting, closes them. Their exit
     lets go of anything they held."""
     for app, spec in APPS.items():
         if app != but and spec.get("tool") and running(app):

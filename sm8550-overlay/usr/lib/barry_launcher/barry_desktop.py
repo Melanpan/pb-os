@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 import threading
 import time
 
@@ -21,6 +22,13 @@ from gi.repository import Gio, GLib
 OUTPUT = os.environ.get("BARRY_OUTPUT", "DSI-1")
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 IM_SOCKET = os.path.join(RUNTIME, "barry_launcher_im.sock")
+IM_ENTRY = "/usr/share/applications/org.barry_launcher.keyboard.desktop"
+# barry_launcher_imd gone this long: KWin is asked to start it again, at most
+# this often. KWin stopped it when Barry was turned off just after Desktop
+# Mode started, and did not start it when Barry came back (2026-10-18):
+# without it no field brought the keyboard up.
+IM_KICK_S = 5.0
+IM_KICK_EVERY_S = 30.0
 KEYBOARD_TITLE = "Barry Launcher Keyboard"
 HOME_TITLE = "Barry Launcher"
 # Window classes (Wayland app ids) of the apps Barry keeps on the bottom
@@ -322,6 +330,21 @@ def set_inset(inset: int) -> bool:
     return ok
 
 
+def restart_input_method() -> None:
+    """KWin starts its input method again when the setting changes: taken
+    away and given back, as Barry's off and on switch does."""
+    print("barry_launcher_imd is gone: KWin is asked to start it again", flush=True)
+    for value in (None, IM_ENTRY):
+        cmd = ["kwriteconfig6", "--notify", "--file", "kwinrc", "--group", "Wayland", "--key", "InputMethod"]
+        cmd += ["--delete"] if value is None else [value]
+        try:
+            subprocess.run(cmd, timeout=5, check=False)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            print(f"cannot change KWin's input method: {err}", flush=True)
+            return
+        time.sleep(1.0)
+
+
 class InputMethod:
     """barry_launcher_imd's side: whether a text field is active, the text
     around its caret, and typing into it. Events are handed to on_event
@@ -340,11 +363,17 @@ class InputMethod:
         return self.sock is not None
 
     def run(self) -> None:
+        missing_since = time.monotonic()
+        kicked = 0.0
         while True:
             try:
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 s.connect(IM_SOCKET)
             except OSError:
+                now = time.monotonic()
+                if now - missing_since >= IM_KICK_S and now - kicked >= IM_KICK_EVERY_S:
+                    kicked = now
+                    restart_input_method()
                 time.sleep(1.0)
                 continue
             with self.lock:
@@ -372,6 +401,7 @@ class InputMethod:
                 self.active = False
                 self.text = None
             s.close()
+            missing_since = time.monotonic()
             time.sleep(1.0)
 
     def _update(self, ev: dict) -> None:

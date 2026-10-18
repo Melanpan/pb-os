@@ -28,7 +28,7 @@ Item {
         const x = new XMLHttpRequest()
         x.onreadystatechange = function () {
             if (x.readyState === XMLHttpRequest.DONE && x.status === 200) {
-                try { root.offsetMin = JSON.parse(x.responseText).time.utcOffset } catch (e) {}
+                try { root.offsetMin = JSON.parse(x.responseText).time.utcOffset / 60 } catch (e) {}  // seconds
             }
         }
         x.open("GET", "http://127.0.0.1:47823/stats")

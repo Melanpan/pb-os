@@ -63,8 +63,36 @@ Shape {
         // Head with an open jaw, back, tail, belly; legs, arm and eye apart.
         dino: "M15.5 9.5H19.5V8.5H16.5V7H21V4Q21 2.5 19.5 2.5H13.5Q12 2.5 12 4V10"
             + "L9 12L6 13.2L2 10.5L3 14.8Q6 17.5 9.5 17H13L15.5 13.5Z"
-            + "M9.5 17V21.5H11M13 17V21.5H14.5M15.5 12.5H17.5V13.7M14.5 4.7H14.51",
+            + "M9.5 17V21.5H11M13 17V21.5H14.5M15.5 12.5H17.5V13.7",
     })[kind] || ""
+
+    // Dots (keys, the chat's dots, the dino's eye) are filled circles as
+    // wide as the line, where they were a near-zero line with round caps:
+    // CurveRenderer drew stray triangles around such a stroke on the
+    // Thor's GPU (green specks on the Keyboard tile, 2026-10-18).
+    // Each: [x, y] as fractions of the icon.
+    readonly property var dots: {
+        switch (kind) {
+        case "keyboard": {
+            const d = []
+            for (let r = 0; r < 2; r++)
+                for (let c = 0; c < 5; c++)
+                    d.push([0.2 + 0.15 * c, 0.37 + 0.12 * r])
+            return d
+        }
+        case "chat":
+            return [[0.32, 0.45], [0.5, 0.45], [0.68, 0.45]]
+        case "dino":
+            return [[14.5 / 24, 4.7 / 24]]
+        }
+        return []
+    }
+    function dotsPath(r) {
+        return dots.map(([fx, fy]) => {
+            const x = fx * w, y = fy * h
+            return `M ${x - r} ${y} A ${r} ${r} 0 1 0 ${x + r} ${y} A ${r} ${r} 0 1 0 ${x - r} ${y} Z`
+        }).join(" ")
+    }
 
     // The logos, on their 24-unit grid; the line keeps the same width.
     Shape {
@@ -135,9 +163,6 @@ Shape {
                          + ` L ${0.42 * w} ${0.72 * h} L ${0.24 * w} ${0.88 * h} L ${0.26 * w} ${0.72 * h}`
                          + ` L ${0.2 * w} ${0.72 * h} Q ${0.08 * w} ${0.72 * h} ${0.08 * w} ${0.6 * h}`
                          + ` L ${0.08 * w} ${0.3 * h} Q ${0.08 * w} ${0.18 * h} ${0.2 * w} ${0.18 * h} Z`
-                         + ` M ${0.32 * w} ${0.45 * h} L ${0.321 * w} ${0.45 * h}`
-                         + ` M ${0.5 * w} ${0.45 * h} L ${0.501 * w} ${0.45 * h}`
-                         + ` M ${0.68 * w} ${0.45 * h} L ${0.681 * w} ${0.45 * h}`
                 case "trackpad":
                     // pad with a split button row along its bottom
                     return `M ${0.12 * w} ${0.15 * h} L ${0.88 * w} ${0.15 * h} L ${0.88 * w} ${0.85 * h}`
@@ -158,11 +183,6 @@ Shape {
                     let p = `M ${0.06 * w} ${0.25 * h} L ${0.94 * w} ${0.25 * h} L ${0.94 * w} ${0.75 * h}`
                           + ` L ${0.06 * w} ${0.75 * h} Z`
                           + ` M ${0.32 * w} ${0.62 * h} L ${0.68 * w} ${0.62 * h}`
-                    for (let r = 0; r < 2; r++)
-                        for (let c = 0; c < 5; c++) {
-                            const x = (0.2 + 0.15 * c) * w, y = (0.37 + 0.12 * r) * h
-                            p += ` M ${x} ${y} L ${x + 0.001 * w} ${y}`
-                        }
                     return p
                 }
                 case "globe":
@@ -177,5 +197,10 @@ Shape {
                 return ""
             }
         }
+    }
+    ShapePath {
+        strokeColor: "transparent"
+        fillColor: icon.dots.length ? icon.color : "transparent"
+        PathSvg { path: icon.dotsPath(icon.lineWidth / 2) }
     }
 }

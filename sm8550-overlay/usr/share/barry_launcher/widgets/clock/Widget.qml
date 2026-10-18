@@ -32,7 +32,7 @@ Item {
                 return
             try {
                 const t = JSON.parse(x.responseText).time
-                root.offsetMin = t.utcOffset
+                root.offsetMin = t.utcOffset / 60  // statsd gives seconds
                 root.twelveHour = /[AP]M/i.test(t.text)
             } catch (e) {}
         }
