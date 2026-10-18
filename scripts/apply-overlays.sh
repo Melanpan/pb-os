@@ -857,9 +857,10 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/usr/lib/systemd/system/sm8550-thor-controlsd.service" 0644
   ln -sfn ../sm8550-thor-controlsd.service \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-controlsd.service"
-  # uclamp boost for game and Steam UI threads (no affinity).
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-boostd" \
-    "$R/usr/lib/steamos-sm8550/sm8550-boostd" 0755
+  # uclamp boost for game and Steam UI threads (no affinity), C++ built
+  # here against the rootfs.
+  "${ROOT}/external-and-mods/pbos-boostd/build.sh" "$R" "$R/usr/lib/steamos-sm8550/sm8550-boostd" \
+    || die "cannot build sm8550-boostd (the rootfs needs g++ and the systemd headers)"
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-boostd.service" \
     "$R/usr/lib/systemd/system/sm8550-boostd.service" 0644
   install_file "$SM8550_OVL/usr/lib/udev/rules.d/73-sm8550-ufs-sleep.rules" \

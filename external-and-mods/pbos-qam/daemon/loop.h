@@ -50,6 +50,8 @@ public:
     void on_unit_change(const std::string& unit, Fn cb);
     // The process exited (pidfd); false when it is already gone.
     bool on_exit(pid_t pid, Fn cb);
+    // fd is readable (a socket of the caller's own; it stays open).
+    void on_readable(int fd, std::function<void()> cb) { add_fd(fd, std::move(cb)); }
     // SIGTERM, SIGINT and SIGHUP.
     void on_signal(std::function<void(int)> cb) { signal_cb_ = std::move(cb); }
 
