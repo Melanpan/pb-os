@@ -29,6 +29,18 @@ buffers (open + map every CPU's buffer). That kept ~10% of a core busy even
 with the overlay off. The walk now runs once per 500 ms update period and
 reuses the last total in between.
 
+**Patch** `0004-idle-memory-lean-gpu-mem-trace-release-while-hidden.patch`:
+mangoapp runs the whole Game Mode session, mostly hidden, so it should hold
+little while hidden. The `gpu_mem` trace used `tracefs_local_events()`, which
+parses every event format plus all of `/proc/kallsyms` (~19 MB of heap,
+measured) to read one event; it now parses only `gpu_mem/gpu_mem_total`
+(~50 KB). The trace instance's ring buffer drops from the kernel default
+(~1.4 MB per CPU, ~11 MB of kernel memory on 8 cores) to 32 KB per CPU: only
+the newest device-total record is read, and the walk drains it every update
+period. Hiding the overlay frees the font atlas (CPU copies, font files, GL
+texture; rebuilt on the next shown frame) and runs `malloc_trim(0)`.
+`M_ARENA_MAX` is 2, so each thread does not keep its own malloc arena.
+
 **Build:** `scripts/apply-overlays.sh` calls
 `scripts/build-mangoapp-in-rootfs.sh`, which builds inside a throwaway overlay
 of the Frame rootfs (glibc 2.39) and reuses the result while `REF`, the

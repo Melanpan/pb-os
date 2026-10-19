@@ -1,0 +1,119 @@
+diff --git a/mangohud-next/server/metrics/gpu/msm/dpu.cpp b/mangohud-next/server/metrics/gpu/msm/dpu.cpp
+index 1a90357..6b20094 100644
+--- a/mangohud-next/server/metrics/gpu/msm/dpu.cpp
++++ b/mangohud-next/server/metrics/gpu/msm/dpu.cpp
+@@ -8,7 +8,9 @@
+ 
+ #ifdef HAVE_TRACEFS_GPU_MEM
+ #include <cerrno>
++#include <cstdlib>
+ #include <cstring>
++#include <unistd.h>
+ extern "C" {
+ #include <tracefs.h>
+ }
+@@ -31,18 +33,44 @@ public:
+             return;
+         }
+ 
++        // PB-OS: a new instance gets the default ring buffer (~1.4 MB per
++        // CPU, ~11 MB of kernel memory on 8 cores). Only the newest
++        // device-total record matters and the walk drains the buffer every
++        // update period, so a small buffer is enough.
++        if (tracefs_instance_set_buffer_size(instance, buffer_size_kb, -1) < 0)
++            SPDLOG_DEBUG("tracefs: failed to shrink '{}' buffer: {}", instance_name, std::strerror(errno));
++
+         char* dir = tracefs_instance_get_dir(instance);
+         if (!dir) {
+             SPDLOG_DEBUG("tracefs: failed to get instance dir for '{}': {}", instance_name, std::strerror(errno));
+             return;
+         }
+ 
+-        tep = tracefs_local_events(dir);
++        // PB-OS: tracefs_local_events() parses every event format and all of
++        // /proc/kallsyms (~19 MB of heap). Parse only the one event we read.
++        tep = tep_alloc();
++        if (tep && tracefs_load_headers(dir, tep) < 0) {
++            tep_free(tep);
++            tep = nullptr;
++        }
+         tracefs_put_tracing_file(dir);
+         if (!tep) {
+-            SPDLOG_DEBUG("tracefs: failed to read local events for '{}': {}", instance_name, std::strerror(errno));
++            SPDLOG_DEBUG("tracefs: failed to read headers for '{}': {}", instance_name, std::strerror(errno));
++            return;
++        }
++
++        int format_size = 0;
++        char* format = tracefs_event_file_read(instance, "gpu_mem", "gpu_mem_total", "format", &format_size);
++        int parsed = format ? tep_parse_event(tep, format, format_size, "gpu_mem") : -1;
++        free(format);
++        if (parsed != 0) {
++            SPDLOG_DEBUG("tracefs: no gpu_mem/gpu_mem_total event to parse");
++            tep_free(tep);
++            tep = nullptr;
+             return;
+         }
++        tep_set_cpus(tep, sysconf(_SC_NPROCESSORS_CONF));
++        tep_set_long_size(tep, tep_get_header_page_size(tep));
+ 
+         tracefs_event_disable(instance, nullptr, nullptr);
+         errno = 0;
+@@ -89,6 +117,7 @@ public:
+ 
+ private:
+     static constexpr const char* instance_name = "mangohud";
++    static constexpr size_t buffer_size_kb = 32;
+     struct tracefs_instance* instance = nullptr;
+     struct tep_handle* tep = nullptr;
+     unsigned long long bytes = 0;
+diff --git a/src/app/main.cpp b/src/app/main.cpp
+index 6431f44..ea2aac8 100644
+--- a/src/app/main.cpp
++++ b/src/app/main.cpp
+@@ -3,6 +3,7 @@
+ // If you are new to Dear ImGui, read documentation from the docs/ folder + read the top of imgui.cpp.
+ // Read online: https://github.com/ocornut/imgui/tree/master/docs
+ 
++#include <malloc.h>
+ #include <sys/ipc.h>
+ #include <sys/msg.h>
+ 
+@@ -403,6 +404,18 @@ static void shutdown(GLFWwindow* window){
+     glfwDestroyWindow(window);
+ }
+ 
++// PB-OS: mangoapp runs all session long, mostly hidden. While hidden, drop the
++// font atlas (CPU copies, font files and GL texture) and hand freed heap back
++// to the kernel. render() rebuilds the fonts on the next shown frame.
++static void release_hidden_memory(){
++    ImGui_ImplOpenGL3_DestroyFontsTexture();
++    ImGuiIO& io = ImGui::GetIO();
++    io.Fonts->ClearTexData();
++    io.Fonts->ClearInputData();
++    sw_stats.font_params_hash = 0;
++    malloc_trim(0);
++}
++
+ static void get_atom_info(){
+     HUDElements.hdr_status = get_prop("GAMESCOPE_COLOR_APP_WANTS_HDR_FEEDBACK");
+     HUDElements.refresh = get_prop("GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK");
+@@ -442,6 +455,10 @@ static bool render(GLFWwindow* window, overlay_params& real_params) {
+ 
+ int main(int, char**)
+ {
++    // PB-OS: each thread (mangoapp's, Mesa's, the GPU poller) would get its
++    // own malloc arena that keeps its peak size. Two are plenty here.
++    mallopt(M_ARENA_MAX, 2);
++
+     XInitThreads();
+     XSetErrorHandler(x_error_handler);
+ 
+@@ -575,6 +592,7 @@ int main(int, char**)
+             if (gpus)
+                 for (auto gpu : gpus->available_gpus)
+                     gpu->pause();
++            release_hidden_memory();
+ 
+             // If mangoapp is hidden, using mangoapp_cv.wait() causes a hang.
+             // Because of this hang, we can't detect if the user presses R_SHIFT + F12,
