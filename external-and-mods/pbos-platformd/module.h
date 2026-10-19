@@ -51,6 +51,7 @@ std::unique_ptr<Module> make_power_button();
 std::unique_ptr<Module> make_volume_keys();
 bool konkr_volume_here();
 std::unique_ptr<Module> make_konkr_volume();
+std::unique_ptr<Module> make_audio_dp();
 // One-shot tools run by name (pbos-platformd TOOL ARGS...): the sleep
 // path's programs, each its own process as before.
 int charge_rest_main(int argc, char** argv);    // was sm8550-charge-rest

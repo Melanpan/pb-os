@@ -158,6 +158,12 @@ fi
 
 last=off
 drm_dp && last=on
+# pbos-platformd's audio-dp module waits for DRM hotplug uevents and runs
+# this script again on a flip; the loop below is only for an image without it.
+watcher=/usr/lib/pbos-platformd/pbos-platformd
+if [[ -x "$watcher" ]]; then
+  PBOS_AUDIO_DP_LAST="$last" exec "$watcher" --user --only audio-dp
+fi
 log "watch last_dp=${last}"
 while true; do
   sleep 2
