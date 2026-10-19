@@ -13,6 +13,7 @@ such a folder: the archive may hold it directly or inside one folder):
     "icon": "icon.png",              optional: PNG or SVG, square
     "description": "...", "author": "...", "homepage": "..."   optional
     "service": "service.py"          optional: see below
+    "keepAwake": true                optional: see below
   }
 
 A QML app may come with a service: a Python 3 script (standard library
@@ -34,6 +35,14 @@ A web app has no QML: "type": "web" and a "url" (https) instead of
 and "allow" (["microphone"], ["camera"]: given without asking).
 barry_launcher_shelld opens it in Firefox, kiosk mode, with a profile of
 its own in the app's data folder (logins and all go with the app).
+
+An app in the background (another app in front, or Barry or the game art
+over it) is frozen after 30 s, its service with it: it gets no CPU time
+until its tile brings it back, and one left there for 30 minutes, or under
+memory pressure, is closed. Not while it plays sound. "keepAwake": true
+keeps it running in the background all the time (a chat app that must
+hear new messages, an app talking to a game): a cost in battery, so only
+for apps that need it.
 
 Barry Launcher runs main.qml in a full-screen window of its own
 (shell/AppHost.qml), the way it runs its own QML apps, with its config
@@ -169,8 +178,11 @@ def read_manifest(root: str) -> dict:
         if not icon.lower().endswith(ICON_TYPES):
             raise AppError(f'{MANIFEST}: "icon" must be a PNG or SVG file')
         _inside(root, icon, "icon")
+    keep_awake = m.get("keepAwake", False)
+    if not isinstance(keep_awake, bool):
+        raise AppError(f'{MANIFEST}: "keepAwake" must be true or false')
     out = {"format": FORMAT, "id": app_id, "name": name, "version": version, "type": kind,
-           "main": main, "web": web, "service": service, "icon": icon}
+           "main": main, "web": web, "service": service, "icon": icon, "keepAwake": keep_awake}
     for key in ("description", "author", "homepage"):
         v = m.get(key)
         if isinstance(v, str) and v.strip():
@@ -331,11 +343,14 @@ def app_env(app_id: str) -> dict[str, str]:
             "QML_DISABLE_DISK_CACHE": "1"}
 
 
-def start_service(app_dir: str, service: str, env: dict, out) -> tuple[subprocess.Popen, str, str]:
+def start_service(app_dir: str, service: str, env: dict, out,
+                  wrap: list[str] | None = None) -> tuple[subprocess.Popen, str, str]:
     """Start an app's service (the script service, in app_dir) with env
     and its output to out: the process, its address and its token. The
     address is for the app's window (barry.serviceUrl); the token, which
-    the service must ask for, keeps other programs out."""
+    the service must ask for, keeps other programs out. wrap: what its
+    command starts with (barry_launcher_shelld's scope, which execs it in
+    place)."""
     with socket.socket() as s:  # a free port; the service binds it at once
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -343,7 +358,7 @@ def start_service(app_dir: str, service: str, env: dict, out) -> tuple[subproces
     # This Python, without the user's site-packages: what the app brings,
     # and the standard library.
     proc = subprocess.Popen(
-        [sys.executable or "python3", "-s", "-u", os.path.join(app_dir, service)],
+        [*(wrap or []), sys.executable or "python3", "-s", "-u", os.path.join(app_dir, service)],
         cwd=app_dir, env=dict(env, BARRY_SERVICE_PORT=str(port), BARRY_SERVICE_TOKEN=token),
         stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
     )

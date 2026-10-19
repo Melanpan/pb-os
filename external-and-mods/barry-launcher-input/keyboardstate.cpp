@@ -1,6 +1,7 @@
 #include "keyboardstate.h"
 
-#include <QJsonDocument>
+#include "shellstate.h"
+
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -9,13 +10,27 @@
 
 namespace {
 const char SHELLD[] = "http://127.0.0.1:47824";  // barry_launcher_shelld
-constexpr int POLL_MS = 100;
 }  // namespace
 
 KeyboardState::KeyboardState(QObject *parent) : QObject(parent)
 {
-    m_poll.setInterval(POLL_MS);
-    connect(&m_poll, &QTimer::timeout, this, &KeyboardState::poll);
+    ShellState *shell = ShellState::instance();
+    connect(shell, &ShellState::keyboardChanged, this, [this] {
+        if (m_bottom)
+            takeBottom();
+    });
+    connect(shell, &ShellState::topKeyboardChanged, this, [this] {
+        if (m_followTop)
+            takeTop();
+    });
+}
+
+KeyboardState::~KeyboardState()
+{
+    if (m_bottom)
+        ShellState::instance()->unwatch(QStringLiteral("keyboard"));
+    if (m_followTop)
+        ShellState::instance()->unwatch(QStringLiteral("top-keyboard"));
 }
 
 void KeyboardState::setBottom(bool bottom)
@@ -23,8 +38,18 @@ void KeyboardState::setBottom(bool bottom)
     if (bottom == m_bottom)
         return;
     m_bottom = bottom;
+    ShellState *shell = ShellState::instance();
+    if (bottom) {
+        // Not before the keys have a size (set right after, as QML makes
+        // this): 0 would drop the apps back down for a moment.
+        if (m_panelHeight > 0)
+            shell->setKeyboardHeight(m_panelHeight);
+        shell->watch(QStringLiteral("keyboard"));
+        takeBottom();
+    } else {
+        shell->unwatch(QStringLiteral("keyboard"));
+    }
     emit settingsChanged();
-    update();
 }
 
 void KeyboardState::setFollowTop(bool follow)
@@ -32,66 +57,58 @@ void KeyboardState::setFollowTop(bool follow)
     if (follow == m_followTop)
         return;
     m_followTop = follow;
+    if (follow) {
+        ShellState::instance()->watch(QStringLiteral("top-keyboard"));
+        takeTop();
+    } else {
+        ShellState::instance()->unwatch(QStringLiteral("top-keyboard"));
+    }
     emit settingsChanged();
-    update();
 }
 
-void KeyboardState::update()
+void KeyboardState::setPanelHeight(int height)
 {
-    if (m_bottom || m_followTop)
-        m_poll.start();
-    else
-        m_poll.stop();
-    if (!m_net && (m_bottom || m_followTop))
-        m_net = new QNetworkAccessManager(this);
+    if (height == m_panelHeight)
+        return;
+    m_panelHeight = height;
+    // Only the bottom keyboard's keys push the apps up.
+    if (m_bottom)
+        ShellState::instance()->setKeyboardHeight(height);
+    emit settingsChanged();
 }
 
-void KeyboardState::poll()
+void KeyboardState::takeBottom()
 {
-    if (m_bottom && !m_bottomAsking) {
-        m_bottomAsking = true;
-        QNetworkRequest request(QUrl(QStringLiteral("%1/keyboard?h=%2").arg(QLatin1String(SHELLD)).arg(m_panelHeight)));
-        request.setTransferTimeout(2000);
-        QNetworkReply *reply = m_net->get(request);
-        connect(reply, &QNetworkReply::finished, this, [this, reply] {
-            reply->deleteLater();
-            m_bottomAsking = false;
-            if (reply->error() != QNetworkReply::NoError)
-                return;
-            const QJsonObject st = QJsonDocument::fromJson(reply->readAll()).object();
-            const bool visible = st.value("visible").toBool();
-            const bool atTop = st.value("top").toBool();
-            const QString curtain = st.value("curtain").toString();
-            const bool opening = visible && !m_shown;
-            if (visible == m_shown && atTop == m_atTop && curtain == m_curtain)
-                return;
-            m_shown = visible;
-            m_atTop = atTop;
-            m_curtain = curtain;
-            if (opening && m_controller)
-                m_controller->reset();
-            emit stateChanged();
-        });
-    }
-    if (m_followTop && !m_topAsking) {
-        m_topAsking = true;
-        QNetworkRequest request(QUrl(QStringLiteral("%1/top-keyboard").arg(QLatin1String(SHELLD))));
-        request.setTransferTimeout(2000);
-        QNetworkReply *reply = m_net->get(request);
-        connect(reply, &QNetworkReply::finished, this, [this, reply] {
-            reply->deleteLater();
-            m_topAsking = false;
-            if (reply->error() != QNetworkReply::NoError)
-                return;
-            const QJsonObject st = QJsonDocument::fromJson(reply->readAll()).object();
-            const int serial = st.value("serial").toInt(-1);
-            // Only asks made while open: the one that opened the app came
-            // as its argument.
-            if (m_topSerial >= 0 && serial != m_topSerial)
-                emit topKeyboardAsked(st.value("visible").toBool());
-            m_topSerial = serial;
-        });
-    }
+    const QJsonValue value = ShellState::instance()->keyboard();
+    if (!value.isObject())
+        return;
+    const QJsonObject st = value.toObject();
+    const bool visible = st.value("visible").toBool();
+    const bool atTop = st.value("top").toBool();
+    const QString curtain = st.value("curtain").toString();
+    const bool opening = visible && !m_shown;
+    if (visible == m_shown && atTop == m_atTop && curtain == m_curtain)
+        return;
+    m_shown = visible;
+    m_atTop = atTop;
+    m_curtain = curtain;
+    if (opening && m_controller)
+        m_controller->reset();
+    emit stateChanged();
+}
+
+void KeyboardState::takeTop()
+{
+    const QJsonValue value = ShellState::instance()->topKeyboard();
+    if (!value.isObject())
+        return;
+    const QJsonObject st = value.toObject();
+    const int serial = st.value("serial").toInt(-1);
+    // Only asks made while open: the one that opened the app came as its
+    // argument.
+    if (m_topSerial >= 0 && serial != m_topSerial)
+        emit topKeyboardAsked(st.value("visible").toBool());
+    m_topSerial = serial;
 }
 
 void KeyboardState::hide()

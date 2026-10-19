@@ -5,8 +5,10 @@ the AYN Thor's bottom screen.
 Runs in barry_launcher_session next to the shell (shell/Shell.qml) and the
 keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
 
-  GET  /apps      {"browser": {"running": bool, "status": str}, ...}: status
-                  is what a tile says while an app installs ("" otherwise)
+  GET  /apps      {"browser": {"running": bool, "status": str, ...,
+                  "frozen": bool}, ...}: status is what a tile says while an
+                  app installs ("" otherwise); frozen while it waits in the
+                  background (see below)
   POST /launch    {"app": name}: start the app, or bring the running one
                   forward
   POST /close     {"app": name}: quit it
@@ -23,9 +25,11 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
                   lifted where (screen pixels) the swipe up from the bottom
                   edge that opened it lifted, for no tap there just after
   POST /home      open Barry
-  POST /barry     {"open": bool, "why": str, "page": n}: open or close Barry
-                  (the shell: a tap on the game art, its standby timeout, a
-                  side swipe over an app with its page)
+  POST /barry     {"open": bool, "why": str, "page": n, "back": bool}: open
+                  or close Barry (the shell: a tap on the game art, its
+                  standby timeout, a side swipe over an app with its page);
+                  closing goes back to the app Barry opened over only from a
+                  side page (or with "back": true), else to the art
   POST /side-prepare {}: a finger came down at a side edge over an app:
                   take the app's picture now, for the side page it may pull
   POST /apps/install {"path": archive}: install or update a user app
@@ -42,12 +46,29 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /keyd      {"do": "show" | "hide" | "top" | "top-down", "why": "..."}: keyd's call
   GET  /top-keyboard {"serial": n, "visible": bool}: the Trackpad app's
                   keyboard, asked up (or down) each time serial counts on
+  GET  /tools     {"serial": n, "leaving": {app: pid}}: the tools (the
+                  trackpad, the Deck controls) asked to slide away before
+                  Barry comes forward (tools_leave), by their process ids;
+                  serial counts the asks
   POST /type      {"text": "...", "correct": word, ...}: autocorrect's plan
                   for Keyboard.qml, which types it ({"back": n, "text": s,
                   "key": k}: backspaces, then text, then a key)
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin:
 the apps here include a web browser, and a web page must not type.
+
+The same state comes as events too, for the shell and the keyboard
+(Barry.Input) instead of asking over and over: a Unix socket
+(EVENTS_SOCKET, external-and-mods/barry-launcher-input/SHELLD-EVENTS.md)
+sends each client every topic's GET answer as it connects (home, keyboard,
+top-keyboard, keyd, apps, tools), then a line for a topic each time its
+answer changes, one JSON object a line ({"topic": t, "data": answer}). A
+client may send {"keyboard_height": n}, as GET /keyboard?h=n; a tool's
+window {"tool": true} (it slides away when asked) and {"tool_left": true}
+(it has). The answers are
+kept ready (publish, at every change), and the GETs send those: nothing
+here looks again unasked (apps ending: their pidfds; the user apps and the
+home screen's order: file monitors).
 
 When the keyboards come up is barry_launcher_keyd's (C++): it follows text
 focus (AT-SPI; KWin's input method in Desktop Mode) and the touches, and
@@ -86,14 +107,27 @@ Barry opens and closes over the home window, whose base is the selected
 game's hero art (Shell.qml): BARRY_FLAG says whether it is open. A short
 press of the AYN button flips it (sm8550-thor-backlightd), and this hears
 the change (a file monitor) and brings the home window forward. Closing
-goes back to the app that was in front when Barry opened, if it still
-runs; otherwise the hero art stays. This writes the flag too: an app
-started from Barry closes it, and a swipe up from the bottom edge over an
-app opens it. A swipe in from the left edge over an app opens it on the
-performance dashboard, from the right edge on the quick settings, as a
-phone's side panels: Barry.Input's EdgeSwipe follows the finger and the
-shell asks (POST /side-prepare, /barry with a page); Shell.qml closes back
-to the app when they are swiped away.
+(the AYN button, the shell's standby timeout) goes to the hero art; the
+app Barry opened over stays in the background, a tile tap away. This
+writes the flag too: an app started from Barry closes it, and a swipe up
+from the bottom edge over an app opens it. A swipe in from the left edge
+over an app opens it on the performance dashboard, from the right edge on
+the quick settings, as a phone's side panels: Barry.Input's EdgeSwipe
+follows the finger and the shell asks (POST /side-prepare, /barry with a
+page); Shell.qml closes back to the app when they are swiped away (a
+gesture on the app: the only close that goes back to it).
+
+Apps in the background (Game Mode): each app (not a tool) runs in a
+systemd user scope of its own (systemd-run --scope execs it in place, so
+its pid and pidfd are the app's; Flatpak puts its apps in scopes itself),
+and FREEZE_S after it left the screen (another app in front, Barry or the
+art over it) its scope is frozen (cgroup v2, cgroup.freeze): no CPU until
+it comes forward again, when it is thawed before its window shows. Not
+while it plays sound (pactl subscribe: a stream of its own, not corked),
+nor an app whose manifest says "keepAwake" (Signal). A frozen app is
+closed BACKGROUND_CLOSE_S after it left the screen, and under memory
+pressure (a PSI trigger) the frozen apps close, least recently used
+first, one per trigger. Closing thaws first, so the app hears its SIGTERM.
 
 User apps (barry_apps: QML apps installed from an archive, by the barry-app
 command or the Barry Launcher plugin) join the home screen after the built-in
@@ -110,7 +144,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -194,7 +230,10 @@ APPS = {
                                 "--wayland-text-input-version=3", "--force-renderer-accessibility"],
                "classes": ["signal", "signal-desktop", "org.signal.Signal"],
                "seed": {"~/.var/app/org.signal.Signal/config/Signal/config.json": "{}\n"},
-               "warm": ["~/.var/app/org.signal.Signal/config/Signal"]},
+               "warm": ["~/.var/app/org.signal.Signal/config/Signal"],
+               # Messages and calls come in while it is in the background:
+               # never frozen (background_changed).
+               "keepAwake": True},
     # The top screen's trackpad and keyboard: a QML window by title. It
     # closes by itself on Home, so its tile has no close badge. Never hidden:
     # with the top screen's touch it is the way to reach the top screen.
@@ -229,7 +268,8 @@ def refresh_user_apps(force: bool = False) -> None:
     apps = dict(BUILTIN_APPS)
     for app_id, m in barry_apps.installed().items():
         icon = f"file://{os.path.join(m['dir'], m['icon'])}" if m["icon"] else "app"
-        spec = {"name": m["name"], "icon": icon, "user": True, "version": m["version"], "dir": m["dir"]}
+        spec = {"name": m["name"], "icon": icon, "user": True, "version": m["version"], "dir": m["dir"],
+                "keepAwake": m.get("keepAwake", False)}
         if m["type"] == "web":
             # A Firefox app, like Discord, with its profile in the app's
             # data folder: removing the app logs it out and leaves nothing.
@@ -253,6 +293,7 @@ def refresh_user_apps(force: bool = False) -> None:
                         window=f"^Barry App {app_id.replace('.', '[.]')}$")
         apps[app_id] = spec
     APPS = apps
+    publish("apps", "home")
 # The home screen's order and the apps it hides (the Barry Launcher plugin's
 # Apps tab sets them); apps not listed go last, in APPS' order. Apps with
 # "hideable": False show regardless.
@@ -294,6 +335,7 @@ def set_layout(body: dict) -> tuple[int, dict]:
         json.dump({"order": order, "hidden": sorted(a for a in hidden if hideable(a))}, fh, indent=1)
         fh.write("\n")
     os.replace(tmp, HOME_LAYOUT)
+    publish("apps")
     return 200, layout_json()
 SHELL_DIR = "/usr/share/barry_launcher/shell"
 TOP_INPUT_QML = f"{SHELL_DIR}/TopInputApp.qml"
@@ -388,6 +430,39 @@ WARM_DELAY_S = 60.0
 WARM_RUNTIME_DIRS = ("lib/aarch64-linux-gnu", "lib/locale", "share/fonts")
 KEYS = {"BackSpace", "Return", "Tab", "Left", "Right", "Up", "Down", "Escape", "Delete", "space",
         "Home", "End", "Prior", "Next"}
+# The event stream (SHELLD-EVENTS.md): its topics, in a snapshot's order.
+EVENTS_SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
+                             "barry_launcher", "shelld.sock")
+TOPICS = ("home", "keyboard", "top-keyboard", "keyd", "apps", "tools")
+EVENT_LINE_MAX = 4096  # a client's line, at most
+EVENT_BACKLOG_MAX = 1 << 20  # unsent bytes a client may fall behind by before it is dropped
+# gamescope rewrites this root property as windows come and go: the
+# keyboard window turns up then, to be marked an overlay.
+FOCUSABLE_PROP = "GAMESCOPE_FOCUSABLE_WINDOWS"
+APPS_SETTLE_MS = 100  # quiet in the user apps' folder before it is read again
+# Going home over a tool (the trackpad, the Deck controls): the most it may
+# take to slide away (ToolStage.qml: 240 ms, and a frame or two each way)
+# before it is ended as it was before it could.
+TOOL_LEAVE_S = 0.4
+# Apps in the background (see the top; the environment only for tests): an
+# app off the screen this long is frozen, and one frozen is closed once it
+# has been off the screen BACKGROUND_CLOSE_S.
+FREEZE_S = float(os.environ.get("BARRY_FREEZE_S", "30"))
+BACKGROUND_CLOSE_S = float(os.environ.get("BARRY_BACKGROUND_CLOSE_S", "1800"))
+CGROUP_ROOT = "/sys/fs/cgroup"
+# Our own scopes' names, and Flatpak's: only those are ever frozen.
+SCOPE_PREFIX = "barry-app-"
+FROZEN_SCOPES = (SCOPE_PREFIX, "app-flatpak-")
+# Memory pressure: a stall of 300 ms within 2 s (a PSI trigger; a user's
+# window must be a multiple of 2 s). A FIFO in its place (tests): each
+# write is one trigger.
+PSI_PATH = os.environ.get("BARRY_PSI_PATH", "/proc/pressure/memory")
+PSI_TRIGGER = os.environ.get("BARRY_PSI_TRIGGER", "some 300000 2000000")
+# Sound: pactl subscribe's sink-input events, a burst of them looked at
+# once it has been quiet this long; a pactl that ended starts again after
+# AUDIO_RETRY_S.
+AUDIO_SETTLE_MS = 150
+AUDIO_RETRY_S = 5
 
 
 def log(msg: str) -> None:
@@ -425,10 +500,21 @@ class State:
         self.home_ready = threading.Event()
         self.top_keyboard = {"serial": 0, "visible": False}  # the Trackpad app's keyboard
         self.opened_for_game: dict[str, str] = {}  # game appid -> the app it opened
+        self.tools_serial = 0  # counts the tools asked to slide away (GET /tools)
+        self.leaving: dict[str, int] = {}  # tool -> its pid, while it slides away
+        self.leave_pending: set[int] = set()  # of those, the ones not done yet
+        self.tools_left = threading.Event()  # set as leave_pending empties
+        # Apps in the background (Background): app -> its record, while it runs.
+        self.life: dict[str, Background] = {}
+        self.life_lock = threading.RLock()  # freezing and thawing, one at a time
+        self.scope_cmd: list[str] | None = None  # systemd-run's start of a scope (scope_probe), if it works
+        self.scope_seq = 0
+        self.own_cgroup = ""  # shelld's (never frozen: the shell's and the keyboard's too)
 
     def set_top_keyboard(self, visible: bool, why: str) -> None:
         with self.lock:
             self.top_keyboard = {"serial": self.top_keyboard["serial"] + 1, "visible": visible}
+        publish("top-keyboard", "keyd")
         log(f"{why}: trackpad keyboard {'up' if visible else 'down'}")
 
     def keyboard(self) -> dict:
@@ -443,9 +529,14 @@ class State:
             if top is not None:
                 self.top = top
         # Touches go to the keyboard's window only while it (or the cover
-        # over an opening app) shows; it turns opaque on its next poll.
+        # over an opening app) shows; it turns opaque as it hears so.
         keyboard_input_focus(visible or STATE.curtain_app is not None)
         apply_inset()
+        publish("keyboard", "keyd")
+        # Overlays draw above Barry: Barry opening just now hid it before
+        # this showed it.
+        if visible and barry_up():
+            self.set_keyboard(False)
 
 
 STATE = State()
@@ -499,12 +590,17 @@ def open_barry(why: str, page: int = 0, lifted: tuple[int, int] | None = None) -
         go_home(raise_window=front is not None)
 
 
-def close_barry(why: str, back: bool = True) -> None:
+def close_barry(why: str, back: bool | None = None) -> None:
     """Barry's pages away: the app it opened over comes back (back), or the
-    hero art shows."""
+    hero art shows, the app staying in the background (a tile brings it
+    back). back None: only a side page goes back to its app (swiped away:
+    a gesture on the app); the AYN button and the standby timeout close to
+    the art."""
     with STATE.barry_lock:
         if not STATE.barry_open:
             return
+        if back is None:
+            back = STATE.open_page != 0
         STATE.barry_open = False
         STATE.open_page = 0
         STATE.open_lifted = None
@@ -513,11 +609,21 @@ def close_barry(why: str, back: bool = True) -> None:
         write_barry_flag(False)
         if back and app and running(app):
             STATE.quiet_until = time.monotonic() + SIDE_QUIET_S
+            # In front again (step_aside or bring_forward): said with Barry
+            # closing, in one answer. In front before thawing: it is not
+            # frozen again meanwhile (freeze_due).
+            STATE.front = app
+            thaw(app, "back in front")
+            publish("home", "keyd")
             log(f"{why}: Barry closes, back to {app}")
             if DESKTOP or not step_aside(app):
                 bring_forward(app)
         else:
-            log(f"{why}: Barry closes")
+            # STATE.front is None (open_barry brought the home window
+            # forward): GET /home's "app" is false, and Shell.qml fades to
+            # the art.
+            publish("home", "keyd")
+            log(f"{why}: Barry closes{f' to the art, {app} in the background' if app and running(app) else ''}")
 
 
 def on_barry_flag(_monitor, _file, _other, event) -> None:
@@ -529,7 +635,9 @@ def on_barry_flag(_monitor, _file, _other, event) -> None:
     want = barry_flag()
     if DESKTOP or want is None or want == STATE.barry_open:
         return
-    threading.Thread(target=open_barry if want else close_barry, args=("AYN button",), daemon=True).start()
+    # Closing goes to the art, the app Barry opened over in the background.
+    threading.Thread(target=open_barry if want else close_barry,
+                     args=("AYN button",) if want else ("AYN button", False), daemon=True).start()
 
 
 def set_keyboard_prop(prop: str, value: str, quiet: bool = False) -> bool:
@@ -581,6 +689,46 @@ def keyboard_input_focus(on: bool) -> None:
         STATE.input_focus = on
 
 
+def watch_keyboard_window() -> None:
+    """The keyboard window appears shortly after we start; mark it then, so
+    gamescope does not take it for an app. Tried each time gamescope
+    rewrites its list of windows (it does as one maps), with one xprop
+    listening, until marked."""
+    if mark_keyboard_overlay(quiet=True):
+        return
+    try:
+        # Line by line: into a pipe, xprop's output would wait for a full buffer.
+        spy = subprocess.Popen(["stdbuf", "-oL", "xprop", "-spy", "-root", FOCUSABLE_PROP], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as err:
+        log(f"cannot watch for the keyboard window: {err}")
+        return
+    fd = spy.stdout.fileno()
+    os.set_blocking(fd, False)
+
+    def changed(_fd, _cond) -> bool:
+        try:
+            alive = bool(os.read(fd, 4096))
+        except BlockingIOError:
+            alive = True
+        except OSError:
+            alive = False
+        if mark_keyboard_overlay(quiet=True):
+            return stop()
+        if not alive:
+            log("xprop stopped before the keyboard window turned up; it is marked as it first shows")
+            return stop()
+        return True
+
+    def stop() -> bool:
+        spy.kill()
+        spy.wait()
+        spy.stdout.close()
+        return False
+    GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, fd,
+                          GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR, changed)
+
+
 def write_firefox_prefs(profile: str, zoom: str, extra: dict) -> None:
     os.makedirs(profile, exist_ok=True)
     prefs = dict(FIREFOX_PREFS, **{"layout.css.devPixelsPerPx": zoom}, **extra)
@@ -626,6 +774,7 @@ def app_windows(app: str) -> list[list[str]]:
 def bring_forward(app: str | None) -> bool:
     """Bring an app's window (None: the home screen) forward."""
     STATE.front = app
+    publish("home")
     spec = APPS.get(app, {}) if app else {}
     if DESKTOP:
         if app is None:
@@ -664,6 +813,7 @@ def step_aside(app: str) -> bool:
         return False
     STATE.home_win = wins[0]
     STATE.front = app
+    publish("home")
     return True
 
 
@@ -673,18 +823,93 @@ def go_home(raise_window: bool = True) -> None:
     # window comes forward. Not waiting long: it comes forward regardless.
     # Apps keep running under it (closing Barry goes back to them).
     lower_curtain("left for home")
+    # The trackpad or the Deck controls slide away first: Barry's slide-in
+    # is seen only once its window is forward, and that hides the tool.
+    tools_leave()
     with STATE.lock:
         STATE.home_serial += 1
         STATE.home_ready.clear()
+    publish("home", "keyd")
+    if threading.current_thread() is threading.main_thread():
+        flush_events()  # the shell must hear of it while this waits (Desktop Mode's swipe)
     STATE.home_ready.wait(HOME_READY_S)
     STATE.set_keyboard(False)
     # In both modes: Desktop Mode's Home too (a trackpad left open behind
-    # Barry kept the touchscreen, 2026-10-18).
+    # Barry kept the touchscreen, 2026-10-18). One that slid away waits for
+    # this, showing its empty last frame until Barry's window takes its place.
     leave_tools("")
     # Unmapping and mapping the window again (bring_forward) shows black
     # for a moment: only when something else is in front.
     if raise_window and not bring_forward(None):
         log("cannot find the home screen window")
+
+
+def tool_client(pid: int) -> bool:
+    """Is the process pid a tool's window on the event stream, one that
+    slides away when asked ({"tool": true}; Barry.Input's ShellState)?"""
+    return any(c.tool and c.pid == pid and not c.closed for c in list(EVENTS.clients))  # a worker thread
+
+
+def tools_leave() -> None:
+    """Going home over the trackpad or the Deck controls (Game Mode): each
+    asks to slide away first (GET /tools' leaving: its pid; ToolStage.qml
+    plays it), and Barry comes once it says it has ({"tool_left": true}) or
+    ends, or after TOOL_LEAVE_S at the most. It stays up meanwhile, showing
+    its empty last frame, until leave_tools ends it as Barry's window comes
+    forward: gamescope shows the most recently mapped window alone, so had it
+    quit by itself, the window under it (the app Barry opened over) would
+    flash up for the moment Barry takes to get ready.
+
+    Not overlapped with Barry's slide-in: Barry's window forward hides the
+    tool at once (no cross-fade between two windows here), and Shell.qml's
+    slide runs from its /home-ready, so starting that early played most of
+    it unseen behind the tool. Their two animations follow each other.
+
+    Only a tool that said it slides (a Barry.Input that knows how; it may
+    not have connected yet just after starting): the rest go at once, as
+    before. Not in Desktop Mode (its tools are Wayland windows beside
+    Barry's under KWin, which activates Barry's window over them), nor on
+    the main loop (Desktop Mode's swipe), whose event stream and pidfds
+    this would hold up."""
+    if DESKTOP or threading.current_thread() is threading.main_thread():
+        return
+    asked = {}
+    for app, spec in APPS.items():
+        proc = running(app) if spec.get("tool") else None
+        if proc and tool_client(proc.pid):
+            asked[app] = proc.pid
+    if not asked:
+        return
+    started_at = time.monotonic()
+    with STATE.lock:
+        STATE.tools_serial += 1
+        STATE.leaving = asked
+        STATE.leave_pending = set(asked.values())
+        STATE.tools_left.clear()
+    publish("tools")
+    for app, pid in asked.items():
+        if running(app) is None:
+            tool_gone(pid)  # ended just before it was asked
+    names = ", ".join(asked)
+    if STATE.tools_left.wait(TOOL_LEAVE_S):
+        log(f"{names} slid away in {time.monotonic() - started_at:.2f} s")
+    else:
+        log(f"{names} did not slide away in {TOOL_LEAVE_S:.1f} s; closing it")
+    with STATE.lock:
+        STATE.leaving = {}
+        STATE.leave_pending = set()
+    publish("tools")
+
+
+def tool_gone(pid: int) -> None:
+    """A tool asked to slide away has (its {"tool_left": true}) or has
+    ended: tools_leave goes on once all of them have."""
+    with STATE.lock:
+        if pid not in STATE.leave_pending:
+            return
+        STATE.leave_pending.discard(pid)
+        if not STATE.leave_pending:
+            STATE.tools_left.set()
 
 
 def leave_tools(but: str) -> None:
@@ -772,6 +997,7 @@ def start_flatpak(app: str, spec: dict) -> None:
     try:
         if not flatpak_installed(ref):
             STATE.status[app] = "Installing…"
+            publish("apps")
             log(f"installing {ref} from Flathub")
             subprocess.run(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB],
                            capture_output=True)
@@ -788,19 +1014,20 @@ def start_flatpak(app: str, spec: dict) -> None:
                     fh.write(text)
                 log(f"wrote {path}")
         raise_curtain(app, "flatpak")
+        STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
         with app_log(app) as out:
-            STATE.apps[app] = subprocess.Popen(
+            started(app, subprocess.Popen(
                 ["flatpak", "run", ref, *spec.get("desktop_args" if DESKTOP else "args", [])],
                 env=app_env(ACCESSIBILITY_ENABLED="1"),
                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-            )
+            ))
         watch_opening(app, "flatpak", lambda: window_shown(["--classname", spec["window"]]))
         if not DESKTOP:  # KWin shows launch dialogs itself
             threading.Thread(target=surface_dialogs, args=(STATE.apps[app],), daemon=True).start()
-        STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
         log(f"started {app} (pid {STATE.apps[app].pid})")
     finally:
         STATE.status.pop(app, None)
+        publish("apps")
 
 
 def launch(app: str) -> tuple[int, dict]:
@@ -816,15 +1043,19 @@ def launch(app: str) -> tuple[int, dict]:
     close_barry(f"{app} starts", back=False)
     leave_tools(app)
     STATE.front = app
+    publish("home")
     if app in STATE.status:
         return 200, {"ok": True, "running": False}
     proc = running(app)
     if proc:
         STATE.quiet_until = time.monotonic() + SWITCH_QUIET_S
+        publish("keyd")
+        thaw(app, "brought forward")  # in front already (above): not frozen again meanwhile
         bring_forward(app)
         return 200, {"ok": True, "running": True}
     if "flatpak" in spec:
         STATE.status[app] = "Starting…"
+        publish("apps")
         threading.Thread(target=start_flatpak, args=(app, spec), daemon=True).start()
         return 200, {"ok": True, "running": False}
     if "main" in spec:  # a user app in QML; a web one is a Firefox app below
@@ -840,17 +1071,19 @@ def launch(app: str) -> tuple[int, dict]:
             if spec.get("service"):
                 # One left by a window that ended unseen goes first.
                 barry_apps.stop_service(STATE.services.pop(app, None))
+                # In a scope of its own, frozen with the app.
                 proc, url, token = barry_apps.start_service(spec["dir"], spec["service"],
-                                                            app_env(**barry_apps.app_env(app)), out)
+                                                            app_env(**barry_apps.app_env(app)), out,
+                                                            wrap=scope_prefix(app, "service"))
                 STATE.services[app] = proc
                 args += [url, token]
                 log(f"started {app}'s service (pid {proc.pid})")
             raise_curtain(app, "qml")
-            STATE.apps[app] = subprocess.Popen(
-                args,
+            started(app, subprocess.Popen(
+                scope_prefix(app) + args,
                 env=app_env(**extra),
                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-            )
+            ))
         log(f"started {app} {spec['version']} (pid {STATE.apps[app].pid})")
         proc = STATE.apps[app]
         watch_opening(app, "qml", lambda: window_shown(["--pid", str(proc.pid), "--name", spec["window"]]))
@@ -870,11 +1103,11 @@ def launch(app: str) -> tuple[int, dict]:
             else:
                 cmd += ["--", "desktop"]
             extra["QT_QPA_PLATFORM"] = "wayland"
-        STATE.apps[app] = subprocess.Popen(
+        started(app, subprocess.Popen(
             cmd,
             env=app_env(**extra),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        ))
         log(f"started {app} (pid {STATE.apps[app].pid})")
         return 200, {"ok": True, "running": False}
     profile = os.path.join(DATA, spec["profile"])  # a user web app's is a full path already
@@ -903,12 +1136,12 @@ def launch(app: str) -> tuple[int, dict]:
         # window freezes. Plain Xwayland presents it instead.
         env = app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0", DISABLE_GAMESCOPE_WSI="1")
     raise_curtain(app, "firefox")
-    STATE.apps[app] = subprocess.Popen(
-        cmd,
+    STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
+    started(app, subprocess.Popen(
+        scope_prefix(app) + cmd,
         env=env,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
+    ))
     log(f"started {app} (pid {STATE.apps[app].pid})")
     proc = STATE.apps[app]
     watch_opening(app, "firefox", lambda: page_shown(proc.pid))
@@ -925,6 +1158,10 @@ def raise_curtain(app: str, kind: str) -> None:
     STATE.curtain = APPS[app]["name"]
     STATE.curtain_shows = time.monotonic() + CURTAIN[kind]["delay"]
     keyboard_input_focus(True)
+    publish("keyboard")
+    if CURTAIN[kind]["delay"] > 0:
+        # The cover shows a moment later: said then (GET /keyboard's curtain).
+        GLib.timeout_add(int(CURTAIN[kind]["delay"] * 1000) + 1, curtain_due)
 
 
 def lower_curtain(why: str) -> None:
@@ -934,6 +1171,17 @@ def lower_curtain(why: str) -> None:
     STATE.curtain_app = None
     STATE.curtain = ""
     keyboard_input_focus(STATE.keyboard()["visible"])
+    publish("keyboard")
+
+
+def curtain_due() -> bool:
+    """CURTAIN's "delay" over: the cover shows now, unless it came off."""
+    left = STATE.curtain_shows - time.monotonic()
+    if STATE.curtain and left > 0:
+        GLib.timeout_add(int(left * 1000) + 1, curtain_due)  # early by a hair
+    else:
+        publish("keyboard")
+    return False
 
 
 def watch_opening(app: str, kind: str, ready) -> None:
@@ -1017,6 +1265,12 @@ def close(app: str) -> tuple[int, dict]:
         return 404, {"error": f"no app {app!r}"}
     proc = running(app)
     if proc:
+        # A frozen app would not hear its SIGTERM (flatpak kill's) until
+        # thawed, nor be frozen again while it quits.
+        with STATE.life_lock:
+            if app in STATE.life:
+                STATE.life[app].closing = True
+        thaw(app, "closing")
         if "flatpak" in APPS[app]:
             # The app runs in flatpak's sandbox, not as our child.
             subprocess.run(["flatpak", "kill", APPS[app]["flatpak"]], capture_output=True)
@@ -1409,7 +1663,9 @@ class Handler(BaseHTTPRequestHandler):
     disable_nagle_algorithm = True
 
     def _json(self, code: int, obj) -> None:
-        body = json.dumps(obj).encode()
+        self._send(code, json.dumps(obj).encode())
+
+    def _send(self, code: int, body: bytes) -> None:
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -1430,36 +1686,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
-        if path == "/home":
-            self._json(200, {"serial": STATE.home_serial, "open": barry_up(),
-                             "over": barry_up() and STATE.back_app is not None,
-                             "page": STATE.open_page if barry_up() else 0,
-                             "under": STATE.under if barry_up() else "",
-                             "app": app_in_front(),
-                             "lifted": list(STATE.open_lifted) if barry_up() and STATE.open_lifted else None})
-        elif path == "/keyboard":
-            # Keyboard.qml polls with its panel height (?h=).
+        # The topics' answers are kept ready (publish): sent as they are.
+        if path == "/keyboard":
+            # With the keyboard's panel height (?h=), as it once polled.
             h = urllib.parse.parse_qs(query).get("h", [""])[0]
-            if h.isdigit() and int(h) != STATE.keyboard_height:
-                STATE.keyboard_height = int(h)
-                apply_inset()
-            curtain = STATE.curtain if time.monotonic() >= STATE.curtain_shows else ""
-            self._json(200, dict(STATE.keyboard(), curtain=curtain))
-        elif path == "/top-keyboard":
-            with STATE.lock:
-                self._json(200, dict(STATE.top_keyboard))
-        elif path == "/keyd":
-            self._json(200, keyd_state())
-        elif path == "/apps":
-            refresh_user_apps()
-            order, hidden = home_layout()
-            self._json(200, {name: {"running": running(name) is not None,
-                                    "status": STATE.status.get(name, ""),
-                                    "name": APPS[name]["name"], "icon": APPS[name]["icon"],
-                                    "closable": APPS[name].get("closable", True),
-                                    "user": APPS[name].get("user", False),
-                                    "hidden": name in hidden, "pos": order.index(name)}
-                             for name in APPS})
+            if h.isdigit():
+                set_keyboard_height(int(h))
+            self._send(200, EVENTS.answer("keyboard"))
+        elif path[:1] == "/" and path[1:] in TOPICS:
+            self._send(200, EVENTS.answer(path[1:]))
         elif path == "/layout":
             refresh_user_apps()
             self._json(200, layout_json())
@@ -1497,9 +1732,11 @@ class Handler(BaseHTTPRequestHandler):
                 page = body.get("page")
                 if body.get("open") and page in (PAGE_DASHBOARD, PAGE_QUICK):
                     threading.Thread(target=open_side, args=(page, why), daemon=True).start()
+                elif body.get("open"):
+                    threading.Thread(target=open_barry, args=(why,), daemon=True).start()
                 else:
-                    threading.Thread(target=open_barry if body.get("open") else close_barry, args=(why,),
-                                     daemon=True).start()
+                    back = body.get("back") if isinstance(body.get("back"), bool) else None
+                    threading.Thread(target=close_barry, args=(why, back), daemon=True).start()
                 self._json(200, {"ok": True})
         elif path == "/side-prepare":
             threading.Thread(target=side_prepare, daemon=True).start()
@@ -1706,8 +1943,10 @@ def open_side(page: int, why: str) -> None:
         STATE.under = shot
     STATE.quiet_until = time.monotonic() + SIDE_QUIET_S
     open_barry(why, page)
+    publish("home", "keyd")  # under and quietUntil, if Barry was open already
     if not STATE.barry_open:
         STATE.under = ""
+        publish("home")
 
 
 def keyd_state() -> dict:
@@ -1758,6 +1997,737 @@ def top_field_keyboard(why: str) -> None:
         launch(TOP_KEYBOARD)
 
 
+def started(app: str, proc: subprocess.Popen) -> None:
+    """An app's process started: it runs until its pidfd says it ended
+    (app_ended)."""
+    STATE.apps[app] = proc
+    try:
+        fd = os.pidfd_open(proc.pid)
+    except ProcessLookupError:
+        # Ended and reaped already (a poll() elsewhere).
+        GLib.idle_add(app_ended, app, proc)
+    except OSError:
+        # No pidfds (an old kernel): GLib's child watch reaps it instead.
+        GLib.child_watch_add(GLib.PRIORITY_DEFAULT, proc.pid, lambda *_: app_ended(app, proc))
+    else:
+        def ended(_fd, _cond) -> bool:
+            os.close(fd)
+            return app_ended(app, proc)
+        GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, fd, GLib.IOCondition.IN, ended)
+    write_top_input()
+    publish("apps", "home", "keyd")
+
+
+def app_ended(app: str, proc: subprocess.Popen) -> bool:
+    """An app's process ended (main loop). Its fields are gone too."""
+    proc.poll()  # reaped here, as Popen does
+    if STATE.apps.get(app) is not proc:
+        return False  # started again since
+    log(f"{app} exited ({proc.returncode})")
+    # Its service (stopped below) may still be frozen.
+    thaw(app, "exited")
+    with STATE.life_lock:
+        STATE.life.pop(app, Background()).cancel()
+    del STATE.apps[app]
+    tool_gone(proc.pid)
+    if STATE.front == app:
+        STATE.front = None  # gamescope shows the home window again
+        publish("home")
+        if STATE.home_win and not barry_up():
+            bring_forward(None)  # unmapped as Barry closed back to it
+    if app in STATE.services:
+        threading.Thread(target=barry_apps.stop_service, args=(STATE.services.pop(app),), daemon=True).start()
+    STATE.set_keyboard(False)
+    write_top_input()
+    publish("apps", "home", "keyd")
+    return False
+
+
+TOP_INPUT_WRITTEN: list = [None]  # what TOP_INPUT_FLAG says
+TOP_INPUT_LOCK = threading.Lock()
+
+
+def write_top_input() -> None:
+    """TOP_INPUT_FLAG: whether the Trackpad app runs (sm8550-thor-backlightd).
+    Without it (not a Thor) it is tried again at the next change."""
+    top_input = not DESKTOP and running(TOP_INPUT_APP) is not None
+    with TOP_INPUT_LOCK:
+        if top_input == TOP_INPUT_WRITTEN[0]:
+            return
+        try:
+            with open(TOP_INPUT_FLAG, "w", encoding="utf-8") as fh:
+                fh.write("1" if top_input else "0")
+            TOP_INPUT_WRITTEN[0] = top_input
+        except OSError:
+            pass
+
+
+class Background:
+    """A running app's life off the screen (see the top): its timers (GLib
+    sources, armed on the main loop), whether it is frozen and plays
+    sound, and when it was last on the screen."""
+
+    def __init__(self) -> None:
+        self.frozen: list[str] = []  # the cgroups frozen (the app's, its service's); [] when thawed
+        self.freeze_timer = 0
+        self.close_timer = 0
+        self.shown = True  # on the screen at the last look (background_changed)
+        self.left_at = time.monotonic()  # when it was last on the screen (or stopped playing sound)
+        self.playing = False
+        self.no_scope = False  # said once: it has no scope of its own to freeze
+        self.closing = False  # thawed to be closed: never frozen again
+
+    def cancel(self) -> None:
+        for timer in (self.freeze_timer, self.close_timer):
+            if timer:
+                GLib.source_remove(timer)
+        self.freeze_timer = self.close_timer = 0
+
+
+def scope_probe() -> None:
+    """Can apps start in systemd user scopes of their own? Tried once, at
+    start: systemd-run --user --scope (it needs the user's systemd), bound
+    to shelld's own service, so they stop with it as they did inside it.
+    Not ordered after it: they stop together, and this thaws them as it
+    gets its SIGTERM (systemd does not know of a freeze written to
+    cgroup.freeze, and a frozen app would sit on its SIGTERM until
+    TimeoutStopSec's SIGKILL). Without, apps start as before and are never
+    frozen."""
+    if DESKTOP:
+        return
+    STATE.own_cgroup = proc_cgroup(os.getpid())
+    cmd = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "TimeoutStopSec=5"]
+    unit = os.path.basename(STATE.own_cgroup)
+    if unit.endswith(".service"):
+        cmd += ["-p", f"BindsTo={unit}"]
+    try:
+        r = subprocess.run([*cmd, f"--unit={SCOPE_PREFIX}probe-{os.getpid()}", "--", "true"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        log(f"apps not in scopes of their own (never frozen): {err}")
+        return
+    if r.returncode != 0:
+        log(f"apps not in scopes of their own (never frozen): {r.stderr.strip()[-200:]}")
+        return
+    STATE.scope_cmd = cmd
+    log("apps start in scopes of their own" + (f", bound to {unit}" if unit.endswith(".service") else ""))
+
+
+def scope_prefix(app: str, part: str = "") -> list[str]:
+    """What an app's command starts with to run in a scope of its own
+    (systemd-run execs it in place: the pid, and its pidfd, are the
+    app's); nothing for a tool (never frozen) or without scopes."""
+    if STATE.scope_cmd is None or APPS.get(app, {}).get("tool"):
+        return []
+    with STATE.life_lock:
+        STATE.scope_seq += 1
+        seq = STATE.scope_seq
+    name = f"{app}-{part}" if part else app
+    return [*STATE.scope_cmd, f"--unit={SCOPE_PREFIX}{name}-{os.getpid()}-{seq}", "--"]
+
+
+def proc_cgroup(pid: int) -> str:
+    """The cgroup (its path under CGROUP_ROOT) of process pid, or ""."""
+    try:
+        with open(f"/proc/{pid}/cgroup", encoding="utf-8") as fh:
+            return next((line[3:].strip() for line in fh if line.startswith("0::")), "")
+    except OSError:
+        return ""
+
+
+def app_cgroups(app: str) -> list[str]:
+    """The scopes an app (and its service) runs in, to freeze: only ours
+    and Flatpak's (FROZEN_SCOPES), never shelld's own nor one holding it.
+    Looked up as needed: Flatpak moves its app into its scope as it starts."""
+    out = []
+    for proc in (running(app), STATE.services.get(app)):
+        if proc is None or proc.poll() is not None:
+            continue
+        path = proc_cgroup(proc.pid)
+        leaf = os.path.basename(path)
+        own = STATE.own_cgroup
+        if (leaf.endswith(".scope") and leaf.startswith(FROZEN_SCOPES) and path != own
+                and not own.startswith(path + "/")):
+            out.append(CGROUP_ROOT + path)
+    return out
+
+
+def write_freeze(cgroup: str, on: bool) -> bool:
+    try:
+        with open(os.path.join(cgroup, "cgroup.freeze"), "w", encoding="utf-8") as fh:
+            fh.write("1" if on else "0")
+        return True
+    except OSError as err:
+        if on or os.path.isdir(cgroup):  # a scope gone with its app needs no thaw
+            log(f"cannot {'freeze' if on else 'thaw'} {cgroup}: {err}")
+        return False
+
+
+def frozen(app: str) -> bool:
+    # No lock: publish asks this with EVENTS.lock held.
+    life = STATE.life.get(app)
+    return bool(life and life.frozen)
+
+
+def on_screen(app: str) -> bool:
+    """The app shows: in front, Barry closed."""
+    return STATE.front == app and not STATE.barry_open
+
+
+def may_freeze(app: str) -> bool:
+    spec = APPS.get(app, {})
+    return not DESKTOP and STATE.scope_cmd is not None and not spec.get("tool") and not spec.get("keepAwake")
+
+
+def thaw(app: str, why: str) -> None:
+    """Thaw a frozen app (any thread): before its window shows, before it
+    is closed. Its timer to close it goes."""
+    with STATE.life_lock:
+        life = STATE.life.get(app)
+        if life is None or not life.frozen:
+            return
+        for cgroup in life.frozen:
+            write_freeze(cgroup, False)
+        life.frozen = []
+        if life.close_timer:
+            GLib.source_remove(life.close_timer)
+            life.close_timer = 0
+    log(f"{app} thawed ({why})")
+    publish("apps")
+
+
+def thaw_all(why: str) -> None:
+    for app in list(STATE.life):
+        thaw(app, why)
+
+
+BACKGROUND_QUEUED = [False]
+BACKGROUND_QUEUE_LOCK = threading.Lock()
+
+
+def background_soon() -> None:
+    """Something that decides what shows changed (publish): look again on
+    the main loop, once for a burst."""
+    with BACKGROUND_QUEUE_LOCK:
+        if BACKGROUND_QUEUED[0]:
+            return
+        BACKGROUND_QUEUED[0] = True
+    GLib.idle_add(background_changed)
+
+
+def background_changed() -> bool:
+    """Which apps show changed (main loop): each app that left the screen
+    gets FREEZE_S before it is frozen (freeze_due), one that came back
+    loses its timers. Thawing is not left to this: launch and close_barry
+    thaw an app before its window shows."""
+    with BACKGROUND_QUEUE_LOCK:
+        BACKGROUND_QUEUED[0] = False
+    thaw_late = []
+    with STATE.life_lock:
+        now = time.monotonic()
+        for app in list(STATE.apps):
+            if running(app) is None or APPS.get(app, {}).get("tool"):
+                continue
+            life = STATE.life.setdefault(app, Background())
+            if on_screen(app):
+                life.shown = True
+                life.cancel()
+                if life.frozen:
+                    thaw_late.append(app)
+                continue
+            if life.shown:
+                life.shown = False
+                life.left_at = now
+            if (not life.frozen and not life.freeze_timer and not life.playing and not life.closing
+                    and may_freeze(app)):
+                life.freeze_timer = GLib.timeout_add(max(0, int((life.left_at + FREEZE_S - now) * 1000)),
+                                                     freeze_due, app)
+        want_audio = any(may_freeze(a) for a in STATE.life)
+    for app in thaw_late:
+        thaw(app, "on the screen")  # a safety net
+    audio_wanted(want_audio)
+    return False
+
+
+def freeze_due(app: str) -> bool:
+    """FREEZE_S off the screen (main loop): frozen, unless it came back,
+    plays sound or ended meanwhile; closed BACKGROUND_CLOSE_S after it
+    left the screen (close_due)."""
+    with STATE.life_lock:
+        life = STATE.life.get(app)
+        if life is None:
+            return False
+        life.freeze_timer = 0
+        if (running(app) is None or on_screen(app) or life.playing or life.frozen or life.closing
+                or not may_freeze(app)):
+            return False
+        cgroups = app_cgroups(app)
+        if not cgroups:
+            if not life.no_scope:
+                life.no_scope = True
+                log(f"{app} has no scope of its own: not frozen")
+            return False
+        life.frozen = [c for c in cgroups if write_freeze(c, True)]
+        if not life.frozen:
+            return False
+        life.close_timer = GLib.timeout_add(
+            max(0, int((life.left_at + BACKGROUND_CLOSE_S - time.monotonic()) * 1000)), close_due, app)
+    log(f"{app} frozen ({FREEZE_S:.0f} s off the screen)")
+    publish("apps")
+    return False
+
+
+def close_due(app: str) -> bool:
+    """A frozen app BACKGROUND_CLOSE_S off the screen (main loop): closed
+    (close thaws it first)."""
+    with STATE.life_lock:
+        life = STATE.life.get(app)
+        if life is None:
+            return False
+        life.close_timer = 0
+        if not life.frozen:
+            return False
+    log(f"{app}: off the screen for {BACKGROUND_CLOSE_S / 60:.0f} min; closing it")
+    close(app)
+    return False
+
+
+def watch_pressure() -> None:
+    """Memory pressure (a PSI trigger on PSI_PATH, POLLPRI as it fires):
+    each time, the frozen app least recently on the screen closes. A FIFO
+    in its place (tests): each write is one trigger."""
+    if DESKTOP:
+        return
+    try:
+        fifo = stat.S_ISFIFO(os.stat(PSI_PATH).st_mode)
+        fd = os.open(PSI_PATH, os.O_RDWR | os.O_NONBLOCK)  # a FIFO's own writer too: no HUP
+        if not fifo:
+            os.write(fd, PSI_TRIGGER.encode() + b"\0")
+    except OSError as err:
+        log(f"no memory pressure trigger ({PSI_PATH}): {err}")
+        return
+
+    def fired(_fd, cond) -> bool:
+        if fifo:
+            try:
+                os.read(fd, 4096)
+            except BlockingIOError:
+                return True
+        elif cond & (GLib.IOCondition.ERR | GLib.IOCondition.HUP | GLib.IOCondition.NVAL):
+            log("memory pressure trigger gone")
+            return False
+        with STATE.life_lock:
+            frozen_apps = sorted((life.left_at, app) for app, life in STATE.life.items() if life.frozen)
+        if not frozen_apps:
+            log("memory pressure: no frozen app to close")
+            return True
+        app = frozen_apps[0][1]
+        log(f"memory pressure: closing {app} (frozen, least recently used)")
+        close(app)
+        return True
+    GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, fd, GLib.IOCondition.IN if fifo else GLib.IOCondition.PRI, fired)
+    log(f"memory pressure trigger on {PSI_PATH}" + ("" if fifo else f" ({PSI_TRIGGER})"))
+
+
+AUDIO = {"proc": None, "watch": 0, "settle": 0, "retry": 0, "buf": b""}  # main loop only
+
+
+def audio_wanted(want: bool) -> None:
+    """pactl subscribe runs while an app that may be frozen runs."""
+    if want and AUDIO["proc"] is None and not AUDIO["retry"]:
+        audio_start()
+    elif not want and AUDIO["proc"] is not None:
+        audio_stop()
+
+
+def audio_start() -> None:
+    try:
+        # Line by line: into a pipe, pactl's output would wait for a full buffer.
+        proc = subprocess.Popen(["stdbuf", "-oL", "pactl", "subscribe"], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as err:
+        log(f"cannot follow sound (pactl subscribe): {err}; an app playing it may be frozen")
+        return
+    AUDIO["proc"] = proc
+    fd = proc.stdout.fileno()
+    os.set_blocking(fd, False)
+    AUDIO["watch"] = GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, fd,
+                                           GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+                                           audio_event)
+    audio_check()  # the streams there already
+
+
+def audio_stop() -> None:
+    proc, AUDIO["proc"] = AUDIO["proc"], None
+    for key in ("watch", "settle", "retry"):
+        if AUDIO[key]:
+            GLib.source_remove(AUDIO[key])
+            AUDIO[key] = 0
+    AUDIO["buf"] = b""
+    if proc:
+        proc.kill()
+        proc.wait()
+        proc.stdout.close()
+
+
+def audio_event(fd, _cond) -> bool:
+    """pactl subscribe's lines: a sink-input (a stream) came, changed
+    (corked, uncorked) or went; looked at once a burst has settled."""
+    try:
+        data = os.read(fd, 65536)
+    except BlockingIOError:
+        return True
+    except OSError:
+        data = b""
+    if not data:
+        AUDIO["watch"] = 0  # this source ends with False
+        audio_stop()
+        log(f"pactl subscribe ended; again in {AUDIO_RETRY_S} s")
+
+        def retry() -> bool:
+            AUDIO["retry"] = 0
+            background_changed()
+            return False
+        AUDIO["retry"] = GLib.timeout_add_seconds(AUDIO_RETRY_S, retry)
+        return False
+    AUDIO["buf"] += data
+    *lines, AUDIO["buf"] = AUDIO["buf"].split(b"\n")
+    if any(b"sink-input" in line for line in lines) and not AUDIO["settle"]:
+        AUDIO["settle"] = GLib.timeout_add(AUDIO_SETTLE_MS, audio_settled)
+    return True
+
+
+def audio_settled() -> bool:
+    AUDIO["settle"] = 0
+    audio_check()
+    return False
+
+
+def pactl_json(*args: str) -> list:
+    try:
+        r = subprocess.run(["pactl", "-f", "json", *args], capture_output=True, text=True, timeout=2)
+        out = json.loads(r.stdout) if r.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    return out if isinstance(out, list) else []
+
+
+def audio_check() -> None:
+    """Which apps play sound (main loop): a stream not corked whose process
+    is in the app's scope, the process as the stream says
+    (application.process.id) or as PipeWire saw it connect (its client's
+    pipewire.sec.pid: a Flatpak's own pid is its sandbox's). One that plays
+    is not frozen (thawed, if it was); one that stopped gets FREEZE_S from
+    now."""
+    clients = {str(c.get("index")): c.get("properties") for c in pactl_json("list", "clients")
+               if isinstance(c, dict)}
+    pids = set()
+    for s in pactl_json("list", "sink-inputs"):
+        if not isinstance(s, dict) or s.get("corked") is not False:
+            continue
+        for props in (s.get("properties"), clients.get(str(s.get("client")))):
+            for key in ("application.process.id", "pipewire.sec.pid"):
+                value = str(props.get(key, "")) if isinstance(props, dict) else ""
+                if value.isdigit():
+                    pids.add(int(value))
+    playing_in = {proc_cgroup(pid) for pid in pids} - {""}
+    changed = []
+    with STATE.life_lock:
+        for app, life in list(STATE.life.items()):
+            mine = [c[len(CGROUP_ROOT):] for c in app_cgroups(app)]
+            playing = any(c == m or c.startswith(m + "/") for c in playing_in for m in mine)
+            if playing == life.playing:
+                continue
+            life.playing = playing
+            changed.append((app, playing))
+            if playing and life.freeze_timer:
+                GLib.source_remove(life.freeze_timer)
+                life.freeze_timer = 0
+            elif not playing:
+                life.left_at = max(life.left_at, time.monotonic())  # FREEZE_S from now, if off the screen
+    for app, playing in changed:
+        log(f"{app} {'plays sound: kept awake' if playing else 'stopped playing sound'}")
+        if playing:
+            thaw(app, "plays sound")
+    background_changed()
+
+
+def home_state() -> dict:
+    """GET /home's answer."""
+    up = barry_up()
+    return {"serial": STATE.home_serial, "open": up,
+            "over": up and STATE.back_app is not None,
+            "page": STATE.open_page if up else 0,
+            "under": STATE.under if up else "",
+            "app": app_in_front(),
+            "lifted": list(STATE.open_lifted) if up and STATE.open_lifted else None}
+
+
+def keyboard_state() -> dict:
+    """GET /keyboard's answer: the cover's app name once it shows."""
+    curtain = STATE.curtain if time.monotonic() >= STATE.curtain_shows else ""
+    return dict(STATE.keyboard(), curtain=curtain)
+
+
+def top_keyboard_state() -> dict:
+    with STATE.lock:
+        return dict(STATE.top_keyboard)
+
+
+def apps_state() -> dict:
+    """GET /apps' answer."""
+    apps = APPS
+    order, hidden = home_layout()
+    return {name: {"running": running(name) is not None,
+                   "status": STATE.status.get(name, ""),
+                   "name": apps[name]["name"], "icon": apps[name]["icon"],
+                   "closable": apps[name].get("closable", True),
+                   "user": apps[name].get("user", False),
+                   "hidden": name in hidden, "pos": order.index(name),
+                   "frozen": frozen(name)}  # added last (SHELLD-EVENTS.md)
+            for name in apps}
+
+
+def tools_state() -> dict:
+    """GET /tools' answer."""
+    with STATE.lock:
+        return {"serial": STATE.tools_serial, "leaving": dict(STATE.leaving)}
+
+
+TOPIC_STATE = {"home": home_state, "keyboard": keyboard_state, "top-keyboard": top_keyboard_state,
+               "keyd": keyd_state, "apps": apps_state, "tools": tools_state}
+
+
+class Events:
+    """Each topic's answer as last worked out, and the event stream's
+    clients (these only on the main loop)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()  # answers worked out one at a time, in the order things changed
+        self.answers: dict[str, bytes] = {}
+        self.clients: list[EventClient] = []
+        self.flush_queued = False
+
+    def answer(self, topic: str) -> bytes:
+        with self.lock:
+            return self.answers[topic]
+
+
+EVENTS = Events()
+
+
+def publish(*topics: str) -> None:
+    """Something behind these topics changed: work their answers out again
+    (from any thread, never with STATE.lock held), and send the ones that
+    differ to the event stream's clients, as soon as the main loop is free
+    (the changes of one go together, a line each)."""
+    if "home" in topics or "apps" in topics:
+        background_soon()  # what shows may have changed: apps in the background
+    changed = False
+    with EVENTS.lock:
+        for topic in topics:
+            body = json.dumps(TOPIC_STATE[topic]()).encode()
+            if body != EVENTS.answers.get(topic):
+                EVENTS.answers[topic] = body
+                changed = True
+        if not changed or EVENTS.flush_queued:
+            return
+        EVENTS.flush_queued = True
+    GLib.idle_add(flush_events, priority=GLib.PRIORITY_HIGH)
+
+
+def flush_events() -> bool:
+    with EVENTS.lock:
+        EVENTS.flush_queued = False
+        answers = dict(EVENTS.answers)
+    for client in list(EVENTS.clients):
+        client.send_changed(answers)
+    return False
+
+
+class EventClient:
+    """One connection to the event stream (main loop only). It gets each
+    topic's answer when it differs from the one it got last."""
+
+    def __init__(self, sock: socket.socket) -> None:
+        self.sock = sock
+        self.sent: dict[str, bytes] = {}
+        self.out = b""
+        self.inbuf = b""
+        self.out_watch = 0
+        self.closed = False
+        self.tool = False  # a tool's window that slides away when asked ({"tool": true})
+        try:
+            # Who it is (the kernel's word): tools are asked, and answer, by pid.
+            self.pid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                           struct.calcsize("3i")))[0]
+        except OSError:
+            self.pid = 0
+        self.in_watch = GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, sock.fileno(),
+                                              GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+                                              self.readable)
+
+    def send_changed(self, answers: dict[str, bytes]) -> None:
+        lines = []
+        for topic in TOPICS:
+            body = answers.get(topic)
+            if body is not None and body != self.sent.get(topic):
+                self.sent[topic] = body
+                lines.append(b'{"topic": "' + topic.encode() + b'", "data": ' + body + b"}\n")
+        if lines:
+            self.out += b"".join(lines)
+            self.drain()
+
+    def drain(self) -> bool:
+        if self.closed:
+            return False
+        try:
+            self.out = self.out[self.sock.send(self.out):]
+        except BlockingIOError:
+            pass
+        except OSError:
+            self.close()
+            return False
+        if len(self.out) > EVENT_BACKLOG_MAX:
+            log("event stream: a client fell behind; dropped")
+            self.close()
+            return False
+        if self.out and not self.out_watch:
+            self.out_watch = GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, self.sock.fileno(),
+                                                   GLib.IOCondition.OUT, lambda *_: self.drain())
+        elif not self.out and self.out_watch:
+            GLib.source_remove(self.out_watch)
+            self.out_watch = 0
+        return bool(self.out)
+
+    def readable(self, _fd, _cond) -> bool:
+        try:
+            data = self.sock.recv(4096)
+        except BlockingIOError:
+            return True
+        except OSError:
+            data = b""
+        if not data:
+            self.close()
+            return False
+        self.inbuf += data
+        while b"\n" in self.inbuf and not self.closed:
+            line, self.inbuf = self.inbuf.split(b"\n", 1)
+            client_message(self, line)
+        if len(self.inbuf) > EVENT_LINE_MAX:
+            self.close()
+        return not self.closed
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        for watch in (self.in_watch, self.out_watch):
+            if watch:
+                GLib.source_remove(watch)
+        self.in_watch = self.out_watch = 0
+        self.sock.close()
+        if self in EVENTS.clients:
+            EVENTS.clients.remove(self)
+
+
+def client_message(client: EventClient, line: bytes) -> None:
+    """A line from an event stream client: {"keyboard_height": n}; a tool's
+    window: {"tool": true}, {"tool_left": true} (tools_leave)."""
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        return
+    if not isinstance(msg, dict):
+        return
+    if msg.get("tool") is True:
+        client.tool = True
+    if msg.get("tool_left") is True and client.tool and client.pid:
+        tool_gone(client.pid)
+    h = msg.get("keyboard_height")
+    if isinstance(h, int) and not isinstance(h, bool) and h >= 0:
+        # The keyboard window is there: mark it if that has not happened yet.
+        if not STATE.overlay_marked:
+            mark_keyboard_overlay(quiet=True)
+        set_keyboard_height(h)
+
+
+def set_keyboard_height(h: int) -> None:
+    """The key panel's height, as Keyboard.qml reports it."""
+    if h == STATE.keyboard_height:
+        return
+    STATE.keyboard_height = h
+    apply_inset()
+    publish("keyd")
+
+
+def start_events() -> socket.socket:
+    """The event stream's socket, in a folder only we may enter."""
+    folder = os.path.dirname(EVENTS_SOCKET)
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    os.chmod(folder, 0o700)
+    try:
+        os.unlink(EVENTS_SOCKET)  # left by an earlier run
+    except FileNotFoundError:
+        pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(EVENTS_SOCKET)
+    os.chmod(EVENTS_SOCKET, 0o600)
+    srv.listen(16)
+    srv.setblocking(False)
+
+    def accept(_fd, _cond) -> bool:
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except BlockingIOError:
+                return True
+            except OSError as err:
+                log(f"event stream: {err}")
+                return True
+            conn.setblocking(False)
+            client = EventClient(conn)
+            EVENTS.clients.append(client)
+            with EVENTS.lock:
+                answers = dict(EVENTS.answers)
+            client.send_changed(answers)  # the snapshot, every topic in TOPICS' order
+    GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, srv.fileno(), GLib.IOCondition.IN, accept)
+    return srv
+
+
+def watch_config() -> list:
+    """The user apps (installed or removed by barry-app too, without asking
+    here) and the home screen's order (the Barry Launcher plugin, barry_apps):
+    file monitors on their folders. The monitors, to keep."""
+    os.makedirs(barry_apps.APPS_DIR, exist_ok=True)  # GLib would poll for a missing one
+    os.makedirs(os.path.dirname(HOME_LAYOUT), exist_ok=True)
+    layout = os.path.basename(HOME_LAYOUT)
+
+    def config_changed(_monitor, file, other, _event) -> None:
+        if layout in (file.get_basename(), other.get_basename() if other else None):
+            publish("apps")
+    # An install or update is several steps (barry_apps: a hidden folder,
+    # the old version moved out, the new one in): taken in once they have
+    # settled, read anew (the folder's time may not have moved on).
+    settle = [0]
+
+    def apps_settled() -> bool:
+        settle[0] = 0
+        refresh_user_apps(force=True)
+        return False
+
+    def apps_changed(_monitor, _file, _other, _event) -> None:
+        if settle[0]:
+            GLib.source_remove(settle[0])
+        settle[0] = GLib.timeout_add(APPS_SETTLE_MS, apps_settled)
+    apps = Gio.File.new_for_path(barry_apps.APPS_DIR).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, None)
+    apps.connect("changed", apps_changed)
+    config = Gio.File.new_for_path(os.path.dirname(HOME_LAYOUT)).monitor_directory(
+        Gio.FileMonitorFlags.WATCH_MOVES, None)
+    config.connect("changed", config_changed)
+    return [apps, config]
+
+
 def start_desktop() -> None:
     """Desktop Mode: KWin's window placement. (KWin's input method and the
     presses that count as touches are barry_launcher_keyd's.)"""
@@ -1771,11 +2741,20 @@ def start_desktop() -> None:
 
 
 def main() -> None:
+    # Every topic's answer before anyone may ask.
+    refresh_user_apps(force=True)
+    publish(*TOPICS)
+    events = start_events()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    # Its own thread, so a busy main loop (an app's window searched for)
+    # never holds a request up; waiting for connections, not looking for
+    # them every half second (nothing here shuts it down).
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": None}, daemon=True).start()
     setup_bundled_apps()
-    refresh_user_apps(force=True)
+    monitors = watch_config()
+    refresh_user_apps()
+    publish("apps")  # Dino's place moved
     Atspi.init()  # page_shown reads Firefox's page; text focus is barry_launcher_keyd's
     threading.Thread(target=watch_touches, daemon=True).start()
     if DESKTOP:
@@ -1789,41 +2768,24 @@ def main() -> None:
         write_barry_flag(False)  # closed at start, as the shell starts
         barry_monitor = Gio.File.new_for_path(BARRY_FLAG).monitor_file(Gio.FileMonitorFlags.NONE, None)
         barry_monitor.connect("changed", on_barry_flag)
-    top_input_written: bool | None = None
+    write_top_input()
+    if not DESKTOP:
+        watch_keyboard_window()
+    # Apps in the background: scopes to freeze them in, memory pressure.
+    threading.Thread(target=scope_probe, daemon=True).start()
+    watch_pressure()
 
-    def watch() -> bool:
-        nonlocal top_input_written
-        # The keyboard window appears shortly after we start; mark it then,
-        # so gamescope does not take it for an app.
-        if not STATE.overlay_marked:
-            mark_keyboard_overlay(quiet=True)
-        # An app ending means its fields are gone too.
-        for name, proc in list(STATE.apps.items()):
-            if proc.poll() is not None:
-                log(f"{name} exited ({proc.returncode})")
-                del STATE.apps[name]
-                if STATE.front == name:
-                    STATE.front = None  # gamescope shows the home window again
-                    if STATE.home_win and not barry_up():
-                        bring_forward(None)  # unmapped as Barry closed back to it
-                if name in STATE.services:
-                    threading.Thread(target=barry_apps.stop_service, args=(STATE.services.pop(name),),
-                                     daemon=True).start()
-                STATE.set_keyboard(False)
-        # Overlays draw above Barry: step aside while it is open.
-        if STATE.keyboard()["visible"] and barry_up():
-            STATE.set_keyboard(False)
-        top_input = not DESKTOP and running(TOP_INPUT_APP) is not None
-        if top_input != top_input_written:
-            try:
-                with open(TOP_INPUT_FLAG, "w", encoding="utf-8") as fh:
-                    fh.write("1" if top_input else "0")
-                top_input_written = top_input
-            except OSError:
-                pass  # no sm8550-thor-backlightd (not a Thor); tried again next pass
-        return True
-    GLib.timeout_add(200, watch)
+    def ended(signum: int) -> bool:
+        # Frozen apps are thawed on the way out: the SIGTERM they get as
+        # their scopes stop with this service would wait until they were.
+        thaw_all("Barry Launcher stops")
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+        return False
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        GLib.unix_signal_add(GLib.PRIORITY_HIGH, signum, ended, signum)
     Atspi.event_main()
+    del events, monitors, barry_monitor
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <set>
@@ -379,6 +380,30 @@ std::optional<AtspiRect> extents(AtspiAccessible *acc)
     return copy;
 }
 
+// The field's app is frozen (shelld freezes apps left in the background):
+// an AT-SPI call to it would hang until libatspi's timeout, on every tap.
+// Its cgroup says so (the bus daemon answers for the pid, not the app).
+bool frozen(AtspiAccessible *acc)
+{
+    GError *err = nullptr;
+    const guint pid = atspi_accessible_get_process_id(acc, &err);
+    g_clear_error(&err);
+    if (!pid)
+        return false;
+    std::ifstream cg("/proc/" + std::to_string(pid) + "/cgroup");
+    std::string line;
+    while (std::getline(cg, line)) {
+        if (line.rfind("0::", 0) != 0)
+            continue;
+        std::ifstream ev("/sys/fs/cgroup" + line.substr(3) + "/cgroup.events");
+        for (std::string e; std::getline(ev, e);)
+            if (e == "frozen 1")
+                return true;
+        return false;
+    }
+    return false;
+}
+
 bool hasState(AtspiAccessible *acc, AtspiStateType st)
 {
     AtspiStateSet *set = atspi_accessible_get_state_set(acc);
@@ -536,7 +561,7 @@ bool addressBar(AtspiAccessible *acc, const std::string &profile)
 // small box around it, with its buttons) into view, just above the keyboard.
 gboolean revealField(gpointer)
 {
-    if (!textAcc || DESKTOP)
+    if (!textAcc || DESKTOP || frozen(textAcc))
         return G_SOURCE_REMOVE;
     const Shell s = shell();
     if (!s.ok || !s.visible)
@@ -895,7 +920,7 @@ void onCaret(AtspiEvent *event, void *)
 // hand, say), show it again.
 void onTap(int rawX, int rawY)
 {
-    if (imDecides() || !textAcc)
+    if (imDecides() || !textAcc || frozen(textAcc))
         return;
     if (!hasState(textAcc, ATSPI_STATE_FOCUSED))
         return;
@@ -965,7 +990,7 @@ std::optional<std::string> beforeCaret(long n)
         }
         return std::string(p);
     }
-    if (!textAcc)
+    if (!textAcc || frozen(textAcc))
         return std::nullopt;
     AtspiAccessible *holder = caretHolder(textAcc);
     std::optional<std::string> result;

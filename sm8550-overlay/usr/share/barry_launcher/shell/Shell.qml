@@ -14,7 +14,8 @@
 // from a tap and says where it goes, and here it slides there, springing
 // past a little and back, as the keyboard does coming up. An app's tile
 // starts it (or brings it forward) through barry_launcher_shelld, and Barry
-// closes; the AYN button opens Barry over it and closes back to it.
+// closes; the AYN button opens Barry over it and closes to the game art, the
+// app staying in the background (its tile brings it back).
 //
 // Over an app, a swipe in from the left edge pulls in the dashboard, from
 // the right edge the quick settings, like a phone's side panels, following
@@ -29,9 +30,9 @@
 // The game art is standby. A tap on it wakes Barry too: its pages come over
 // the art, which stays behind as if behind frosted glass (Hero.qml's
 // frost), its logo gone. Untouched for standbySeconds (Barry's settings,
-// 15 by default; 0: never), Barry goes back to the art, unless it is open
-// over an app or on a side page (the dashboard and the quick settings stay
-// until swiped back to the apps).
+// 15 by default; 0: never), Barry goes back to the art, an app it opened
+// over staying in the background, unless it is on a side page (the
+// dashboard and the quick settings stay until swiped back to the apps).
 //
 // The game art can be turned off (Barry's settings, heroArt, the PB-OS tab's
 // Dual Screen page): Barry's pages then stay up on their own background, as
@@ -71,33 +72,34 @@ Window {
         x.send(JSON.stringify(body))
     }
 
+    // After a change made here: with an older shelld (no event socket),
+    // ask for the apps now; else shelld pushes the change itself.
     function refresh() {
-        const x = new XMLHttpRequest()
-        x.onreadystatechange = function () {
-            if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200)
-                return
-            try {
-                const apps = JSON.parse(x.responseText)
-                const r = {}, st = {}
-                for (const name in apps) {
-                    r[name] = apps[name].running
-                    st[name] = apps[name].status || ""
-                }
-                win.running = r
-                win.status = st
-                // Only when it changed: a new model rebuilds the tiles.
-                const tiles = Object.keys(apps)
-                    .filter(name => apps[name].name !== undefined && !apps[name].hidden)
-                    .sort((a, b) => apps[a].pos - apps[b].pos)
-                    .map(name => ({ app: name, name: apps[name].name, icon: apps[name].icon,
-                                    closable: apps[name].closable !== false }))
-                if (tiles.length || Object.keys(apps).some(name => apps[name].hidden))
-                    if (JSON.stringify(tiles) !== JSON.stringify(win.tiles))
-                        win.tiles = tiles
-            } catch (e) {}
-        }
-        x.open("GET", api + "/apps")
-        x.send()
+        ShellState.refresh("apps")
+    }
+
+    // shelld's apps (GET /apps; ShellState pushes them as they change).
+    function takeApps(apps) {
+        if (!apps || typeof apps !== "object")
+            return
+        try {
+            const r = {}, st = {}
+            for (const name in apps) {
+                r[name] = apps[name].running
+                st[name] = apps[name].status || ""
+            }
+            win.running = r
+            win.status = st
+            // Only when it changed: a new model rebuilds the tiles.
+            const tiles = Object.keys(apps)
+                .filter(name => apps[name].name !== undefined && !apps[name].hidden)
+                .sort((a, b) => apps[a].pos - apps[b].pos)
+                .map(name => ({ app: name, name: apps[name].name, icon: apps[name].icon,
+                                closable: apps[name].closable !== false }))
+            if (tiles.length || Object.keys(apps).some(name => apps[name].hidden))
+                if (JSON.stringify(tiles) !== JSON.stringify(win.tiles))
+                    win.tiles = tiles
+        } catch (e) {}  // an entry not as expected: as before, left as it was
     }
 
     // What Home shows (shelld's /apps); null: Home's own until it answers.
@@ -119,6 +121,10 @@ Window {
     // The art behind Barry: 0 in focus, 1 frosted (animated as Barry comes
     // and goes).
     property real frost: 0
+    // Barry opening as a tool (the Trackpad, the Deck controls) slides away
+    // (shelld's tools topic): it comes in from black over the blurred art,
+    // never over the sharp art for a moment.
+    property bool fromTool: false
     // Barry's settings (settings.json, read again as it changes).
     readonly property int standbySeconds: typeof Skin.settings.standbySeconds === "number" ? Skin.settings.standbySeconds : 15
     readonly property bool desktop: Qt.application.arguments.indexOf("desktop") >= 0
@@ -185,8 +191,33 @@ Window {
         visible: win.heroOn
     }
     Binding { target: hero.item; property: "s"; value: win.s }
-    Binding { target: hero.item; property: "shown"; value: !win.barryOpen || barry.opacity < 1 }
+    // Not under an app in front: the art's pan and bob would keep drawing
+    // frames nobody sees.
+    Binding { target: hero.item; property: "shown"; value: !win.appFront && (!win.barryOpen || barry.opacity < 1) }
     Binding { target: hero.item; property: "frost"; value: win.frost }
+    Rectangle {
+        id: blackout
+        anchors.fill: parent
+        color: "black"
+        opacity: 0
+        visible: opacity > 0
+    }
+    // Barry did not open after all: no black left over the art.
+    Timer {
+        id: blackoutGuard
+        interval: 1500
+        onTriggered: if (win.fromTool || !win.barryOpen) {
+            win.fromTool = false
+            unblack.start()
+            if (!win.barryOpen)
+                win.frost = 0
+        }
+    }
+    SequentialAnimation {
+        id: unblack
+        PauseAnimation { duration: 120 }
+        NumberAnimation { target: blackout; property: "opacity"; to: 0; duration: 280; easing.type: Easing.OutQuad }
+    }
     // Standby: a tap on the art wakes Barry.
     Item {
         anchors.fill: hero
@@ -327,6 +358,9 @@ Window {
     }
 
     function slideIn(serial, page, under) {
+        const fromTool = win.fromTool || blackout.opacity > 0
+        win.fromTool = false
+        frostOff.stop()
         slideOut.stop()
         slide.stop()
         sideIn.stop()
@@ -343,6 +377,8 @@ Window {
             barryShift.y = 0
             barry.opacity = 1
             win.frost = 0
+            unblack.stop()
+            blackout.opacity = 0  // no picture came: the art, as before
             const r = new XMLHttpRequest()
             r.onreadystatechange = function () {
                 if (r.readyState !== XMLHttpRequest.DONE)
@@ -362,6 +398,12 @@ Window {
             return
         }
         win.underShot = ""
+        unblack.stop()
+        if (fromTool) {
+            blackoutGuard.stop()
+            blackout.opacity = 1
+            win.frost = 1
+        }
         // Barry opens on the apps, or the side page a swipe in asked for.
         settleAnim.stop()
         pages.goTo(page)
@@ -378,6 +420,8 @@ Window {
             if (x.readyState !== XMLHttpRequest.DONE)
                 return
             slide.start()
+            if (fromTool)
+                unblack.start()
             if (drops)
                 home.item.dropIn()
         }
@@ -422,7 +466,27 @@ Window {
     // Only while the picture covers a closed Barry: as a side page opens,
     // /home stops saying "app" before it says "open" (the side page showed
     // the art on the test Thor).
-    onAppFrontChanged: if (!appFront && underCover) underClear()
+    onAppFrontChanged: {
+        if (!appFront && underCover)
+            underClear()
+        if (appFront && !barryOpen && heroOn && !underCover)
+            toBlack()
+        else if (!appFront && !barryOpen && blackout.opacity > 0) {
+            // The app quit with Barry closed: back to the art.
+            unblack.start()
+            frostOff.start()
+        }
+    }
+    function toBlack() {
+        slide.stop()
+        slideOut.stop()
+        unblack.stop()
+        frostOff.stop()
+        barry.opacity = 0
+        blackout.opacity = 1
+        win.frost = 1
+    }
+    NumberAnimation { id: frostOff; target: win; property: "frost"; to: 0; duration: 520; easing.type: Easing.InOutCubic }
 
     ParallelAnimation {
         id: slide
@@ -447,11 +511,13 @@ Window {
             onActiveChanged: if (active) win.standbyAgain()
         }
     }
-    // Back to the art after standbySeconds untouched: only on the apps page,
-    // not over an app. Started and stopped here, never bound: restart() on a
-    // Timer whose running is bound breaks the binding, and a touch or a page
-    // change then ran it on the side pages too (they closed after 15 s).
-    readonly property bool standbyWanted: heroOn && barryOpen && !barryOver && standbySeconds > 0
+    // Back to the art after standbySeconds untouched: only on the apps page;
+    // over an app too (shelld closes to the art, the app in the background:
+    // GET /home's "app" is false, and slideOut plays). Started and stopped
+    // here, never bound: restart() on a Timer whose running is bound breaks
+    // the binding, and a touch or a page change then ran it on the side
+    // pages too (they closed after 15 s).
+    readonly property bool standbyWanted: heroOn && barryOpen && standbySeconds > 0
                                           && pages.page === 0 && !pages.dragging
     function standbyAgain() {
         if (standbyWanted)
@@ -470,62 +536,70 @@ Window {
         function onPageChanged() { win.standbyAgain() }
     }
 
-    Timer {
-        id: homePoll
-        interval: 50
-        running: true
-        repeat: true
-        property bool polling: false
-        onTriggered: {
-            if (polling)
-                return
-            polling = true
-            const x = new XMLHttpRequest()
-            x.onreadystatechange = function () {
-                if (x.readyState !== XMLHttpRequest.DONE)
-                    return
-                homePoll.polling = false
-                if (x.status !== 200)
-                    return
-                let answer = null
-                try { answer = JSON.parse(x.responseText) } catch (e) { return }
-                const open = answer.open === true
-                const page = answer.page === 1 || answer.page === -1 ? answer.page : 0
-                if (win.homeSerial >= 0 && answer.serial !== win.homeSerial && open) {
-                    win.openPage = page
-                    win.holdTaps(page, answer.lifted)
-                    win.slideIn(answer.serial, page, typeof answer.under === "string" ? answer.under : "")
-                } else if (win.barryOpen && !open && win.sidePanel) {
-                    // A side panel closing back to its app: nothing fades
-                    // (that showed the game art); the app comes forward.
-                    sideIn.stop()
-                    win.underCover = true
-                } else if (win.barryOpen && !open && win.heroOn) {
-                    slide.stop()
-                    slideOut.start()
-                } else if (win.homeSerial < 0 && (open || !win.heroOn)) {
-                    // Open already as this started (or always, without art).
-                    barryShift.y = 0
-                    barry.opacity = 1
-                    win.frost = win.heroOn ? 1 : 0
-                }
-                win.barryOver = answer.over === true
-                win.appFront = answer.app === true
-                if (!open)
-                    win.openPage = 0
-                win.homeSerial = answer.serial
-                win.barryOpen = open
-            }
-            x.open("GET", api + "/home")
-            x.send()
+    // What shelld says about Barry (GET /home), as it changes.
+    function takeHome(answer) {
+        if (!answer || typeof answer !== "object")
+            return
+        const open = answer.open === true
+        const page = answer.page === 1 || answer.page === -1 ? answer.page : 0
+        if (win.homeSerial >= 0 && answer.serial !== win.homeSerial && open) {
+            win.openPage = page
+            win.holdTaps(page, answer.lifted)
+            win.slideIn(answer.serial, page, typeof answer.under === "string" ? answer.under : "")
+        } else if (win.barryOpen && !open && win.sidePanel) {
+            // A side panel closing back to its app: nothing fades
+            // (that showed the game art); the app comes forward.
+            sideIn.stop()
+            win.underCover = true
+        } else if (win.barryOpen && !open && win.heroOn && answer.app === true) {
+            // An app takes the screen: black over the blurred art, never the
+            // sharp art while the app's window comes (or this window's last
+            // frame as Barry opens over it again).
+            win.toBlack()
+        } else if (win.barryOpen && !open && win.heroOn) {
+            slide.stop()
+            slideOut.start()
+        } else if (win.homeSerial < 0 && (open || !win.heroOn)) {
+            // Open already as this started (or always, without art).
+            barryShift.y = 0
+            barry.opacity = 1
+            win.frost = win.heroOn ? 1 : 0
         }
+        win.barryOver = answer.over === true
+        if (!open)
+            win.openPage = 0
+        win.homeSerial = answer.serial
+        // Open first: onAppFrontChanged must not take Barry opening over an
+        // app for the app quitting with Barry closed (that faded the frost
+        // off, the logo showing over Barry).
+        win.barryOpen = open
+        win.appFront = answer.app === true
     }
 
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: win.refresh()
+    // Barry.Input's ShellState: shelld pushes /home and /apps as they change
+    // (or, with an older shelld, it asks for them as this once did).
+    Connections {
+        target: ShellState
+        function onHomeChanged() { win.takeHome(ShellState.home) }
+        function onAppsChanged() { win.takeApps(ShellState.apps) }
+        function onToolsChanged() {
+            const t = ShellState.tools
+            if (!(t && typeof t === "object" && t.leaving && Object.keys(t.leaving).length > 0))
+                return
+            // Black already, behind the tool as it slides: drawn by the time
+            // Barry's window comes forward (set only as slideIn ran, the
+            // window was sometimes shown with its last frame, the sharp art).
+            win.fromTool = true
+            unblack.stop()
+            blackout.opacity = 1
+            win.frost = 1
+            blackoutGuard.restart()
+        }
+    }
+    Component.onCompleted: {
+        ShellState.watch("home")
+        ShellState.watch("apps")
+        win.takeHome(ShellState.home)
+        win.takeApps(ShellState.apps)
     }
 }

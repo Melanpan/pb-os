@@ -36,6 +36,7 @@ qt_add_qml_module(barryinput
     keyboardcontroller.cpp keyboardcontroller.h
     keyboardgrid.cpp
     keyboardstate.cpp keyboardstate.h
+    shellstate.cpp shellstate.h
     skin.cpp skin.h
     heattrail.cpp heattrail.h
     pageswipe.cpp pageswipe.h

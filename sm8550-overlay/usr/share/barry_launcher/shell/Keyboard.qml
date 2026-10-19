@@ -4,7 +4,9 @@
 // below; what is tapped is typed there (Barry.Input: KeyboardController
 // with a Typer, XTest), and shelld only plans autocorrect's swaps. Covers
 // the screen while up: keys (KeyPanel.qml) on the lower (or, for a field in
-// the lower half, upper) part; tapping the rest hides it.
+// the lower half, upper) part; tapping the rest hides it. The keys slide
+// in from their screen edge and back out (only the look: shown is
+// KeyboardState's, and the keys take no touches once it goes).
 // The window stays mapped and hides by opacity, as Steam's overlay does
 // (gamescope ignores property changes on unmapped windows).
 // It also covers the screen while an app opens (KeyboardState's curtain:
@@ -33,7 +35,7 @@ Window {
     visibility: desktop ? Window.Windowed : Window.FullScreen
     // Window opacity does nothing under Wayland: in Desktop Mode the keys
     // themselves hide, over a transparent window.
-    opacity: desktop || shown || covering ? 1 : 0
+    opacity: desktop || shown || covering || sliding ? 1 : 0
     width: 1240
     height: desktop ? panel.implicitHeight : 1080
 
@@ -44,6 +46,33 @@ Window {
     property string curtainName: ""  // kept while the cover fades away
     readonly property bool covering: !desktop && (curtain !== "" || coverFade.running)
     onCurtainChanged: curtain !== "" ? curtainName = curtain : coverFade.restart()
+
+    // How far the keys are in: 0 off the screen's edge, 1 in place. Up
+    // like Barry's pages come in (Shell.qml), down a little quicker; a
+    // slide turned around midway goes back from where the keys are. The
+    // window stays drawn until they are off. Desktop Mode: no slide.
+    property real kb: 0
+    readonly property bool sliding: kb > 0.001
+    NumberAnimation {
+        id: slide
+        target: win
+        property: "kb"
+    }
+    function slideKeys() {
+        slide.stop()
+        const to = shown ? 1 : 0
+        if (desktop) {
+            kb = to
+            return
+        }
+        slide.to = to
+        // Time for the way left, but never a snap.
+        slide.duration = Math.round((shown ? 300 : 220) * Math.max(0.4, Math.abs(to - kb)))
+        slide.easing.type = shown ? Easing.OutCubic : Easing.InCubic
+        slide.start()
+    }
+    onShownChanged: slideKeys()
+    Component.onCompleted: kb = shown ? 1 : 0
 
     // Desktop Mode's shortcuts (Ctrl+C, ...) go through a real keyboard to
     // KWin, so the focused window gets the modifiers.
@@ -81,13 +110,19 @@ Window {
         id: panel
         file: "KeyPanel.qml"
         props: ({ controller: keys })
-        // Only while up: the window's opacity follows a moment after the
-        // keys (an X property), so keys left drawn in a window going
-        // transparent flashed as an opening app's cover went away.
-        visible: win.shown
+        // Only while up or sliding: the window's opacity follows a moment
+        // after the keys (an X property), so keys left drawn in a window
+        // going transparent flashed as an opening app's cover went away.
+        visible: win.sliding
+        enabled: win.shown  // no keys typed as they slide away
         width: parent.width
         height: implicitHeight
         y: win.desktop || !win.atTop ? parent.height - height : 0
+        // Off the nearer edge: down below the screen, or up above it for
+        // keys at the top.
+        transform: Translate {
+            y: (1 - win.kb) * panel.height * (win.atTop && !win.desktop ? -1 : 1)
+        }
     }
     Binding { target: panel.item; property: "s"; value: win.s }
 
