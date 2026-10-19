@@ -14,13 +14,18 @@ file with its hash and permissions. A later build turns it into a delta with
 its root partition mounted read-only.
 
 Feature and patch releases: a feature release (e.g. alpha-v0.4) ships the full
-package only. Each patch release after it (alpha-v0.4.1, alpha-v0.4.2, ...)
+package. Each patch release after it (alpha-v0.4.1, alpha-v0.4.2, ...)
 ships one cumulative delta named from the feature release, which also installs
 on every patch before it:
   --base-state <feature release state> --patch-state <each earlier patch's state>
 The delta then carries every file that differs from the feature release or
 from any of those patches, and deletes what any of them had that this release
 does not. The rootfs must be stamped with that base (PB_OS_BASE).
+A feature release can also ship the same kind of delta from the previous
+feature release and its patches, beside its full package, so devices on that
+line download only what changed (the updater looks for the delta from its
+installed base first):
+  --prev-base-state <previous feature release state> --prev-patch-state <each of its patches' state>
 """
 import argparse
 import gzip
@@ -49,6 +54,10 @@ ap.add_argument('--base-state', metavar='FILE',
                 help='patch release: the state of the feature release it patches; builds the cumulative delta and no full package')
 ap.add_argument('--patch-state', action='append', default=[], metavar='FILE',
                 help='with --base-state: the state of each earlier patch of that feature release (repeatable)')
+ap.add_argument('--prev-base-state', metavar='FILE',
+                help='feature release: also build the cumulative delta from the previous feature release this state describes')
+ap.add_argument('--prev-patch-state', action='append', default=[], metavar='FILE',
+                help='with --prev-base-state: the state of each patch of that feature release (repeatable)')
 ap.add_argument('--state-only', action='store_true', help='only write the state file of --rootfs')
 ap.add_argument('--soc', choices=('sm8650', 'sm8550', 'all'), default='sm8650',
                 help="all: the one image's package ('pb-os') for every device")
@@ -80,6 +89,8 @@ if stamped.is_file() and stamped.read_text().strip() != version:
 stamped_base = root / 'usr/share/pb-os/base'
 release_base = stamped_base.read_text().strip() if stamped_base.is_file() else version
 if a.patch_state and not a.base_state: raise SystemExit('--patch-state needs --base-state')
+if a.prev_patch_state and not a.prev_base_state: raise SystemExit('--prev-patch-state needs --prev-base-state')
+if a.prev_base_state and a.base_state: raise SystemExit('--prev-base-state is for a feature release, not with --base-state')
 # Image name in release assets; the updater maps DTB models to it (IMAGES).
 # SM8550 packages were named 'rp6' before the rename (alpha-v0.5.1 and
 # earlier; konkr-update.py OLD_NAMES); their state files still serve as delta bases.
@@ -244,24 +255,30 @@ def load_state(f):
     if b.get('version') == version: raise SystemExit(f'{f}: state is of this version ({version})')
     return b
 bases = [load_state(f) for f in a.from_state]
-# Patch release: one delta from the feature release that also covers its patches.
-cumulative = None
-if a.base_state:
-    feature = load_state(a.base_state)
-    if feature['version'] != release_base:
-        raise SystemExit(f'--base-state is {feature["version"]}, the rootfs says its base is {release_base} (PB_OS_BASE)')
-    patches = [load_state(f) for f in a.patch_state]
+def feature_line(base_state, patch_states, option):
+    """States of a feature release and its patches, for one cumulative delta."""
+    feature = load_state(base_state)
+    patches = [load_state(f) for f in patch_states]
     for b in patches:
         # States from before bases were recorded: trust the release manager.
-        if b.get('base', release_base) != release_base:
-            raise SystemExit(f'{b["version"]} patches {b.get("base")}, not {release_base}')
+        if b.get('base', feature['version']) != feature['version']:
+            raise SystemExit(f'{b["version"]} patches {b.get("base")}, not {feature["version"]}')
     names = [feature['version']] + [b['version'] for b in patches]
     if len(set(names)) != len(names): raise SystemExit(f'the same version twice: {names}')
     if feature['version'] in [b['version'] for b in bases]:
-        raise SystemExit(f'--from-state {feature["version"]} would be built twice (it is the --base-state)')
-    cumulative = [feature] + patches
+        raise SystemExit(f'--from-state {feature["version"]} would be built twice (it is the {option})')
+    return [feature] + patches
+# Patch release: one delta from the feature release that also covers its patches.
+cumulative = None
+if a.base_state:
+    cumulative = feature_line(a.base_state, a.patch_state, '--base-state')
+    if cumulative[0]['version'] != release_base:
+        raise SystemExit(f'--base-state is {cumulative[0]["version"]}, the rootfs says its base is {release_base} (PB_OS_BASE)')
 elif release_base != version:
     raise SystemExit(f'the rootfs is a patch of {release_base}: give --base-state (and --patch-state)')
+# Feature release: also one delta from the previous feature release and its patches.
+elif a.prev_base_state:
+    cumulative = feature_line(a.prev_base_state, a.prev_patch_state, '--prev-base-state')
 with tempfile.TemporaryDirectory(prefix='pbos-package-', dir=output.parent) as temp:
     stage = Path(temp) / 'full'
     def copy(src, dst):
@@ -310,7 +327,7 @@ with tempfile.TemporaryDirectory(prefix='pbos-package-', dir=output.parent) as t
     android = tree_digest(stage / ANDROID)
     write_state(out_dir / f'pb-os-{version}-{image}.state.json.gz', new, android, decky)
     # A patch release ships only its delta (feature releases bring the full system).
-    if cumulative is None:
+    if not a.base_state:
         pack(stage, output, {'format': 1, **common, 'decky_loader': decky['version'], 'files': files}, ['root', 'home', 'boot'],
              ('thor',) * a.thor_bridge + ('rp6',) * a.rp6_bridge)
 
