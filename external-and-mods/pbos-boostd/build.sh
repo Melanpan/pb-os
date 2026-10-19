@@ -22,7 +22,7 @@ run() {
   bwrap --ro-bind "$R" / --bind "$work" /build --dev /dev --proc /proc --tmpfs /tmp \
     --unshare-pid --die-with-parent --chdir /build --setenv PATH /usr/bin "$@"
 }
-run g++ -std=c++20 -O2 -g0 -Wall -Wextra -Werror -fno-plt -pthread \
+run g++ -std=c++20 -O2 -g0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -fno-plt -pthread \
   -o sm8550-boostd boostd.cpp loop.cpp util.cpp json.cpp -lsystemd
 run strip sm8550-boostd
 install -D -m0755 "$work/sm8550-boostd" "$OUT"

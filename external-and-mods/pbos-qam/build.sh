@@ -25,7 +25,7 @@ run() {
 }
 srcs=()
 for f in "$work"/*.cpp; do srcs+=("$(basename "$f")"); done
-run g++ -std=c++20 -O2 -g0 -Wall -Wextra -Werror -fno-plt -pthread \
+run g++ -std=c++20 -O2 -g0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -fno-plt -pthread \
   -o pbos-qamd "${srcs[@]}" -lsystemd -ldl
 run strip pbos-qamd
 install -D -m0755 "$work/pbos-qamd" "$OUT"

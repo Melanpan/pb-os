@@ -25,7 +25,7 @@ run() {
 }
 srcs=()
 for f in "$work"/*.cpp; do srcs+=("$(basename "$f")"); done
-run g++ -std=c++20 -O2 -g0 -Wall -Wextra -Werror -fno-plt -pthread -D_REENTRANT \
+run g++ -std=c++20 -O2 -g0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -fno-plt -pthread -D_REENTRANT \
   -I/usr/include/pipewire-0.3 -I/usr/include/spa-0.2 \
   -o pbos-platformd "${srcs[@]}" -lsystemd -lpulse -lasound -lpipewire-0.3
 run strip pbos-platformd

@@ -51,7 +51,7 @@ run() {
 run meson setup --buildtype=release --default-library=static -Dhexagonrpcd_verbose=false \
   hexagonrpc out >/dev/null
 run ninja -C out hexagonrpcd/hexagonrpcd tools/sscregistrygen >/dev/null
-run g++ -std=c++20 -O2 -g0 -Wall -Wextra -Werror -fno-plt -o pbos-motiond pbos-motiond.cpp -lsystemd
+run g++ -std=c++20 -O2 -g0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -fno-plt -o pbos-motiond pbos-motiond.cpp -lsystemd
 run strip out/hexagonrpcd/hexagonrpcd out/tools/sscregistrygen pbos-motiond
 install -D -m0755 "$work/out/hexagonrpcd/hexagonrpcd" "$OUT/hexagonrpcd"
 install -D -m0755 "$work/out/tools/sscregistrygen" "$OUT/sscregistrygen"
