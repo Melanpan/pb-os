@@ -29,10 +29,14 @@ const std::vector<ModuleInfo>& modules() {
         {"power-button", Instance::System, [] { return dt_has("qcom,sm8550"); }, make_power_button},
         {"charge-control", Instance::System, charge_control_here, make_charge_control},
         {"pbosd", Instance::System, pbosd_here, make_pbosd},
+        {"thor-backlight", Instance::System, thor_backlight_here, make_thor_backlight},
+        {"thor-controls", Instance::System, [] { return dt_has("ayn,thor"); }, make_thor_controls},
         {"volume-keeper", Instance::User, [] { return dt_has("qcom,sm8550"); }, make_volume_keeper},
         // Every image (the Python ran everywhere); it looks for its keys itself.
         {"volume-keys", Instance::User, [] { return true; }, make_volume_keys},
         {"konkr-volume", Instance::User, konkr_volume_here, make_konkr_volume},
+        {"barry-audio", Instance::User, [] { return dt_has("ayn,thor"); }, make_barry_audio},
+        {"thor-desktop-brightness", Instance::User, [] { return dt_has("ayn,thor"); }, make_thor_desktop_brightness},
     };
     return all;
 }
@@ -80,6 +84,10 @@ int main(int argc, char** argv) {
     loop.on_signal([&](int sig) {
         if (sig == SIGHUP) {
             for (auto& m : running) m->reload();
+            return;
+        }
+        if (sig == SIGUSR1 || sig == SIGUSR2) {
+            for (auto& m : running) m->user_signal(sig);
             return;
         }
         loop.quit();

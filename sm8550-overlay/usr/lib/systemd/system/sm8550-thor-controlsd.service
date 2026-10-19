@@ -5,7 +5,7 @@ After=sm8550-fand.service
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
-ExecStart=/usr/lib/steamos-sm8550/sm8550-thor-controlsd
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only thor-controls
 Restart=always
 RestartSec=2
 

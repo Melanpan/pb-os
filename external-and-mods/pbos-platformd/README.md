@@ -14,6 +14,10 @@ name keeps working.
 | `pbosd` | `pbosd.service` | `/usr/lib/konkr/pbosd` | input, power_supply and USB uevents, the /run flags (inotify, pidfd), process events (game boost), the webhelper (inotify); a 1 s fan tick; SIGHUP |
 | `konkr-volume` | `konkr-volume.service` (user) | `konkr-volume` | the sound server's events, ALSA control events (card 0), the PipeWire node's params |
 | `volume-keys` | `sm8550-volume-keys.service` (user) | `sm8550-volume-keys` | the keys (evdev), input uevents, `/dev/input` permissions (inotify) |
+| `thor-backlight` | `sm8550-thor-backlightd.service` | `sm8550-thor-backlightd` | Steam's file, the /run/sm8550-thor flags, STATE/SCREENS, Barry's settings, charge-rest flag (inotify, pidfd); AYN key + touch (evdev); input/backlight/DRM uevents; process events (Desktop Mode); one-shot timers; 0.5 s re-check only while the bottom screen is dark |
+| `thor-controls` | `sm8550-thor-controlsd.service` | `sm8550-thor-controlsd` | its socket (/run/sm8550-thor/controls.sock) |
+| `thor-desktop-brightness` | `sm8550-thor-desktop-brightness.service` (user) | `sm8550-thor-desktop-brightness` | the session bus (Plasma's ScreenBrightness), the bottom panel's file (inotify) |
+| `barry-audio` | `barry_launcher_audio.service` (user) | `barry_launcher_audio` | the sound server's events (libpulse); SIGUSR1 (apps volume changed) |
 
 The sleep path's one-shot programs run by name as
 `pbos-platformd charge-rest|konkr-standby|led-fade ARGS`:

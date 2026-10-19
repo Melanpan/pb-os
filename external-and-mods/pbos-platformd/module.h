@@ -22,6 +22,8 @@ public:
     virtual void stop() {}
     // SIGHUP: read the settings again.
     virtual void reload() {}
+    // SIGUSR1/SIGUSR2: the module's own meaning (default: ignored).
+    virtual void user_signal(int /*sig*/) {}
 };
 
 enum class Instance { System, User };
@@ -57,5 +59,10 @@ int led_fade_main(int argc, char** argv);       // was sm8550-sleep's python fad
 
 bool pbosd_here();
 std::unique_ptr<Module> make_pbosd();
+bool thor_backlight_here();
+std::unique_ptr<Module> make_thor_backlight();
+std::unique_ptr<Module> make_barry_audio();
+std::unique_ptr<Module> make_thor_controls();
+std::unique_ptr<Module> make_thor_desktop_brightness();
 
 }  // namespace pp

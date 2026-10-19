@@ -5,7 +5,7 @@ After=pipewire-pulse.service wireplumber.service
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
-ExecStart=/usr/lib/barry_launcher/barry_launcher_audio
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only barry-audio
 Restart=always
 RestartSec=3
 

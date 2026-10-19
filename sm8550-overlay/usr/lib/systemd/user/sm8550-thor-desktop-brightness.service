@@ -5,7 +5,7 @@ After=plasma-powerdevil.service
 
 [Service]
 ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
-ExecStart=/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only thor-desktop-brightness
 Restart=on-failure
 RestartSec=3
 

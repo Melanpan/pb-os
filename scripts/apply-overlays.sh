@@ -796,7 +796,7 @@ if [[ "$SOC" != sm8650 ]]; then
   rm -rf "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   mkdir -p "$R/usr/lib/barry_launcher" "$R/usr/share"
   for f in barry_launcher_session barry_launcher_statsd barry_launcher_shelld \
-    barry_launcher_desktop barry_launcher_desktop_switch barry_launcher_audio barry-app; do
+    barry_launcher_desktop barry_launcher_desktop_switch barry-app; do
     install_file "$SM8550_OVL/usr/lib/barry_launcher/$f" "$R/usr/lib/barry_launcher/$f" 0755
   done
   # Glide typing's decoder, the Desktop Mode (KWin) side and user apps
@@ -876,12 +876,8 @@ if [[ "$SOC" != sm8650 ]]; then
       "$R/usr/bin/steamos-polkit-helpers/steamos-priv-write" \
       "$SM8550_OVL/usr/share/steamos-sm8550/priv-write-backlight.inc"
   fi
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-backlightd" \
-    "$R/usr/lib/steamos-sm8550/sm8550-thor-backlightd" 0755
   # Desktop Mode: Plasma's brightness sliders share Game Mode's per-screen
   # brightness (sm8550-thor-backlightd).
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness" \
-    "$R/usr/lib/steamos-sm8550/sm8550-thor-desktop-brightness" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/user/sm8550-thor-desktop-brightness.service" \
     "$R/usr/lib/systemd/user/sm8550-thor-desktop-brightness.service" 0644
   ln -sfn ../sm8550-thor-desktop-brightness.service \
@@ -891,9 +887,8 @@ if [[ "$SOC" != sm8650 ]]; then
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
   ln -sfn ../sm8550-thor-backlightd.service \
     "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-thor-backlightd.service"
-  # Barry Launcher's quick controls: fan profile and stick lighting (root).
-  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-thor-controlsd" \
-    "$R/usr/lib/steamos-sm8550/sm8550-thor-controlsd" 0755
+  # Barry Launcher's quick controls: fan profile and stick lighting (root,
+  # pbos-platformd's thor-controls).
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-thor-controlsd.service" \
     "$R/usr/lib/systemd/system/sm8550-thor-controlsd.service" 0644
   ln -sfn ../sm8550-thor-controlsd.service \

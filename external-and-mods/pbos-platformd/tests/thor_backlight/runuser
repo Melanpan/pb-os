@@ -1,0 +1,14 @@
+#!/bin/sh
+# runuser stand-in: logs its argv; answers xprop as Steam's display would
+# (/tmp/ctl/showing: GAMESCOPE_BOTTOM_SCREEN_SHOWING; /tmp/ctl/xprop-fail:
+# the display refuses).
+echo "runuser $*" >>/tmp/ctl/cmds
+case "$*" in
+  *xprop*)
+    [ -e /tmp/ctl/xprop-fail ] && exit 1
+    case "$*" in
+      *-set*|*-remove*) ;;
+      *) echo "GAMESCOPE_BOTTOM_SCREEN_SHOWING(CARDINAL) = $(cat /tmp/ctl/showing 2>/dev/null || echo 0)" ;;
+    esac ;;
+esac
+exit 0

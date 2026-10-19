@@ -8,7 +8,7 @@ Before=display-manager.service
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
-ExecStart=/usr/lib/steamos-sm8550/sm8550-thor-backlightd
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only thor-backlight
 Restart=always
 RestartSec=2
 # In case it died without undoing it.
