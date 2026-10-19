@@ -237,12 +237,15 @@ fi
 # External displays (DisplayPort over USB-C) take over the picture while one
 # is plugged in, as on a Steam Deck; the panel comes back on unplug. Our
 # gamescope skips external outputs whenever a DSI panel is connected unless
-# GAMESCOPE_ALLOW_EXTERNAL is set. The AYN Thor keeps its panels locked
-# (--force-internal): its bottom screen is leased to Barry Launcher.
+# GAMESCOPE_ALLOW_EXTERNAL is set. On the AYN Thor the external display
+# replaces the top panel only: the bottom one (DSI-1) stays leased to Barry
+# Launcher. The panel is named (not "*") so the bottom one ranks last when it
+# isn't leased: gamescope ranks unlisted outputs below listed ones.
 if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
-  export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-1}"
-  PREFER_OUTPUT="$OUTPUT"
-  INTERNAL_ARGS=(--force-internal)
+  export GAMESCOPE_FORCE_INTERNAL=0
+  export GAMESCOPE_ALLOW_EXTERNAL=1
+  PREFER_OUTPUT="DP-1,$OUTPUT"
+  INTERNAL_ARGS=()
 else
   export GAMESCOPE_FORCE_INTERNAL=0
   export GAMESCOPE_ALLOW_EXTERNAL=1

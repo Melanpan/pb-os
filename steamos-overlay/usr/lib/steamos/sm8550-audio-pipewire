@@ -115,20 +115,22 @@ persist() {
 }
 
 apply_policy() {
-  local card sink
+  local card sink profile
   card="$(card_name)"
   [[ -n "$card" ]] || { log "no card"; return 1; }
   log "card=${card}"
 
   if drm_dp; then
     log "DRM DP/HDMI connected → HiFi DisplayPort"
-    set_profile "$card" 'HiFi (DisplayPort, Speaker)' \
-      || set_profile "$card" 'HiFi (Speaker, DisplayPort)' \
-      || set_profile "$card" HiFi
+    # AYN Thor's UCM adds its mic to the profile name.
+    for profile in 'HiFi (DisplayPort, Speaker)' 'HiFi (Speaker, DisplayPort)' \
+      'HiFi (DisplayPort, Mic, Speaker)' HiFi; do
+      set_profile "$card" "$profile" && break
+    done
     enable_dp_mixers
     wait_sink 'DisplayPort|HDMI' >/dev/null
     sink="$(find_sink 'DisplayPort|HDMI')"
-    persist "${sink:-alsa_output.platform-sound.HiFi__DisplayPort__sink}" 'HiFi (DisplayPort, Speaker)'
+    persist "${sink:-alsa_output.platform-sound.HiFi__DisplayPort__sink}" "$profile"
     set_default "$sink"
   else
     log "no HDMI → pro-audio speakers (vendor/audio path)"
