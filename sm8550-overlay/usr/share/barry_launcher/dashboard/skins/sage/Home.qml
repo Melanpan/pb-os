@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 // shell, whose properties and signals this keeps) as keycaps on the cream
 // case.
 import QtQuick
+import QtQuick.Effects
 import Barry.Input
 import "file:///usr/share/barry_launcher/shell" as Shell
 
@@ -89,6 +90,7 @@ Rectangle {
         property string name
         property string iconKind  // an Icon kind, or a user app's icon file (file://)
         readonly property bool imageIcon: iconKind.startsWith("file:")
+        readonly property bool symbolicIcon: imageIcon && /-symbolic\.\w+$/i.test(iconKind)
         property bool closable: true  // Trackpad and Keyboard close on Home by themselves
         readonly property bool isRunning: closable && home.running[app] === true
         readonly property string statusText: home.status[app] || ""
@@ -134,7 +136,9 @@ Rectangle {
                     color: tile.isRunning || tile.statusText ? home.c.keyActionText : home.c.icon
                     lineWidth: 9 * home.ts
                 }
-                // A user app's own icon (barry_apps): a picture file.
+                // A user app's own icon (barry_apps): a picture file. One
+                // named *-symbolic.* (white on transparent, as in icon themes)
+                // takes the icon color like the built-in icons.
                 Image {
                     anchors.centerIn: cap
                     visible: tile.imageIcon
@@ -145,6 +149,11 @@ Rectangle {
                     fillMode: Image.PreserveAspectFit
                     smooth: true
                     asynchronous: true
+                    layer.enabled: tile.symbolicIcon
+                    layer.effect: MultiEffect {
+                        colorization: 1
+                        colorizationColor: tile.isRunning || tile.statusText ? home.c.keyActionText : home.c.icon
+                    }
                 }
                 // A quick tap only, and not while Barry is still coming in:
                 // thumbs resting on the screen's lower corners started

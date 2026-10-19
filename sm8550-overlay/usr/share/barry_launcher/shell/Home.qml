@@ -7,6 +7,7 @@ pragma ComponentBehavior: Bound
 // Keyboard with the keys up. Colors are the skin's; a skin can also
 // replace this file (SkinView.qml), keeping these properties and signals.
 import QtQuick
+import QtQuick.Effects
 import Barry.Input
 
 Rectangle {
@@ -88,6 +89,7 @@ Rectangle {
         property string name
         property string iconKind  // an Icon kind, or a user app's icon file (file://)
         readonly property bool imageIcon: iconKind.startsWith("file:")
+        readonly property bool symbolicIcon: imageIcon && /-symbolic\.\w+$/i.test(iconKind)
         property bool closable: true  // Trackpad and Keyboard close on Home by themselves
         readonly property bool isRunning: closable && home.running[app] === true
         readonly property string statusText: home.status[app] || ""
@@ -128,7 +130,9 @@ Rectangle {
                     color: Skin.colors.icon
                     lineWidth: 9 * home.ts
                 }
-                // A user app's own icon (barry_apps): a picture file.
+                // A user app's own icon (barry_apps): a picture file. One
+                // named *-symbolic.* (white on transparent, as in icon themes)
+                // takes the skin's icon color like the built-in icons.
                 Image {
                     anchors.centerIn: parent
                     visible: tile.imageIcon
@@ -139,6 +143,11 @@ Rectangle {
                     fillMode: Image.PreserveAspectFit
                     smooth: true
                     asynchronous: true
+                    layer.enabled: tile.symbolicIcon
+                    layer.effect: MultiEffect {
+                        colorization: 1
+                        colorizationColor: Skin.colors.icon
+                    }
                 }
                 // A quick tap only, and not while Barry is still coming in:
                 // thumbs resting on the screen's lower corners started
