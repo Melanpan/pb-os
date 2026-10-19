@@ -49,6 +49,12 @@ std::unique_ptr<Module> make_power_button();
 std::unique_ptr<Module> make_volume_keys();
 bool konkr_volume_here();
 std::unique_ptr<Module> make_konkr_volume();
+// One-shot tools run by name (pbos-platformd TOOL ARGS...): the sleep
+// path's programs, each its own process as before.
+int charge_rest_main(int argc, char** argv);    // was sm8550-charge-rest
+int konkr_standby_main(int argc, char** argv);  // was konkr-standby
+int led_fade_main(int argc, char** argv);       // was sm8550-sleep's python fade
+
 bool pbosd_here();
 std::unique_ptr<Module> make_pbosd();
 

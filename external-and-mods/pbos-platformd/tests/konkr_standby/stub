@@ -1,0 +1,4 @@
+#!/bin/sh
+# konkr-sleep and systemctl: their argv, and whether the standby flag is up.
+f=no; [ -e /run/konkr-standby ] && f=yes
+printf '%s\t%s %s (flag %s)\n' "$(cut -d' ' -f1 /proc/uptime)" "$(basename "$0")" "$*" "$f" >>"$KSTANDBY_LOG"

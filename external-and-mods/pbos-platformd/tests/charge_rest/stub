@@ -1,0 +1,15 @@
+#!/bin/sh
+# systemd-sleep, systemctl, konkr-suspend and konkr-sleep-mode: their argv
+# (and whether the rest flag and the indicator are up), then the case's
+# hook (/tmp/ctl/hook-NAME N ARGS, N = this call's number) and its canned
+# output (/tmp/ctl/out-NAME). Without the test's LD_PRELOADs.
+[ -n "$LD_PRELOAD" ] && exec env -u LD_PRELOAD "$0" "$@"
+n=$(basename "$0")
+f=no; [ -e /run/sm8550-charge-rest ] && f=yes
+i=no; [ -e /run/pbos-charge-indicator ] && i=yes
+c=$(( $(cat "/tmp/ctl/count-$n" 2>/dev/null || echo 0) + 1 ))
+echo "$c" > "/tmp/ctl/count-$n"
+printf -- '-\tEXEC %s %s (flag %s, indicator %s)\n' "$n" "$*" "$f" "$i" >> "$CREST_LOG"
+[ -x "/tmp/ctl/hook-$n" ] && "/tmp/ctl/hook-$n" "$c" "$@"
+[ -e "/tmp/ctl/out-$n" ] && cat "/tmp/ctl/out-$n"
+exit 0

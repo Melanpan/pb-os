@@ -10,4 +10,4 @@ if ! grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base
    || [ "$(/usr/lib/konkr/konkr-sleep-mode)" = kernel ]; then
   exec /usr/lib/systemd/systemd-sleep suspend
 fi
-exec /usr/lib/konkr/konkr-standby
+exec /usr/lib/pbos-platformd/pbos-platformd konkr-standby

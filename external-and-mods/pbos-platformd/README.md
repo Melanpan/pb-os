@@ -15,6 +15,12 @@ name keeps working.
 | `konkr-volume` | `konkr-volume.service` (user) | `konkr-volume` | the sound server's events, ALSA control events (card 0), the PipeWire node's params |
 | `volume-keys` | `sm8550-volume-keys.service` (user) | `sm8550-volume-keys` | the keys (evdev), input uevents, `/dev/input` permissions (inotify) |
 
+The sleep path's one-shot programs run by name as
+`pbos-platformd charge-rest|konkr-standby|led-fade ARGS`:
+`sm8550-charge-rest` (now a two-line wrapper at its old path, so the
+systemd-suspend drop-in, konkr-sleep and pbos-qamd call it as before),
+`konkr-standby` (exec'd by konkr-suspend) and sm8550-sleep's LED fade.
+
 `pbos-platformd --system|--user [--only NAME,...] [--list]`. Built in the
 rootfs by `build.sh` with pbos-qamd's event loop (`../pbos-qam/daemon`),
 installed by `scripts/apply-overlays.sh` as `/usr/lib/pbos-platformd/pbos-platformd`.

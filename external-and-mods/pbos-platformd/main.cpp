@@ -7,6 +7,8 @@
 // pbos-platformd --user              the session's modules
 // pbos-platformd --only NAME[,NAME]  just these (still checked against the device)
 // pbos-platformd --list              which modules would run here
+// pbos-platformd charge-rest|konkr-standby|led-fade ARGS
+//                                    the sleep path's one-shot programs
 
 #include <signal.h>
 
@@ -39,6 +41,12 @@ const std::vector<ModuleInfo>& modules() {
 
 int main(int argc, char** argv) {
     using namespace pp;
+    // pbos-platformd TOOL ARGS...: argv[1] becomes the tool's argv[0].
+    static const std::pair<const char*, int (*)(int, char**)> tools[] = {
+        {"charge-rest", charge_rest_main}, {"konkr-standby", konkr_standby_main}, {"led-fade", led_fade_main}};
+    if (argc > 1)
+        for (auto& [name, fn] : tools)
+            if (!std::strcmp(argv[1], name)) return fn(argc - 1, argv + 1);
     Instance inst = Instance::System;
     bool list = false;
     std::set<std::string> only;

@@ -631,9 +631,8 @@ Value unsupported() {
     return v;
 }
 
-// A helper on the system's Python that answers with JSON.
-Value python_json(const std::string& script, const std::vector<std::string>& args, double timeout, const char* what) {
-    std::vector<std::string> argv = {"/usr/bin/python3", script};
+// A helper that answers with JSON on its standard output.
+Value json_tool(std::vector<std::string> argv, const std::vector<std::string>& args, double timeout, const char* what) {
     argv.insert(argv.end(), args.begin(), args.end());
     RunOpts o;
     o.env = clean_env();
@@ -647,9 +646,15 @@ Value python_json(const std::string& script, const std::vector<std::string>& arg
     return *v;
 }
 
+// The same for a helper on the system's Python.
+Value python_json(const std::string& script, const std::vector<std::string>& args, double timeout, const char* what) {
+    return json_tool({"/usr/bin/python3", script}, args, timeout, what);
+}
+
 Value charge_rest(const std::vector<std::string>& args) {
     if (!can_exec(CHARGE_REST)) return unsupported();
-    Value out = python_json(CHARGE_REST, args, 20, "charge rest");
+    // pbos-platformd's charge-rest, through the script's old path.
+    Value out = json_tool({CHARGE_REST}, args, 20, "charge rest");
     if (!out.is_object()) return unsupported();
     Value res = Value::object();
     res["supported"] = out["lights"].truthy();
@@ -668,7 +673,7 @@ bool charge_preview() {
     run({"systemctl", "reset-failed", PREVIEW_UNIT + ".service"});
     RunOpts o;
     o.env = clean_env();
-    return run({"systemd-run", "--unit=" + PREVIEW_UNIT, "--collect", "/usr/bin/python3", CHARGE_REST, "preview"}, o)
+    return run({"systemd-run", "--unit=" + PREVIEW_UNIT, "--collect", CHARGE_REST, "preview"}, o)
                .code == 0;
 }
 
