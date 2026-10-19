@@ -1,5 +1,7 @@
 [Unit]
 Description=SM8550 gpio volume rocker
+# The main account only: other logins (ssh) must not drive the shared hardware.
+ConditionUser=steamos
 After=pipewire.service wireplumber.service
 Wants=pipewire.service wireplumber.service
 

@@ -3,8 +3,8 @@ Description=KONKR Pocket FIT speaker volume curve
 After=pipewire.service pipewire-pulse.service wireplumber.service
 Wants=pipewire-pulse.service wireplumber.service
 ConditionPathExists=/sys/firmware/devicetree/base/model
-# root's user manager (SSH logins) has no PipeWire session
-ConditionUser=!root
+# The main account only: other logins (ssh) must not drive the shared hardware.
+ConditionUser=steamos
 
 [Service]
 ExecCondition=/bin/sh -c 'grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model'

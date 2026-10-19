@@ -1,5 +1,7 @@
 [Unit]
 Description=Barry Launcher: a volume for each AYN Thor screen
+# The main account only: other logins (ssh) must not drive the shared hardware.
+ConditionUser=steamos
 After=pipewire-pulse.service wireplumber.service
 
 [Service]

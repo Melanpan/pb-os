@@ -1,5 +1,7 @@
 [Unit]
 Description=SM8550: keep the output volume across reboots
+# The main account only: other logins (ssh) must not drive the shared hardware.
+ConditionUser=steamos
 After=wireplumber.service
 ConditionPathExists=/sys/firmware/devicetree/base/compatible
 
