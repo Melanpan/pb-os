@@ -1,0 +1,13 @@
+[Unit]
+Description=PB-OS memory guard (background work goes first when memory runs out)
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --system --only memguard
+Restart=always
+RestartSec=2
+# It has to run when nothing else can (its OOM value: pbos-.service.d).
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target

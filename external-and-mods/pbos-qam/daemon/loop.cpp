@@ -100,10 +100,12 @@ Loop::~Loop() {
         if (fd >= 0) close(fd);
 }
 
-void Loop::add_fd(int fd, std::function<void()> cb) {
+static_assert(EPOLLIN == 0x001 && EPOLLPRI == 0x002);
+
+void Loop::add_fd(int fd, std::function<void()> cb, uint32_t events) {
     fds_[fd] = std::move(cb);
     epoll_event ev{};
-    ev.events = EPOLLIN;
+    ev.events = events;
     ev.data.fd = fd;
     epoll_ctl(ep_, EPOLL_CTL_ADD, fd, &ev);
 }

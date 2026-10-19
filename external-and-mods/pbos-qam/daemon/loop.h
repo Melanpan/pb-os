@@ -56,11 +56,14 @@ public:
     bool on_exit(pid_t pid, Fn cb);
     // fd is readable (a socket of the caller's own; it stays open).
     void on_readable(int fd, std::function<void()> cb) { add_fd(fd, std::move(cb)); }
+    // fd has an exceptional condition (EPOLLPRI: a PSI trigger fired).
+    void on_priority(int fd, std::function<void()> cb) { add_fd(fd, std::move(cb), EPOLLPRI_); }
     // SIGTERM, SIGINT, SIGHUP, SIGUSR1 and SIGUSR2.
     void on_signal(std::function<void(int)> cb) { signal_cb_ = std::move(cb); }
 
 private:
-    void add_fd(int fd, std::function<void()> cb);
+    static constexpr uint32_t EPOLLIN_ = 0x001, EPOLLPRI_ = 0x002;  // <sys/epoll.h>'s values
+    void add_fd(int fd, std::function<void()> cb, uint32_t events = EPOLLIN_);
     void del_fd(int fd);
     void arm_timer();
     void drain_inotify();

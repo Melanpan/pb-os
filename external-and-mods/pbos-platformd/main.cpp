@@ -31,6 +31,8 @@ const std::vector<ModuleInfo>& modules() {
         {"pbosd", Instance::System, pbosd_here, make_pbosd},
         {"thor-backlight", Instance::System, thor_backlight_here, make_thor_backlight},
         {"thor-controls", Instance::System, [] { return dt_has("ayn,thor"); }, make_thor_controls},
+        // Every device: memory pressure is the same everywhere.
+        {"memguard", Instance::System, [] { return true; }, make_memguard},
         {"volume-keeper", Instance::User, [] { return dt_has("qcom,sm8550"); }, make_volume_keeper},
         // Every image (the Python ran everywhere); it looks for its keys itself.
         {"volume-keys", Instance::User, [] { return true; }, make_volume_keys},

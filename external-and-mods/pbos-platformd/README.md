@@ -19,6 +19,56 @@ name keeps working.
 | `thor-desktop-brightness` | `sm8550-thor-desktop-brightness.service` (user) | `sm8550-thor-desktop-brightness` | the session bus (Plasma's ScreenBrightness), the bottom panel's file (inotify) |
 | `audio-dp` | `sm8550-audio-pipewire.service` (user; the script applies the sink policy once, then execs this) | the 2 s loop of `sm8550-audio-pipewire --watch` | DRM uevents (HDMI/DP hotplug); runs the script again on a flip |
 | `barry-audio` | `barry_launcher_audio.service` (user) | `barry_launcher_audio` | the sound server's events (libpulse); SIGUSR1 (apps volume changed) |
+| `memguard` | `pbos-memguard.service` (every device) | new | two PSI triggers on `/proc/pressure/memory` (POLLPRI); one-shot timers only after it acted |
+
+## memguard: what goes first when memory runs out
+
+Like Apple's jetsam: background work goes before the game, gamescope, Steam
+and the sound server. systemd-oomd stays off (it kills a whole cgroup, the
+game's with it). Two layers:
+
+**OOM order** (the kernel's last resort; drop-ins `NN-pbos-oom.conf` in
+`sm8650-overlay/usr/lib/systemd/system/*.d`, every image):
+
+| OOMScoreAdjust | Units |
+|---|---|
+| 1000 | `gpu-trace`, `pbos-flatpak-appstream`, `steamos-log-submitter`, `flatpak-system-helper`; Decky's loader process (set by memguard) |
+| 999 | `plugin_loader` (Decky; its plugin backends inherit it) |
+| 900 | the game (set by the Steam client) |
+| 300 | `tailscaled` (remote access: after the game) |
+| 200 | the user session (user@.service): Steam, steamwebhelper |
+| 0 | other system units |
+| -500 | `pbos-*`, `sm8550-*`, `pbosd`, `pocket-s2-controller`, `inputplumber`; gamescope (`gamescope-session`, Thor's `sm8550-bottom-session`), `pipewire`, `pipewire-pulse`, `wireplumber` (set by memguard) |
+
+User units cannot go below the user manager's 100, so memguard (root) sets
+the compositor and sound server processes, at start and on its early
+trigger. The Steam client starts every game at 900 (Retroid Pocket Nova,
+10-19), so the expendable units sit above it.
+Decky does not restart a plugin backend that dies (and spins on it), so
+memguard puts the loader itself above its backends: the kernel takes the
+loader, and systemd restarts all of Decky (Restart=always).
+
+**Acting early** (before zram thrashing makes the game stutter):
+
+- early trigger `some 150000 2000000` (7.5% of 2 s stalled): the pins above;
+  pushes a recovery back.
+- act trigger `some 500000 2000000` (25%): in two windows in a row (about
+  4 s of heavy stalls) while MemAvailable is under 10% of RAM (a process
+  thrashing in its own memory limit stalls as hard with RAM free; Nova
+  test) the next unit stops, one per streak, in order:
+  `gpu-trace.service`, then `plugin_loader.service`. A unit that is not
+  running is skipped. Each stop is logged with the PSI numbers and
+  MemAvailable before and 2 s after.
+- Barry Launcher's shelld closes its frozen apps at `some 300000 2000000`
+  (15%) on every window, so it always acts first; memguard never touches
+  Barry's or Flatpak's app scopes, and never stops the game, gamescope,
+  Steam, steamwebhelper, PipeWire, WirePlumber, sddm or our own units.
+- Once no trigger fired for 120 s, the units it stopped start again
+  (Decky first); also when memguard itself stops (not at shutdown).
+
+`journalctl -u pbos-memguard` shows what it did. `tests/memguard/run.sh`:
+FIFOs in place of the triggers, a stub systemctl, fake unit cgroups, and
+the real kernel trigger fired by a process held under `memory.high`.
 
 The sleep path's one-shot programs run by name as
 `pbos-platformd charge-rest|konkr-standby|led-fade ARGS`:

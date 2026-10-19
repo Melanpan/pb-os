@@ -65,5 +65,6 @@ std::unique_ptr<Module> make_thor_backlight();
 std::unique_ptr<Module> make_barry_audio();
 std::unique_ptr<Module> make_thor_controls();
 std::unique_ptr<Module> make_thor_desktop_brightness();
+std::unique_ptr<Module> make_memguard();
 
 }  // namespace pp

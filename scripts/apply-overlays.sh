@@ -716,6 +716,14 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
   find "$R/var/lib/overlays/etc/upper/inputplumber" \
     \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
 fi
+# Memory guard on every device (pbos-platformd's memguard): background units
+# stop before the game, gamescope, Steam or the sound server run out of
+# memory; the OOM order itself is the NN-pbos-oom.conf drop-ins copied above.
+# systemd-oomd stays off (it would kill the game's whole cgroup). Vendor
+# wants dir: /etc links written at runtime vanish under the /etc overlay.
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../pbos-memguard.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/pbos-memguard.service"
 
 # ---------------------------------------------------------------------------
 # SM8550 device overlay (Retroid Pocket 6 and Nova, AYN Thor): fan curve (Armada's, see
