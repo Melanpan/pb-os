@@ -1,6 +1,7 @@
 # barryglide: glide typing, suggestions and autocorrect (barry_glide.py's)
 # as a plain C++20 static library, its words in a mapped read-only blob.
-# Not part of Barry.Input's build yet; build.sh builds it and its tools.
+# Barry.Input's build takes the library (BARRYGLIDE_TOOLS off); build.sh
+# builds it and its tools.
 cmake_minimum_required(VERSION 3.21)
 project(barryglide LANGUAGES CXX)
 
@@ -19,6 +20,11 @@ add_library(barryglide STATIC
 target_include_directories(barryglide PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # Each operation rounded as Python rounds it: no fused multiply-adds.
 target_compile_options(barryglide PRIVATE -Wall -Wextra -Werror -ffp-contract=off)
+
+option(BARRYGLIDE_TOOLS "glide-cli and glide-blob" ON)
+if(NOT BARRYGLIDE_TOOLS)
+  return()
+endif()
 
 add_executable(glide-cli tools/glide_cli.cpp)
 target_link_libraries(glide-cli PRIVATE barryglide)

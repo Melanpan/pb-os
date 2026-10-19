@@ -4,9 +4,14 @@
 cmake_minimum_required(VERSION 3.21)
 project(barry_input LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BUILD_SHARED_LIBS ON)
+
+# The keyboards' words (glide typing, suggestions, autocorrect): barryglide,
+# a static library of its own (built with -ffp-contract=off, as it says).
+set(BARRYGLIDE_TOOLS OFF CACHE BOOL "" FORCE)
+add_subdirectory(glide)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick Network DBus)
 find_package(X11 REQUIRED)
@@ -31,6 +36,7 @@ qt_add_qml_module(barryinput
     xtesttyper.cpp xtesttyper.h
     typer.cpp typer.h
     keyboardlanguages.cpp keyboardlanguages.h
+    glideengine.cpp glideengine.h
     deckcontrols.cpp deckcontrols.h
     haptics.cpp haptics.h
     keyboardcontroller.cpp keyboardcontroller.h
@@ -47,4 +53,35 @@ qt_add_qml_module(barryinput
     TileDrop.qml
 )
 target_compile_options(barryinput PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(barryinput PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::DBus X11::X11 X11::Xtst)
+target_link_libraries(barryinput PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::DBus X11::X11 X11::Xtst
+  barryglide)
+
+# The glide equivalence test's tool (tests/glide_engine): GlideEngine, as
+# the keyboards use it, answering shelld's cases.
+option(BARRY_INPUT_GLIDE_TEST "Build tests/glide_engine's glide-engine-test" OFF)
+if(BARRY_INPUT_GLIDE_TEST)
+  qt_add_executable(glide-engine-test
+    tests/glide_engine/glide_engine_test.cpp
+    glideengine.cpp glideengine.h
+    keyboardlanguages.cpp keyboardlanguages.h)
+  target_compile_options(glide-engine-test PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(glide-engine-test PRIVATE Qt6::Core Qt6::Qml barryglide)
+endif()
+
+# KeyboardController's test (tests/keyboard_controller): offscreen, a stub
+# Typer (the test's own, in typer.cpp's place) and a stub keyd.
+option(BARRY_INPUT_KEYBOARD_TEST "Build tests/keyboard_controller's keyboard-controller-test" OFF)
+if(BARRY_INPUT_KEYBOARD_TEST)
+  qt_add_executable(keyboard-controller-test
+    tests/keyboard_controller/keyboard_controller_test.cpp
+    keyboardcontroller.cpp keyboardcontroller.h keyboardgrid.cpp
+    glideengine.cpp glideengine.h
+    keyboardlanguages.cpp keyboardlanguages.h
+    haptics.cpp haptics.h
+    typer.h xtesttyper.h
+    virtualkeyboard.cpp virtualkeyboard.h
+    uinputdevice.cpp uinputdevice.h
+    keymap.cpp keymap.h)
+  target_compile_options(keyboard-controller-test PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(keyboard-controller-test PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network barryglide)
+endif()

@@ -53,6 +53,11 @@ keyboard (shell/Keyboard.qml), which call it on 127.0.0.1:PORT:
   POST /type      {"text": "...", "correct": word, ...}: autocorrect's plan
                   for Keyboard.qml, which types it ({"back": n, "text": s,
                   "key": k}: backspaces, then text, then a key)
+  POST /glide     {"path", "keys", "size", "lang"}: a glide's likeliest words
+  POST /suggest   {"prefix", "lang"}: the strip's words for a word begun
+                  (Barry.Input glides, suggests and corrects in-process now;
+                  these load a pack's dictionary on their first call and drop
+                  it after GLIDE_IDLE_S without one)
 
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin:
 the apps here include a web browser, and a web page must not type.
@@ -139,6 +144,7 @@ unless the user removed them.
 """
 from __future__ import annotations
 
+import gc
 import glob
 import json
 import os
@@ -162,7 +168,8 @@ from gi.repository import Atspi, Gio, GLib  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import barry_apps  # noqa: E402
-import barry_glide  # noqa: E402
+# barry_glide is imported on the first /glide, /suggest or /type that needs
+# a dictionary (dictionary()): Barry.Input does its own (barryglide).
 
 # Desktop Mode (barry_launcher_desktop): under KWin instead of a nested
 # gamescope; windows, the keyboard's push-up and typing go through KWin
@@ -179,7 +186,10 @@ KEYBOARD_TITLE = "Barry Launcher Keyboard"
 INSET_PROP = "GAMESCOPE_FOCUS_BOTTOM_INSET"
 # How long going home waits for the home screen to get ready to slide in.
 HOME_READY_S = 0.15
-# Glide typing's dictionary (barry_glide).
+# Glide typing's dictionary (barry_glide), loaded on the first call that
+# needs it and dropped again after this long without one (Barry.Input has
+# its own; only other callers ask here).
+GLIDE_IDLE_S = float(os.environ.get("BARRY_GLIDE_IDLE_S", "600"))
 # Keyboard packs (Barry.Input's KeyboardLanguages reads the same folders):
 # their words.txt is glide typing's, suggestions' and autocorrect's
 # dictionary. A user's pack takes a shipped one's place.
@@ -1517,14 +1527,7 @@ def type_input(body: dict) -> tuple[int, dict]:
     lang = body.get("lang", "en")
     if isinstance(body.get("keep"), str):
         with GLIDE["lock"]:
-            d = dictionary(lang)
-            if d:
-                d["corrector"].keep(body["keep"])
-                # The language's other layouts keep the same list.
-                for other in GLIDE["packs"].values():
-                    c = other["corrector"]
-                    if c is not d["corrector"] and c.personal_path == d["corrector"].personal_path:
-                        c.personal.add(body["keep"].lower())
+            keep_word(lang, body["keep"])
     reply: dict = {"ok": True, "back": back, "text": text}
     if key:
         reply["key"] = key
@@ -1533,13 +1536,17 @@ def type_input(body: dict) -> tuple[int, dict]:
         with GLIDE["lock"]:
             d = dictionary(lang)
             fixed = d["corrector"].correct(word) if d else None
+            glide_used()
         if fixed and ends_with_word(word):
             reply.update(back=len(word), text=fixed + text, corrected=fixed)
             log(f"autocorrect: {word} -> {fixed}")
     return 200, reply
 
 
-GLIDE = {"packs": {}, "lock": threading.Lock()}  # lang -> its dictionary
+# packs: lang -> its dictionary; decoders: words file -> its Decoder (two
+# layouts of a language share one); used: when one was last asked for;
+# timer: the idle drop's, while one is armed.
+GLIDE = {"packs": {}, "decoders": {}, "lock": threading.Lock(), "used": 0.0, "timer": None}
 
 
 def keyboard_dirs() -> list[str]:
@@ -1597,13 +1604,20 @@ def dictionary(lang: str) -> dict | None:
                  os.stat(os.path.join(pack["folder"], "keyboard.json")).st_mtime_ns)
     except OSError:
         return None
-    cached = GLIDE["packs"].get(lang)
-    if cached and cached["stamp"] == stamp:
-        return cached
-    # Whose words: two layouts of a language share them (and one copy).
     words_lang = pack["words_lang"]
     english = words_lang == "en"
-    decoders = GLIDE.setdefault("decoders", {})
+    personal = personal_path(words_lang)
+    cached = GLIDE["packs"].get(lang)
+    if cached and cached["stamp"] == stamp:
+        # Words kept beside this (Barry.Input writes the same files).
+        mtime = file_mtime(personal)
+        if cached["personal_mtime"] != mtime:
+            cached["corrector"].personal = read_personal(personal)
+            cached["personal_mtime"] = mtime
+        return cached
+    import barry_glide  # first use: see the imports
+    # Whose words: two layouts of a language share them (and one copy).
+    decoders = GLIDE["decoders"]
     shared = decoders.get(pack["words"])
     if shared and shared[0] == (stamp[1], english):
         decoder = shared[1]
@@ -1614,9 +1628,9 @@ def dictionary(lang: str) -> dict | None:
             log(f"keyboard {lang}: cannot read {pack['words']}: {err}")
             return None
         decoders[pack["words"]] = ((stamp[1], english), decoder)
-    personal = os.path.join(DATA, "personal-words.txt" if english else f"personal-words-{words_lang}.txt")
     positions = barry_glide.grid_positions(pack["grid"]) if pack["grid"] else None
-    entry = {"stamp": stamp, "decoder": decoder,
+    mtime = file_mtime(personal)  # before the Corrector reads it
+    entry = {"stamp": stamp, "decoder": decoder, "personal_mtime": mtime,
              "corrector": barry_glide.Corrector(decoder, personal, pack["rows"], pack["more"], positions),
              # A held key's letter ("é") glides over the key it is on ("e").
              "fold": {a.lower(): base.lower() for base, alts in pack["more"].items() if len(base) == 1
@@ -1626,9 +1640,77 @@ def dictionary(lang: str) -> dict | None:
     return entry
 
 
-def load_dictionary() -> None:
+def personal_path(words_lang: str) -> str:
+    """The words the user undid a correction of, for a language's words."""
+    return os.path.join(DATA, "personal-words.txt" if words_lang == "en" else f"personal-words-{words_lang}.txt")
+
+
+def file_mtime(path: str) -> int | None:
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
+def read_personal(path: str) -> set[str]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return {l.strip().lower() for l in fh if l.strip()}
+    except OSError:
+        return set()
+
+
+def keep_word(lang: str, word: str) -> None:
+    """Never correct word again in lang's words (Corrector.keep), without
+    loading a dictionary for it; the loaded ones sharing the list learn it
+    (call with GLIDE["lock"] held)."""
+    pack = keyboard_pack(lang)
+    if pack is None or pack["words"] is None:
+        return
+    path, w = personal_path(pack["words_lang"]), word.lower()
+    for entry in GLIDE["packs"].values():
+        if entry["corrector"].personal_path == path:
+            entry["corrector"].personal.add(w)
+    if w in read_personal(path):
+        return
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(w + "\n")
+    except OSError:
+        pass
+
+
+def glide_used() -> None:
+    """A dictionary was asked for: drop them all once none has been for
+    GLIDE_IDLE_S (one timer, armed on the first call and again only when it
+    ends early; call with GLIDE["lock"] held)."""
+    GLIDE["used"] = time.monotonic()
+    if GLIDE["packs"] and GLIDE["timer"] is None and GLIDE_IDLE_S > 0:
+        arm_glide_drop(GLIDE_IDLE_S)
+
+
+def arm_glide_drop(seconds: float) -> None:
+    timer = threading.Timer(seconds, drop_dictionaries)
+    timer.daemon = True
+    GLIDE["timer"] = timer
+    timer.start()
+
+
+def drop_dictionaries() -> None:
     with GLIDE["lock"]:
-        dictionary("en")
+        GLIDE["timer"] = None
+        left = GLIDE["used"] + GLIDE_IDLE_S - time.monotonic()
+        if left > 0.5:  # asked for again meanwhile
+            arm_glide_drop(left)
+            return
+        langs = sorted(GLIDE["packs"])
+        GLIDE["packs"].clear()
+        GLIDE["decoders"].clear()
+    # Most of it goes back to the system (pymalloc's emptied arenas): in the
+    # build VM, 111 MB with English's loaded, 42 MB after (38 MB at start).
+    gc.collect()
+    log(f"glide: dictionaries dropped ({', '.join(langs)}) after {GLIDE_IDLE_S:.0f} s unused")
 
 
 def suggest(body: dict) -> tuple[int, dict]:
@@ -1638,6 +1720,7 @@ def suggest(body: dict) -> tuple[int, dict]:
         return 400, {"error": "need prefix"}
     with GLIDE["lock"]:
         d = dictionary(body.get("lang", "en"))
+        glide_used()
         return 200, {"words": d["corrector"].suggest(prefix) if d else []}
 
 
@@ -1652,6 +1735,7 @@ def glide(body: dict) -> tuple[int, dict]:
         return 400, {"error": "need path, keys and size"}
     with GLIDE["lock"]:
         d = dictionary(body.get("lang", "en"))
+        glide_used()
         return 200, {"words": d["decoder"].decode(path, keys, float(size), fold=d["fold"]) if d else []}
 
 
@@ -2761,7 +2845,6 @@ def main() -> None:
         start_desktop()
     apply_inset()  # no inset left over from before a restart
     threading.Thread(target=warm_apps, daemon=True).start()
-    threading.Thread(target=load_dictionary, daemon=True).start()
     # Barry opens and closes (sm8550-thor-backlightd's AYN press).
     barry_monitor = None
     if not DESKTOP:

@@ -2,7 +2,7 @@
 // barry_launcher_shelld shows it when a text field gets focus (AT-SPI) and
 // marks this window as a gamescope overlay that leaves key focus on the app
 // below; what is tapped is typed there (Barry.Input: KeyboardController
-// with a Typer, XTest), and shelld only plans autocorrect's swaps. Covers
+// with a Typer, XTest; glides, suggestions and autocorrect in-process). Covers
 // the screen while up: keys (KeyPanel.qml) on the lower (or, for a field in
 // the lower half, upper) part; tapping the rest hides it. The keys slide
 // in from their screen edge and back out (only the look: shown is

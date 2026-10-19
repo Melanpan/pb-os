@@ -1,17 +1,14 @@
 #include "keyboardcontroller.h"
 
+#include "glideengine.h"
 #include "haptics.h"
 #include "keyboardlanguages.h"
 
 #include <QDebug>
 #include <QJSValue>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QMetaMethod>
 #include <QMetaProperty>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QRegularExpression>
@@ -21,7 +18,6 @@
 
 namespace {
 
-const char SHELLD[] = "http://127.0.0.1:47824";  // barry_launcher_shelld
 const QSet<QString> NAMED = {"shift", "BackSpace", "space", "Return", "symbols", "keys", "abc", "hide",
                              "lang", "ctrl", "alt", "super", "Escape", "Tab", "Home", "End", "Delete",
                              "Left", "Right", "Up", "Down", "Prior", "Next", "copy", "paste", "cut",
@@ -34,6 +30,14 @@ const QHash<QString, QStringList> SHORTCUTS = {
 };
 constexpr int REPEAT_MS = 90;
 constexpr int REPEAT_AFTER = 4;  // ticks held before a key repeats
+constexpr int SPACE_HOLD_MS = 350;   // the space bar held this long is a cursor
+constexpr qreal CURSOR_STEP = 0.45;  // of a key's width: the cursor's slide, per step
+constexpr qreal MIN_CURSOR_STEP = 18;  // px, however small the keys
+// A backspace's look at the word before the caret (and the character after
+// it): this long after it (the field has had it; held, Backspace repeats
+// faster), this many characters (GlideEngine suggests for 40 at most).
+constexpr int LOOK_BACK_MS = 150;
+constexpr int LOOK_BACK = 41;
 
 QVariantList rowsOf(std::initializer_list<QStringList> rows)
 {
@@ -67,6 +71,12 @@ KeyboardController::KeyboardController(QObject *parent) : QObject(parent)
     });
     // A grid's labels follow Shift.
     connect(this, &KeyboardController::stateChanged, this, &KeyboardController::rebuildGrid);
+    m_spaceHold.setSingleShot(true);
+    m_spaceHold.setInterval(SPACE_HOLD_MS);
+    connect(&m_spaceHold, &QTimer::timeout, this, &KeyboardController::spaceHeld);
+    m_lookBack.setSingleShot(true);
+    m_lookBack.setInterval(LOOK_BACK_MS);
+    connect(&m_lookBack, &QTimer::timeout, this, &KeyboardController::lookBackNow);
 }
 
 KeyboardController::~KeyboardController()
@@ -280,6 +290,11 @@ void KeyboardController::keyDown(const QString &key)
 {
     // A buzz as the key goes down, as a phone's keyboard does.
     Haptics::instance()->tick();
+    if (key == QLatin1String("space")) {
+        // Held, a cursor (spaceHeld).
+        m_spaceSwallow = false;
+        m_spaceHold.start();
+    }
     if (REPEATING.contains(key)) {
         m_repeatKey = key;
         m_repeatTicks = 0;
@@ -292,12 +307,24 @@ void KeyboardController::keyUp(const QString &key)
 {
     if (key == m_repeatKey)
         m_repeat.stop();
+    if (key == QLatin1String("space")) {
+        m_spaceHold.stop();
+        if (m_cursorMode) {
+            // (Its tap may come after this.)
+            m_spaceSwallow = true;
+            endCursor();
+        }
+    }
 }
 
 void KeyboardController::tap(const QString &key)
 {
     if (m_gliding)
         return;  // the glide this touch was types its word instead
+    if (key == QLatin1String("space") && (m_cursorMode || m_spaceSwallow)) {
+        m_spaceSwallow = false;
+        return;  // it moved the cursor
+    }
     press(output(key));
 }
 
@@ -341,6 +368,10 @@ void KeyboardController::reset()
     m_word.clear();
     m_lastCorrection.reset();
     m_repeat.stop();
+    m_spaceHold.stop();
+    m_lookBack.stop();
+    m_spaceSwallow = false;
+    endCursor();
     dismissMore();
     clearStrip();
     if (!m_touches.isEmpty()) {
@@ -431,10 +462,13 @@ void KeyboardController::press(const QString &k)
         m_lastGlide.clear();
         m_word.clear();
         clearStrip();
+        lookBack();  // the word before it, if it ends there
         return;
     }
     if (k == QLatin1String("BackSpace") && m_lastCorrection) {
+        // The word as typed, taken up again: its completions.
         undoCorrection(false);
+        suggestFor(m_word);
         return;
     }
     const bool glided = !m_lastGlide.isEmpty();
@@ -455,12 +489,19 @@ void KeyboardController::press(const QString &k)
             return;
         }
     }
-    const bool correcting = m_autocorrect && !m_language.value("words").toString().isEmpty() && !m_composer;
+    const bool correcting = this->correcting();
     if (named) {
         if (k == QLatin1String("BackSpace")) {
-            m_word.chop(1);
             key(k);
-            suggestFor(m_word);
+            if (m_word.size() > 1) {
+                m_word.chop(1);
+                suggestFor(m_word);
+            } else {
+                // Out of the word (or none known): what the field has
+                // before the caret says whether a word ends there.
+                m_word.clear();
+                lookBack();
+            }
             return;
         }
         const QString w = m_word;
@@ -535,23 +576,22 @@ void KeyboardController::setStrip(const QStringList &alternatives, const QString
     emit stripChanged();
 }
 
+bool KeyboardController::correcting() const
+{
+    return m_autocorrect && !m_language.value("words").toString().isEmpty() && !m_composer;
+}
+
 void KeyboardController::suggestFor(const QString &w)
 {
-    const bool correcting = m_autocorrect && !m_language.value("words").toString().isEmpty() && !m_composer;
-    if (!correcting || w.size() < 2 || !isLetters(w)) {
+    if (!correcting() || w.size() < 2 || !isLetters(w)) {
         if (m_stripMode == QLatin1String("complete"))
             clearStrip();
         return;
     }
-    QNetworkReply *reply = post(QStringLiteral("/suggest"), {{"prefix", w}, {"lang", m_language.value("id").toString()}});
-    connect(reply, &QNetworkReply::finished, this, [this, reply, w] {
-        reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError || m_word != w)
-            return;
-        QStringList words;
-        for (const QJsonValue &v : QJsonDocument::fromJson(reply->readAll()).object().value("words").toArray())
-            words << v.toString();
-        setStrip(words, words.isEmpty() ? QString() : QStringLiteral("complete"));
+    GlideEngine::instance()->suggest(GlideEngine::Pack::of(m_language), w, this, [this, w](const GlideEngine::Words &words) {
+        if (!words || m_word != w)
+            return;  // typed on meanwhile
+        setStrip(*words, words->isEmpty() ? QString() : QStringLiteral("complete"));
     });
 }
 
@@ -580,6 +620,130 @@ void KeyboardController::pickStrip(int i)
         }
         clearStrip();
     }
+}
+
+// --- the word before the caret -------------------------------------------------
+
+void KeyboardController::lookBack()
+{
+    // A moment from now (lookBackNow), if nothing is pressed meanwhile.
+    if (!correcting() || m_cursorMode)
+        return;
+    m_lookBackSerial = m_serial;
+    m_lookBack.start();
+}
+
+void KeyboardController::lookBackNow()
+{
+    // What the field has before the caret, from keyd.
+    if (m_serial != m_lookBackSerial || m_cursorMode)
+        return;  // pressed on meanwhile
+    if (m_planning || !m_steps.empty()) {
+        m_lookBack.start();  // an autocorrect swap still going out: after it
+        return;
+    }
+    const int sent = m_serial;
+    GlideEngine::instance()->around(LOOK_BACK, 1, this, [this, sent](const GlideEngine::Around &text) {
+        if (text && m_serial == sent && m_word.isEmpty() && m_lastGlide.isEmpty() && !m_cursorMode)
+            lookedBack(text->before, text->after, LOOK_BACK);
+    });
+}
+
+void KeyboardController::lookedBack(const QString &before, const QString &after, int asked)
+{
+    // The letters the field ends with, as a whole word: the word being
+    // typed again, so a completion picked replaces all of it. Not with
+    // more of it after the caret ("hel|lo"): a pick would leave that.
+    const QString wordChars = m_language.value("wordChars").toString();
+    auto inWord = [&](QChar ch) { return ch.isLetterOrNumber() || wordChars.contains(ch); };
+    if (!after.isEmpty() && inWord(after[0]))
+        return;
+    qsizetype start = before.size();
+    while (start > 0 && isLetters(before.mid(start - 1, 1)))
+        start--;
+    const QString w = before.mid(start);
+    if (w.size() < 2)
+        return;
+    if (start == 0 && before.size() >= asked)
+        return;  // maybe longer than what was asked
+    if (start > 0 && inWord(before[start - 1]))
+        return;  // the end of a word the pack cannot spell ("naïve", "don't")
+    m_word = w;
+    m_afterWord = true;
+    suggestFor(w);
+}
+
+// --- the space bar as a cursor ----------------------------------------------------
+
+void KeyboardController::spaceHeld()
+{
+    // Held long enough: no space; a grid's touch on it slides from here.
+    if (m_gliding || m_cursorMode)
+        return;
+    startCursor();
+    for (Touch &t : m_touches) {
+        if (t.cell == QLatin1String("space") && !t.swiped) {
+            t.swiped = true;
+            t.start = t.at;
+            t.slid = 0;
+        }
+    }
+}
+
+void KeyboardController::startCursor()
+{
+    m_spaceHold.stop();
+    m_lookBack.stop();
+    m_cursorMode = true;
+    m_cursorAnchored = m_touching;
+    m_cursorFrom = m_touchAt.x();
+    m_cursorSlid = 0;
+    // The word being typed is left where it is.
+    m_serial++;
+    m_word.clear();
+    m_lastGlide.clear();
+    m_lastCorrection.reset();
+    m_afterWord = false;
+    dismissMore();
+    clearStrip();
+    Haptics::instance()->tick();  // felt: a cursor now
+    emit cursorModeChanged();
+}
+
+void KeyboardController::endCursor()
+{
+    if (!m_cursorMode)
+        return;
+    m_cursorMode = false;
+    m_cursorAnchored = false;
+    emit cursorModeChanged();
+}
+
+void KeyboardController::cursorTo(qreal x)
+{
+    if (!m_cursorAnchored) {
+        m_cursorAnchored = true;
+        m_cursorFrom = x;
+        return;
+    }
+    const qreal step = std::max(MIN_CURSOR_STEP, CURSOR_STEP * m_keyUnit);
+    const int steps = int((x - m_cursorFrom) / step);
+    while (m_cursorSlid < steps) {
+        m_cursorSlid++;
+        cursorStep(QStringLiteral("Right"));
+    }
+    while (m_cursorSlid > steps) {
+        m_cursorSlid--;
+        cursorStep(QStringLiteral("Left"));
+    }
+}
+
+void KeyboardController::cursorStep(const QString &name)
+{
+    // The arrow alone, whatever modifiers are lit, a buzz for each.
+    m_serial++;
+    key(name);
+    Haptics::instance()->tick();
 }
 
 // --- glide typing -----------------------------------------------------------------
@@ -616,6 +780,10 @@ QVariantList KeyboardController::trail() const
 
 void KeyboardController::glideStart(qreal x, qreal y)
 {
+    m_touching = true;
+    m_touchAt = QPointF(x, y);
+    if (m_cursorMode)
+        return;  // another finger: the cursor's touch keeps it
     m_gliding = false;
     m_glideFrom = QPointF(x, y);
     m_trail = {m_glideFrom};
@@ -625,6 +793,11 @@ void KeyboardController::glideStart(qreal x, qreal y)
 
 void KeyboardController::glideMove(qreal x, qreal y)
 {
+    m_touchAt = QPointF(x, y);
+    if (m_cursorMode) {
+        cursorTo(x);
+        return;
+    }
     if (!m_glideOnLetter)
         return;
     m_trail << QPointF(x, y);
@@ -636,10 +809,13 @@ void KeyboardController::glideMove(qreal x, qreal y)
 
 void KeyboardController::glideEnd()
 {
+    m_touching = false;
     if (m_gliding && m_trail.size() > 1) {
-        QJsonArray path;
-        for (const QPointF &p : m_trail)
-            path << QJsonArray{p.x(), p.y()};
+        GlideEngine::Glide glide;
+        glide.path = m_trail;
+        glide.size = m_keyUnit;
+        // The keys in the order the decoder always had them (a JSON
+        // object's): it breaks ties by it.
         QJsonObject centers;
         for (auto it = m_keyItems.constBegin(); it != m_keyItems.constEnd(); ++it) {
             QQuickItem *item = it.value();
@@ -648,17 +824,13 @@ void KeyboardController::glideEnd()
             const QPointF c = item->mapToItem(m_panel, QPointF(item->width() / 2, item->height() / 2));
             centers.insert(it.key(), QJsonArray{c.x(), c.y()});
         }
-        QNetworkReply *reply = post(QStringLiteral("/glide"), {{"path", path}, {"keys", centers}, {"size", m_keyUnit},
-                                                               {"lang", m_language.value("id").toString()}});
-        connect(reply, &QNetworkReply::finished, this, [this, reply] {
-            reply->deleteLater();
-            if (reply->error() != QNetworkReply::NoError)
-                return;
-            QStringList words;
-            for (const QJsonValue &v : QJsonDocument::fromJson(reply->readAll()).object().value("words").toArray())
-                words << v.toString();
-            if (!words.isEmpty())
-                commitGlide(words);
+        for (auto it = centers.constBegin(); it != centers.constEnd(); ++it) {
+            const QJsonArray c = it.value().toArray();
+            glide.keys.append({it.key(), QPointF(c[0].toDouble(), c[1].toDouble())});
+        }
+        GlideEngine::instance()->decode(GlideEngine::Pack::of(m_language), glide, this, [this](const GlideEngine::Words &words) {
+            if (words && !words->isEmpty())
+                commitGlide(*words);
         });
     }
     m_trail.clear();
@@ -828,11 +1000,11 @@ void KeyboardController::combo(const QStringList &keys)
     drain();
 }
 
-void KeyboardController::plan(QJsonObject body, std::function<void(const QJsonObject *)> done)
+void KeyboardController::plan(const QJsonObject &body, std::function<void(const QJsonObject *)> done)
 {
-    body.insert("lang", m_language.value("id").toString());
     Step step;
     step.plan = body;
+    step.language = m_language;  // the pack it was typed in
     step.done = std::move(done);
     m_steps.push_back(std::move(step));
     drain();
@@ -847,17 +1019,14 @@ void KeyboardController::drain()
             step.run();
             continue;
         }
-        // shelld plans the swap; nothing typed meanwhile overtakes it.
+        // GlideEngine plans the swap; nothing typed meanwhile overtakes it.
         m_planning = true;
-        QNetworkReply *reply = post(QStringLiteral("/type"), step.plan);
         auto done = std::move(step.done);
-        connect(reply, &QNetworkReply::finished, this, [this, reply, done] {
-            reply->deleteLater();
-            QJsonObject obj;
-            const bool ok = reply->error() == QNetworkReply::NoError
-                && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
+        GlideEngine::instance()->plan(GlideEngine::Pack::of(step.language), step.plan, this,
+                                      [this, done](const GlideEngine::Plan &plan) {
+            const QJsonObject &obj = plan.reply;
+            const bool ok = plan.status == 200;
             if (ok) {
-                obj = QJsonDocument::fromJson(reply->readAll()).object();
                 // Backspaces, then text, then a key; nothing when the field
                 // no longer ends as expected.
                 const int back = obj.value("back").toInt();
@@ -879,14 +1048,4 @@ void KeyboardController::drain()
             drain();
         });
     }
-}
-
-QNetworkReply *KeyboardController::post(const QString &path, const QJsonObject &body)
-{
-    if (!m_net)
-        m_net = new QNetworkAccessManager(this);
-    QNetworkRequest request(QUrl(QString::fromLatin1(SHELLD) + path));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setTransferTimeout(5000);
-    return m_net->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
 }

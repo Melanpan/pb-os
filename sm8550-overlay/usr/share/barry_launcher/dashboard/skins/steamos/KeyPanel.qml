@@ -203,7 +203,6 @@ Rectangle {
         }
 
         PointHandler {
-            enabled: panel.controller.canGlide
             onActiveChanged: active ? panel.controller.glideStart(point.position.x, point.position.y)
                                     : panel.controller.glideEnd()
             onPointChanged: if (active) panel.controller.glideMove(point.position.x, point.position.y)
@@ -262,6 +261,10 @@ Rectangle {
     }
 
     component Key: Rectangle {
+
+        // The space bar held as a cursor: the other keys fade.
+
+        opacity: panel.controller.cursorMode && k !== "space" ? 0.35 : 1
         id: key
         property string k
         property var rowKeys: []

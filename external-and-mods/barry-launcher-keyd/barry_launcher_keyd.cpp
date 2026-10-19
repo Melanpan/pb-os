@@ -23,7 +23,9 @@
 //   apps refocus their own fields).
 //
 // Talks to shelld over its local HTTP (GET/POST /keyd); answers
-// "BEFORE <n>" (the text before the caret, for autocorrect) on
+// "BEFORE <n>" (the text before the caret, for autocorrect), "AFTER <n>"
+// (after it) and "AROUND <b> <a>" (both at once, for the keyboards' word
+// taken up again: {"text": before, "after": after}) on
 // $XDG_RUNTIME_DIR/barry_launcher_keyd.sock.
 #include <atspi/atspi.h>
 #include <gio/gio.h>
@@ -971,39 +973,69 @@ AtspiAccessible *caretHolder(AtspiAccessible *acc)
     return cur;
 }
 
-// Up to n characters before the caret in the field: from KWin's input
-// method in Desktop Mode, else over AT-SPI. nullopt if they cannot be read.
-std::optional<std::string> beforeCaret(long n)
+// The text around the caret in the field, up to before characters before it
+// and after characters after it: from KWin's input method in Desktop Mode,
+// else over AT-SPI. nullopt if they cannot be read.
+struct AroundCaret {
+    std::string before, after;
+};
+std::optional<AroundCaret> aroundCaret(long before, long after)
 {
     if (IM.conn && IM.active) {
         if (!IM.text)
             return std::nullopt;
-        const std::string before = IM.text->substr(0, size_t(std::clamp(IM.cursor, 0L, long(IM.text->size()))));
-        // Characters, not bytes: walk back n UTF-8 characters.
-        const char *start = before.c_str();
-        const char *p = start + before.size();
-        for (long i = 0; i < n; i++) {
-            const char *prev = g_utf8_find_prev_char(start, p);
+        const size_t cursor = size_t(std::clamp(IM.cursor, 0L, long(IM.text->size())));
+        // Characters, not bytes: walk n UTF-8 characters each way.
+        const char *start = IM.text->c_str();
+        const char *end = start + IM.text->size();
+        const char *b = start + cursor;
+        for (long i = 0; i < before; i++) {
+            const char *prev = g_utf8_find_prev_char(start, b);
             if (!prev)
                 break;
-            p = prev;
+            b = prev;
         }
-        return std::string(p);
+        const char *a = start + cursor;
+        for (long i = 0; i < after && a < end; i++) {
+            const char *next = g_utf8_find_next_char(a, end);
+            a = next ? next : end;
+        }
+        return AroundCaret{std::string(b, start + cursor), std::string(start + cursor, a)};
     }
     if (!textAcc || frozen(textAcc))
         return std::nullopt;
     AtspiAccessible *holder = caretHolder(textAcc);
-    std::optional<std::string> result;
+    std::optional<AroundCaret> result;
     if (AtspiText *t = atspi_accessible_get_text_iface(holder)) {
         GError *err = nullptr;
         const gint offset = atspi_text_get_caret_offset(t, &err);
         g_clear_error(&err);
         if (offset >= 0) {
-            gchar *s = atspi_text_get_text(t, std::max<gint>(0, offset - gint(n)), offset, &err);
-            if (s)
-                result = s;
-            g_free(s);
-            g_clear_error(&err);
+            AroundCaret r;
+            bool ok = true;
+            if (before > 0) {
+                gchar *s = atspi_text_get_text(t, std::max<gint>(0, offset - gint(before)), offset, &err);
+                ok = s != nullptr;
+                if (s)
+                    r.before = s;
+                g_free(s);
+                g_clear_error(&err);
+            }
+            if (ok && after > 0) {
+                const gint count = atspi_text_get_character_count(t, &err);
+                g_clear_error(&err);
+                const gint to = count >= 0 ? std::min<gint>(count, offset + gint(after)) : offset + gint(after);
+                if (to > offset) {
+                    gchar *s = atspi_text_get_text(t, offset, to, &err);
+                    ok = s != nullptr;
+                    if (s)
+                        r.after = s;
+                    g_free(s);
+                    g_clear_error(&err);
+                }
+            }
+            if (ok)
+                result = std::move(r);
         }
         g_object_unref(t);
     }
@@ -1018,10 +1050,18 @@ gboolean onQuery(GSocketService *, GSocketConnection *conn, GObject *, gpointer)
     GDataInputStream *din = g_data_input_stream_new(in);
     gchar *line = g_data_input_stream_read_line(din, nullptr, nullptr, nullptr);
     std::string reply = "{\"text\": null}";
+    auto count = [](const char *p) { return std::clamp(std::atol(p), 0L, 200L); };
     if (line && g_str_has_prefix(line, "BEFORE ")) {
-        const long n = std::clamp(std::atol(line + 7), 0L, 200L);
-        if (const auto text = beforeCaret(n))
-            reply = "{\"text\": " + jsonString(*text) + "}";
+        if (const auto r = aroundCaret(count(line + 7), 0))
+            reply = "{\"text\": " + jsonString(r->before) + "}";
+    } else if (line && g_str_has_prefix(line, "AFTER ")) {
+        if (const auto r = aroundCaret(0, count(line + 6)))
+            reply = "{\"text\": " + jsonString(r->after) + "}";
+    } else if (line && g_str_has_prefix(line, "AROUND ")) {
+        char *rest = nullptr;
+        const long b = std::clamp(std::strtol(line + 7, &rest, 10), 0L, 200L);
+        if (const auto r = aroundCaret(b, count(rest)))
+            reply = "{\"text\": " + jsonString(r->before) + ", \"after\": " + jsonString(r->after) + "}";
     }
     reply += "\n";
     g_output_stream_write_all(out, reply.data(), reply.size(), nullptr, nullptr, nullptr);

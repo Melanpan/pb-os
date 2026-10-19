@@ -31,11 +31,18 @@ firefox, qml6, flatpak and gamescopectl on PATH):
    is one closed by hand while frozen; "keepAwake" keeps a user app awake;
    each memory pressure trigger (the FIFO in PSI's place) closes the frozen
    app least recently on the screen.
+   Glide typing's dictionary: none is loaded at start (its log line); a "keep" on POST /type writes the personal
+   words file without loading one; the first POST /suggest and /glide load
+   English's and answer as barry_glide itself does; GLIDE_IDLE_S without a
+   call drops it (a call meanwhile puts that off) and the next call loads
+   it again. RSS is printed at each step.
 2. Idle CPU (utime+stime, children included) over CPU_S: the old shelld
    polled as Shell.qml and Keyboard.qml polled it (GET /home every 50 ms,
    /keyboard?h= every 100 ms, /apps every 1 s); the new one with a socket
    client; the new one polled the old way (the HTTP API's cost). Also: the
-   old and the new answer the same GETs at start.
+   old and the new answer the same GETs at start. RSS at idle after
+   start: the new one's, and the one before it (run.sh's BEFORE_SHELLD,
+   which loaded English's dictionary at start) when given.
 """
 from __future__ import annotations
 
@@ -58,7 +65,9 @@ TOOL_SLIDE_S = 0.24  # qml6_stub.py's slide, as ToolStage.qml's
 TOOL_LEAVE_S = 0.4  # shelld's cap
 IDLE_S = float(os.environ.get("IDLE_S", "30"))
 CPU_S = float(os.environ.get("CPU_S", "60"))
-SETTLE_S = 8.0  # after start: the dictionary loads, Dino installs
+SETTLE_S = 8.0  # after start: Dino installs
+GLIDE_IDLE_S = 3.0  # shelld's BARRY_GLIDE_IDLE_S here (600 s on the Thor)
+BEFORE = "/t/lib/barry_launcher_shelld_before"  # run.sh's BEFORE_SHELLD
 RUN = "/t/run"
 SOCK = f"{RUN}/barry_launcher/shelld.sock"
 FLAG = "/run/sm8550-thor/overlay"
@@ -86,7 +95,7 @@ def env_for(home: str) -> dict:
                 XDG_DATA_HOME=f"{home}/.local/share", XDG_CACHE_HOME=f"{home}/.cache",
                 BARRY_PORT=str(PORT), DISPLAY=":99", PYTHONUNBUFFERED="1",
                 NO_AT_BRIDGE="1", BARRY_FREEZE_S=str(FREEZE_S), BARRY_BACKGROUND_CLOSE_S=str(CLOSE_S),
-                BARRY_PSI_PATH=PSI)
+                BARRY_PSI_PATH=PSI, BARRY_GLIDE_IDLE_S=str(GLIDE_IDLE_S))
 
 
 def start_shelld(path: str, tag: str) -> tuple[subprocess.Popen, str]:
@@ -95,7 +104,7 @@ def start_shelld(path: str, tag: str) -> tuple[subprocess.Popen, str]:
     os.makedirs(home)
     shutil.rmtree(f"{RUN}/barry_launcher", ignore_errors=True)
     log = open(f"/t/shelld-{tag}.log", "w")
-    # Beside the libraries it imports (barry_apps, barry_glide).
+    # Beside the libraries it imports (barry_apps; barry_glide on first use).
     proc = subprocess.Popen(["python3", path], env=env_for(home), stdout=log, stderr=subprocess.STDOUT,
                             start_new_session=True)
     deadline = time.monotonic() + 15
@@ -220,10 +229,103 @@ def spies() -> int:
     return n
 
 
+def rss_kb(pid: int) -> int:
+    with open(f"/proc/{pid}/status") as fh:
+        return next(int(l.split()[1]) for l in fh if l.startswith("VmRSS:"))
+
+
+def glide_expected(home: str) -> tuple[list, list]:
+    """barry_glide's own answers for English's pack: /suggest "helo" and a
+    glide through h-e-l-l-o's keys."""
+    sys.path.insert(0, "/t/lib")
+    import barry_glide
+    folder = "/usr/share/barry_launcher/keyboards/en"
+    with open(f"{folder}/keyboard.json", encoding="utf-8") as fh:
+        pack = json.load(fh)
+    decoder = barry_glide.Decoder(f"{folder}/{pack['words']}", True)
+    rows = [[k for k in r if isinstance(k, str)] for r in pack["rows"]]
+    corrector = barry_glide.Corrector(decoder, f"{home}/.local/share/barry_launcher/personal-words.txt", rows, {})
+    suggest = corrector.suggest("helo")
+    keys, path, size = glide_keys()
+    glide = decoder.decode(path, keys, size, fold={})
+    return suggest, glide
+
+
+def glide_keys() -> tuple[dict, list, float]:
+    size = 40.0
+    keys = {}
+    for y, (row, off) in enumerate((("qwertyuiop", 0.0), ("asdfghjkl", 0.5), ("zxcvbnm", 1.5))):
+        for x, c in enumerate(row):
+            keys[c] = [(x + off) * size + size / 2, y * size + size / 2]
+    path = []
+    for a, b in zip("helo", "elo"):
+        (ax, ay), (bx, by) = keys[a], keys[b]
+        path += [[ax + (bx - ax) * t / 8, ay + (by - ay) * t / 8] for t in range(8)]
+    path.append(keys["o"])
+    return keys, path, size
+
+
+def glide_lazy(proc: subprocess.Popen, home: str) -> None:
+    pid = proc.pid
+    log_has = lambda text: text in shelld_log()
+    start_kb = rss_kb(pid)
+    print(f"  RSS at idle after start: {start_kb / 1024:.1f} MB", flush=True)
+    check(not log_has("keyboard en:"), "no dictionary loaded at start")
+
+    personal = f"{home}/.local/share/barry_launcher/personal-words.txt"
+    r = post("/type", {"keep": "Zorbleflax", "lang": "en"})
+    check(r.get("ok") is True and read(personal).split() == ["zorbleflax"],
+          f"/type keep writes the personal words file ({r})")
+    post("/type", {"keep": "zorbleflax", "lang": "en"})
+    check(read(personal).split() == ["zorbleflax"], "a word kept twice is written once")
+    check(not log_has("keyboard en:"), "a keep loads no dictionary")
+
+    want_suggest, want_glide = glide_expected(home)
+    t0 = time.monotonic()
+    r = post("/suggest", {"prefix": "helo", "lang": "en"})
+    first_ms = (time.monotonic() - t0) * 1000
+    check(r.get("words") == want_suggest and bool(want_suggest),
+          f"first /suggest loads English's and answers as barry_glide: {r.get('words')} ({first_ms:.0f} ms)")
+    check(log_has("keyboard en:"), "its log line on first use")
+    t0 = time.monotonic()
+    r = post("/suggest", {"prefix": "helo", "lang": "en"})
+    print(f"  /suggest again: {(time.monotonic() - t0) * 1000:.0f} ms", flush=True)
+    keys, path, size = glide_keys()
+    r = post("/glide", {"path": path, "keys": keys, "size": size, "lang": "en"})
+    check(r.get("words") == want_glide and "hello" in r.get("words", []),
+          f"/glide answers as barry_glide: {r.get('words')}")
+    check(post("/suggest", {"prefix": "x", "lang": "nope"}).get("words") == [], "an unknown pack: no words")
+    loaded_kb = rss_kb(pid)
+    print(f"  RSS with English's dictionary: {loaded_kb / 1024:.1f} MB", flush=True)
+
+    # Calls put the drop off; GLIDE_IDLE_S after the last, it goes.
+    time.sleep(GLIDE_IDLE_S * 0.7)
+    post("/suggest", {"prefix": "hel", "lang": "en"})
+    time.sleep(GLIDE_IDLE_S * 0.7)
+    check(not log_has("dictionaries dropped"), "a call meanwhile puts the drop off")
+    check(wait_for(lambda: log_has("dictionaries dropped"), GLIDE_IDLE_S + 2),
+          f"dropped {GLIDE_IDLE_S:.0f} s after the last call")
+    time.sleep(0.5)
+    dropped_kb = rss_kb(pid)
+    print(f"  RSS after the drop: {dropped_kb / 1024:.1f} MB", flush=True)
+    r = post("/suggest", {"prefix": "helo", "lang": "en"})
+    check(r.get("words") == want_suggest, f"/suggest after the drop loads it again: {r.get('words')}")
+    check(shelld_log().count("keyboard en: ") - shelld_log().count("keyboard en: cannot") == 2
+          and shelld_log().count("dictionaries dropped") == 1, "loaded twice, dropped once in all")
+    with open(personal, "a", encoding="utf-8") as fh:
+        fh.write("helo\n")  # Barry.Input keeps a word in the same file
+    time.sleep(0.05)
+    r = post("/suggest", {"prefix": "helo", "lang": "en"})
+    print(f"  /suggest helo once kept beside shelld: {r.get('words')}", flush=True)
+    print(f"RSS new: start {start_kb / 1024:.1f} MB, English's loaded {loaded_kb / 1024:.1f} MB, "
+          f"dropped {dropped_kb / 1024:.1f} MB", flush=True)
+
+
 def functional(new: str) -> None:
     proc, home = start_shelld(new, "new")
     try:
         time.sleep(SETTLE_S)
+        glide_lazy(proc, home)
         # The keyboard window turns up after shelld: marked once gamescope's
         # window list changes.
         check(spies() == 1, "one xprop -spy waits for the keyboard window")
@@ -713,6 +815,19 @@ def main() -> int:
             with open("/t/shelld-new.log", encoding="utf-8") as fh:
                 print("--- shelld-new.log (tail)", *fh.read().splitlines()[-60:], sep="\n")
             raise
+    if os.path.exists(BEFORE):
+        proc, _ = start_shelld(BEFORE, "before")
+        try:
+            time.sleep(SETTLE_S)
+            print(f"RSS before (dictionary at start): {rss_kb(proc.pid) / 1024:.1f} MB at idle after start", flush=True)
+        finally:
+            stop_shelld(proc)
+        proc, _ = start_shelld(new, "new-rss")
+        try:
+            time.sleep(SETTLE_S)
+            print(f"RSS new (no dictionary at start): {rss_kb(proc.pid) / 1024:.1f} MB at idle after start", flush=True)
+        finally:
+            stop_shelld(proc)
     old_ms, old_gets = measure(old, "old", poll=True, socket_client=False)
     new_ms, new_gets = measure(new, "new-socket", poll=False, socket_client=True)
     compat_ms, _ = measure(new, "new-polled", poll=True, socket_client=False)

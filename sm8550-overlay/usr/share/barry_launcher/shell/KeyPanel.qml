@@ -136,7 +136,8 @@ Rectangle {
     }
 
     // On top: the glide's trail, and a PointHandler that follows every touch
-    // passively, leaving the keys their taps.
+    // passively, leaving the keys their taps (a glide, or the space bar held
+    // as a cursor: the controller's).
     Canvas {
         id: trailCanvas
         anchors.fill: parent
@@ -164,7 +165,6 @@ Rectangle {
         }
 
         PointHandler {
-            enabled: panel.controller.canGlide
             onActiveChanged: active ? panel.controller.glideStart(point.position.x, point.position.y)
                                     : panel.controller.glideEnd()
             onPointChanged: if (active) panel.controller.glideMove(point.position.x, point.position.y)
@@ -247,6 +247,8 @@ Rectangle {
         width: panel.unit * panel.keyUnits(k) + (k === "space" ? (panel.keyUnits(k) - 1) * panel.gap : 0)
         height: panel.keyHeight * panel.s
         radius: 16 * panel.s
+        // The space bar held as a cursor: the other keys fade.
+        opacity: panel.controller.cursorMode && k !== "space" ? 0.35 : 1
         color: Skin.colors.keyShadow !== "" ? Skin.colors.keyShadow : face
 
         Rectangle {

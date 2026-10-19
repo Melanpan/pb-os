@@ -10,14 +10,23 @@
 // every key buzzes as it goes down (Haptics).
 //
 // Glide typing: a finger that starts on a letter and slides over the keys
-// spells a word, which barry_launcher_shelld decodes (in the pack's words).
+// spells a word, which GlideEngine decodes (in the pack's words, off the
+// GUI thread).
 // The strip above the keys offers the next best words; backspace right
 // after takes the whole word back. Autocorrect (autocorrect: true, the
-// bottom screen's keyboard): the word just tapped goes to shelld with the
-// space or punctuation after it, and a clear typo is swapped for the word
+// bottom screen's keyboard): the word just tapped goes to GlideEngine with
+// the space or punctuation after it, and a clear typo is swapped for the word
 // meant, keys typed meanwhile waiting their turn; the strip then offers the
 // word as typed, to undo it. While a word is typed the strip offers
-// completions. A pack's composer (Composer.qml) sees every key first.
+// completions; a backspace that leaves the caret right after a word, not
+// inside one (asked of barry_launcher_keyd, so after the cursor moved too),
+// takes the word up again, its completions in the strip. A pack's composer (Composer.qml) sees
+// every key first.
+//
+// The space bar held (SPACE_HOLD_MS) is a cursor: sliding the finger along
+// moves the caret a character a step, with a buzz each, and lifting it types
+// nothing. The QML reports where the finger is through glideStart/Move/End
+// (every touch, glide or not).
 //
 // Grid packs (Thumb-Key's layout, keyboardgrid.cpp): big keys, each a
 // letter to tap and more to swipe out of it, drawn by GridPanel.qml, which
@@ -48,9 +57,6 @@
 #include <deque>
 #include <functional>
 #include <optional>
-
-class QNetworkAccessManager;
-class QNetworkReply;
 
 class KeyboardController : public QObject, public QQmlParserStatus {
     Q_OBJECT
@@ -91,6 +97,8 @@ class KeyboardController : public QObject, public QQmlParserStatus {
     // A glide: its path (in panel's coordinates), drawn while gliding.
     Q_PROPERTY(bool gliding READ gliding NOTIFY trailChanged)
     Q_PROPERTY(QVariantList trail READ trail NOTIFY trailChanged)
+    // The space bar is held as a cursor: the finger's slide moves the caret.
+    Q_PROPERTY(bool cursorMode READ cursorMode NOTIFY cursorModeChanged)
     // A held key's alternatives, while they show.
     Q_PROPERTY(QString moreFor READ moreFor NOTIFY moreChanged)
     Q_PROPERTY(QStringList moreAlts READ moreAlts NOTIFY moreChanged)
@@ -137,6 +145,7 @@ public:
     QStringList alternatives() const { return m_alternatives; }
     QString stripMode() const { return m_stripMode; }
     bool gliding() const { return m_gliding; }
+    bool cursorMode() const { return m_cursorMode; }
     QVariantList trail() const;
     QString moreFor() const { return m_moreFor; }
     QStringList moreAlts() const { return m_moreAlts; }
@@ -152,6 +161,8 @@ public:
     Q_INVOKABLE void pickMore(const QString &alternative);
     Q_INVOKABLE void dismissMore();
     Q_INVOKABLE void pickStrip(int index);
+    // Every touch on the keys (positions in panel's coordinates): a glide
+    // when it starts on a letter, the cursor when it holds the space bar.
     Q_INVOKABLE void glideStart(qreal x, qreal y);
     Q_INVOKABLE void glideMove(qreal x, qreal y);
     Q_INVOKABLE void glideEnd();
@@ -182,6 +193,7 @@ signals:
     void panelChanged();
     void stripChanged();
     void trailChanged();
+    void cursorModeChanged();
     void moreChanged();
     void gridChanged();
     void pressedChanged();
@@ -196,6 +208,15 @@ private:
     void sendCombo(const QStringList &keys);
     void undoCorrection(bool keepSep);
     void suggestFor(const QString &word);
+    bool correcting() const;
+    void lookBack();
+    void lookBackNow();
+    void lookedBack(const QString &before, const QString &after, int asked);
+    void spaceHeld();
+    void startCursor();
+    void endCursor();
+    void cursorTo(qreal x);
+    void cursorStep(const QString &name);
     void pickAlternative(int index);
     void commitGlide(const QStringList &words);
     void clearStrip();
@@ -222,10 +243,8 @@ private:
     void key(const QString &name);
     void replace(int back, const QString &text);
     void combo(const QStringList &keys);
-    void plan(QJsonObject body, std::function<void(const QJsonObject *)> done);
+    void plan(const QJsonObject &body, std::function<void(const QJsonObject *)> done);
     void drain();
-    // shelld
-    QNetworkReply *post(const QString &path, const QJsonObject &body);
 
     QPointer<Typer> m_typer;
     QPointer<VirtualKeyboard> m_keyboard;
@@ -277,22 +296,38 @@ private:
         qreal size = 0;      // the key's smaller side: how far a swipe goes
         bool swiped = false;
         int slid = 0;        // the space bar's cursor steps so far
+        QPointF at;          // where it is now
     };
     QHash<int, Touch> m_touches;
+
+    // The space bar as a cursor.
+    QTimer m_spaceHold;
+    bool m_cursorMode = false;
+    bool m_spaceSwallow = false;  // the space bar's tap after it was a cursor: no space
+    bool m_touching = false;      // a touch's position is known (glideStart)
+    QPointF m_touchAt;
+    bool m_cursorAnchored = false;
+    qreal m_cursorFrom = 0;       // x where the cursor's steps count from
+    int m_cursorSlid = 0;
+
+    // A backspace's look at the word before the caret (keyd), a moment after
+    // the field has it; dropped if anything was pressed meanwhile.
+    QTimer m_lookBack;
+    int m_lookBackSerial = 0;
 
     QTimer m_repeat;
     QString m_repeatKey;
     int m_repeatTicks = 0;
     bool m_repeated = false;  // the held key has repeated: no press as it lifts
 
-    // What to type, in order: a step waits behind one shelld is still
+    // What to type, in order: a step waits behind one GlideEngine is still
     // planning (autocorrect's swap for the word just typed).
     struct Step {
         std::function<void()> run;  // or, without: a plan
         QJsonObject plan;
+        QVariantMap language;
         std::function<void(const QJsonObject *)> done;
     };
     std::deque<Step> m_steps;
     bool m_planning = false;
-    QNetworkAccessManager *m_net = nullptr;
 };

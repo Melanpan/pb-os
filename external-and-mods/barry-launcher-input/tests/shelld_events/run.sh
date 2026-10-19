@@ -11,6 +11,8 @@
 #   <old shelld>: the one before the event stream, for the idle CPU and GET
 #   comparison (git show f688c38:sm8550-overlay/usr/lib/barry_launcher/barry_launcher_shelld)
 # IDLE_S and CPU_S (seconds) shorten or lengthen the idle checks.
+# BEFORE_SHELLD: a shelld to compare RSS at idle after start with (the one
+# that loaded English's dictionary at start).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 R="$(cd "${1:?rootfs}" && pwd)"; OV="$(cd "${2:?sm8550-overlay}" && pwd)"; OLD="$(realpath "${3:?old shelld}")"
@@ -36,6 +38,7 @@ mkdir -p "$work/stubs" "$work/lib"
 cp "$HERE/shelld_events.py" "$work/"
 cp -a "$OV/usr/lib/barry_launcher/." "$work/lib/"
 cp "$OLD" "$work/lib/barry_launcher_shelld_old"
+if [[ -n "${BEFORE_SHELLD:-}" ]]; then cp "$BEFORE_SHELLD" "$work/lib/barry_launcher_shelld_before"; fi
 printf '#!/bin/sh\nexit 0\n' > "$work/stubs/xdotool"
 printf '#!/bin/sh\nexit 0\n' > "$work/stubs/gamescopectl"
 printf '#!/bin/sh\nexit 1\n' > "$work/stubs/flatpak"

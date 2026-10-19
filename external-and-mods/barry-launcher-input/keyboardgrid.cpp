@@ -3,8 +3,8 @@
 // out of it. GridPanel.qml draws m_grid and reports every touch; this finds
 // the key it went down on and, when it lifts, what it typed: the key's
 // center for a tap, else the swipe nearest the way the finger went. Also:
-// sliding along the space bar moves the cursor, a swipe left on Backspace
-// deletes the word before it.
+// sliding along the space bar (or holding it, then sliding) moves the
+// cursor, a swipe left on Backspace deletes the word before it.
 #include "keyboardcontroller.h"
 
 #include "haptics.h"
@@ -166,7 +166,7 @@ QString KeyboardController::swipeText(const QString &cell, QPointF move) const
 void KeyboardController::touchDown(int id, qreal x, qreal y)
 {
     Touch t;
-    t.start = QPointF(x, y);
+    t.start = t.at = QPointF(x, y);
     t.cell = cellAt(t.start);
     if (QQuickItem *item = m_cells.value(t.cell))
         t.size = std::min(item->width(), item->height());
@@ -186,25 +186,27 @@ void KeyboardController::touchMove(int id, qreal x, qreal y)
     if (it == m_touches.end() || it->cell.isEmpty())
         return;
     Touch &t = *it;
-    const QPointF d = QPointF(x, y) - t.start;
+    t.at = QPointF(x, y);
+    const QPointF d = t.at - t.start;
     const qreal far = std::max(MIN_SWIPE, SWIPE * t.size);
     if (t.cell == QLatin1String("space")) {
-        // Along the space bar: the cursor, a step at a time.
-        if (!t.swiped && std::fabs(d.x()) > far)
+        // Along the space bar (or held: spaceHeld): the cursor, a step at
+        // a time.
+        if (!t.swiped && std::fabs(d.x()) > far) {
             t.swiped = true;
+            startCursor();
+        }
         if (!t.swiped)
             return;
         const qreal step = std::max(MIN_SWIPE, CURSOR_STEP * m_keyUnit);
         const int steps = int(d.x() / step);
         while (t.slid < steps) {
             t.slid++;
-            press(QStringLiteral("Right"));
-            Haptics::instance()->tick();
+            cursorStep(QStringLiteral("Right"));
         }
         while (t.slid > steps) {
             t.slid--;
-            press(QStringLiteral("Left"));
-            Haptics::instance()->tick();
+            cursorStep(QStringLiteral("Left"));
         }
         return;
     }

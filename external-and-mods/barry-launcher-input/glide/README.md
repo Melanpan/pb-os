@@ -2,7 +2,9 @@
 
 Glide typing, the suggestion strip and autocorrect of Barry Launcher's
 keyboards (`sm8550-overlay/usr/lib/barry_launcher/barry_glide.py`) as a plain
-C++20 static library: no Qt, no dependencies. Not wired into Barry.Input yet.
+C++20 static library: no Qt, no dependencies. Barry.Input links it
+(`../glideengine.cpp`: the keyboards' glides, suggestions and autocorrect in
+their own process, off the GUI thread).
 
 | File | What |
 |---|---|

@@ -180,6 +180,8 @@ Rectangle {
         readonly property real edge: panel.keycaps && !pressed ? 5 * panel.s : 0
         readonly property bool iconKey: ["shift", "BackSpace", "Return", "hide"].indexOf(k) >= 0
         readonly property bool foot: panel.labelsAtFoot && special && k !== "space"
+        // The space bar held as a cursor: the other keys fade.
+        opacity: panel.controller.cursorMode && k !== "space" ? 0.35 : 1
 
         // Where the controller finds this key: under its key, as that changes.
         property string registered
