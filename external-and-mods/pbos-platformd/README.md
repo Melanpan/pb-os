@@ -11,6 +11,8 @@ name keeps working.
 | `power-button` | `sm8550-powerbuttond.service` | `sm8550-powerbuttond` | the key (evdev), input uevents, the charge-rest flag (inotify, pidfd) |
 | `charge-control` | `sm8550-charge-control.service` | the daemon of `sm8550-charge-control` (the script stays as the settings CLI) | power_supply uevents, logind's wake signal, its settings file (inotify), SIGHUP |
 | `volume-keeper` | `sm8550-volume-keeper.service` (user) | `sm8550-volume-keeper` | the sound server's events (libpulse) |
+| `pbosd` | `pbosd.service` | `/usr/lib/konkr/pbosd` | input, power_supply and USB uevents, the /run flags (inotify, pidfd), process events (game boost), the webhelper (inotify); a 1 s fan tick; SIGHUP |
+| `konkr-volume` | `konkr-volume.service` (user) | `konkr-volume` | the sound server's events, ALSA control events (card 0), the PipeWire node's params |
 | `volume-keys` | `sm8550-volume-keys.service` (user) | `sm8550-volume-keys` | the keys (evdev), input uevents, `/dev/input` permissions (inotify) |
 
 `pbos-platformd --system|--user [--only NAME,...] [--list]`. Built in the

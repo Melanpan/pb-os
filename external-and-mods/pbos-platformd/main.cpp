@@ -26,9 +26,11 @@ const std::vector<ModuleInfo>& modules() {
         {"fan", Instance::System, [] { return dt_has("qcom,sm8550"); }, make_fan},
         {"power-button", Instance::System, [] { return dt_has("qcom,sm8550"); }, make_power_button},
         {"charge-control", Instance::System, charge_control_here, make_charge_control},
+        {"pbosd", Instance::System, pbosd_here, make_pbosd},
         {"volume-keeper", Instance::User, [] { return dt_has("qcom,sm8550"); }, make_volume_keeper},
         // Every image (the Python ran everywhere); it looks for its keys itself.
         {"volume-keys", Instance::User, [] { return true; }, make_volume_keys},
+        {"konkr-volume", Instance::User, konkr_volume_here, make_konkr_volume},
     };
     return all;
 }

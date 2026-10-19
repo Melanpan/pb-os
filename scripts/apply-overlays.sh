@@ -600,9 +600,9 @@ rm -f "$R/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml" \
   "$R/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml"
 chown -R root:root "$R/usr/share/alsa/ucm2/Qualcomm/sm8650" "$R/usr/share/alsa/ucm2/conf.d/sm8650" \
   "$R/etc/inputplumber" 2>/dev/null || true
-chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/pbosd" \
+chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" \
   "$R/usr/bin/pbosctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
-  "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-sleep" \
+  "$R/usr/lib/konkr/konkr-sleep" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-sleep-mode" \
   "$R/usr/lib/konkr/konkr-focusfix" \
   "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" "$R/usr/lib/konkr/pbos-hostname" \

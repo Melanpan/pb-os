@@ -98,6 +98,10 @@ public:
         pa_threaded_mainloop_unlock(ml_);
         pa_threaded_mainloop_stop(ml_);
         if (ctx_) {
+            // Disconnecting calls the state callback at once, which would
+            // reconnect (retry() drops the context): no callbacks first.
+            pa_context_set_state_callback(ctx_, nullptr, nullptr);
+            pa_context_set_subscribe_callback(ctx_, nullptr, nullptr);
             pa_context_disconnect(ctx_);
             pa_context_unref(ctx_);
         }

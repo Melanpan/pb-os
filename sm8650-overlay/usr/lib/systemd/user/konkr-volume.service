@@ -8,7 +8,7 @@ ConditionUser=!root
 
 [Service]
 ExecCondition=/bin/sh -c 'grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model'
-ExecStart=/usr/lib/konkr/konkr-volume
+ExecStart=/usr/lib/pbos-platformd/pbos-platformd --user --only konkr-volume
 Restart=always
 RestartSec=2
 

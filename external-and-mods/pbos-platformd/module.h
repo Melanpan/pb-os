@@ -47,5 +47,9 @@ std::unique_ptr<Module> make_charge_control();
 std::unique_ptr<Module> make_fan();
 std::unique_ptr<Module> make_power_button();
 std::unique_ptr<Module> make_volume_keys();
+bool konkr_volume_here();
+std::unique_ptr<Module> make_konkr_volume();
+bool pbosd_here();
+std::unique_ptr<Module> make_pbosd();
 
 }  // namespace pp
