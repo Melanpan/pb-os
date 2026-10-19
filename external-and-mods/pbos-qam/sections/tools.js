@@ -62,6 +62,8 @@ const setProtonGames = callable("set_proton_games");
 // Per-game profiles, applied at launch by /usr/bin/pbos-game-launch.
 const getGameProfiles = callable("get_game_profiles");
 const setGameProfile = callable("set_game_profile");
+// The launch fix ProtonDB's working reports for one game agree on.
+const getCommunityHint = callable("get_community_hint");
 // Performance modes: the default, and which game runs (its mode wins).
 const getPerformance = callable("get_performance");
 const setPerformanceDefault = callable("set_performance_default");
@@ -1478,6 +1480,51 @@ function EnvModal({ closeModal, presets, name: name0, value: value0, fromList, o
     });
 }
 
+// ProtonDB Community Fix: the launch fix most of the game's working ProtonDB reports agree
+// on (tools/protondb-hints.py), applied as profile variables and game
+// arguments. Reports are from x86 PCs and Steam Decks.
+function CommunitySection({ appid, profile, save }) {
+    const [hint, setHint] = useState(null);
+    useEffect(() => {
+        setHint(null);
+        getCommunityHint(appid).then((r) => setHint(r || { available: false })).catch(() => setHint({ available: false }));
+    }, [appid]);
+    if (!hint || !hint.available) return null;
+    const g = hint.game;
+    const items = [];
+    if (!g || !g.k) {
+        items.push(note("ProtonDB has no community fix for this game."));
+    } else {
+        const env = g.env || {};
+        const args = g.args || [];
+        const fix = [...Object.entries(env).map(([k, v]) => `${k}=${v}`), ...args].join(" ");
+        const pEnv = profile.env || {};
+        const pArgs = profile.args || [];
+        const applied = Object.entries(env).every(([k, v]) => pEnv[k] === v) && args.every((a) => pArgs.includes(a));
+        items.push(row(jsx(DFL.ButtonItem, {
+            layout: "below", disabled: applied,
+            description: `${fix} (used by ${g.k} of ${g.w} working ProtonDB reports)`,
+            onClick: () => {
+                const nextEnv = { ...pEnv, ...env };
+                const nextArgs = [...pArgs, ...args.filter((a) => !pArgs.includes(a))];
+                save({
+                    env: Object.keys(nextEnv).length ? nextEnv : undefined,
+                    args: nextArgs.length ? nextArgs : undefined,
+                });
+            },
+            children: applied ? "ProtonDB Fix Applied" : "Apply ProtonDB Fix",
+        })));
+        items.push(note("Source: protondb.com, player reports from x86 PCs and Steam Decks (ODbL). Not tested on PB-OS."));
+    }
+    if ((profile.args || []).length) {
+        items.push(row(jsx(DFL.ButtonItem, {
+            label: "Game arguments", description: profile.args.join(" "),
+            onClick: () => save({ args: undefined }), children: "Remove",
+        })));
+    }
+    return jsx(DFL.PanelSection, { title: "ProtonDB Community Fix", children: items });
+}
+
 function GamesTab() {
     const [info, setInfo] = useState(null);
     const [profiles, setProfiles] = useState({});
@@ -1685,6 +1732,7 @@ function GamesTab() {
 
     return jsxs(SP_JSX.Fragment, { children: [
         picker,
+        jsx(CommunitySection, { appid: pick, profile: p, save }),
         jsx(DFL.PanelSection, { title: "Mode", children: modeItems }),
         jsx(DFL.PanelSection, { title: "FEX Preset", children: fexItems }),
         jsx(DFL.PanelSection, { title: "CPU Cores", children: cpuItems }),

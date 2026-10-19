@@ -84,6 +84,7 @@ const std::string STICKCAL = "/usr/lib/steamos-sm8550/sm8550-stickcal";
 const std::string BARRY_SWITCH = "/usr/lib/barry_launcher/barry_launcher_desktop_switch";
 const std::string PBOS_PROTON = "/usr/lib/steamos/pbos-proton";
 const std::string GAME_LAUNCH = "/usr/bin/pbos-game-launch";
+const std::string COMMUNITY_HINTS = "/usr/share/pb-os/game-launch/protondb-hints.json";
 
 const char* const STICK_AXES[] = {"left_x", "left_y", "right_x", "right_y"};
 constexpr double STICK_REST_S = 1.5;
@@ -803,6 +804,21 @@ Value game_profiles() {
     return out;
 }
 
+Value community_hint(const std::string& appid) {
+    // ProtonDB's reports for one game (tools/protondb-hints.py), read on
+    // each call: the page asks once per game picked, nothing stays in memory.
+    Value out = Value::object();
+    out["available"] = false;
+    if (!is_digits(appid)) return out;
+    const Value doc = read_json(COMMUNITY_HINTS);
+    if (!doc["games"].is_object()) return out;
+    out["available"] = true;
+    out["since"] = doc["reports_since"];
+    out["until"] = doc["reports_until"];
+    if (doc["games"].has(appid)) out["game"] = doc["games"][appid];
+    return out;
+}
+
 Value clean_game_profile(const Value& p, const Value& info) {
     // Known settings only, and none at their defaults (an empty profile
     // means no profile).
@@ -837,6 +853,16 @@ Value clean_game_profile(const Value& p, const Value& info) {
             if (std::regex_match(k, env_name) && val.find('\0') == std::string::npos) clean[k] = val;
         }
         if (clean.size()) out["env"] = clean;
+    }
+    if (p["args"].is_array()) {
+        // Game arguments after the command line, like -dx11.
+        Value clean = Value::array();
+        for (const auto& v : p["args"].items()) {
+            if (!v.is_string()) continue;
+            const std::string& val = v.as_string();
+            if (!val.empty() && val.size() <= 200 && val.find('\0') == std::string::npos && clean.size() < 20) clean.push(val);
+        }
+        if (clean.size()) out["args"] = clean;
     }
     std::string mode = p["mode"].str();
     if (one_of(mode, PROFILES)) out["mode"] = mode;
@@ -1116,6 +1142,7 @@ public:
             return res;
         }
         if (m == "get_game_profiles") return game_profiles();
+        if (m == "get_community_hint") return community_hint(arg(a, 0, "").str());
         if (m == "set_game_profile") {
             const Value res = game_profile_save(arg(a, 0, "").str(), a.at(1));
             log("tools: game profile %s: %s", arg(a, 0, "").str().c_str(), res["profile"].dump().c_str());

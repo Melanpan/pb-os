@@ -19,6 +19,8 @@ and then execs the game:
                  to match, so Windows games see that many cores.
   Environment    variables, set last and as given, so they can override
                  anything above.
+  Arguments      added after the game's command line (from the ProtonDB
+                 Community Fix section, like -dx11).
 
 Anything that fails is reported on stderr (Steam's game log) and skipped; the
 game always starts. `pbos-game-launch --info` prints the presets and this
@@ -204,7 +206,12 @@ def apply(profile, game):
                 done.append(str(key))
             except (ValueError, OSError) as exc:
                 say(f"variable {key!r} skipped: {exc}")
+    extra = profile.get("args")
+    extra = [str(a) for a in extra if isinstance(a, str) and a] if isinstance(extra, list) else []
+    if extra:
+        done.append("args=" + " ".join(extra))
     say(f"app {game}: {', '.join(done) or 'nothing to change'}")
+    return extra
 
 
 def info():
@@ -229,7 +236,7 @@ def main():
         try:
             profile = read_json(profiles_path()).get("games", {}).get(game)
             if isinstance(profile, dict):
-                apply(profile, game)
+                args += apply(profile, game)
         except Exception as exc:
             say(f"profile for app {game} skipped: {exc}")
     try:

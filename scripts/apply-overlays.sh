@@ -168,9 +168,10 @@ chmod -R u=rwX,go=rX "$R/usr/share/pb-os/proton-pbos"
 install_file "$OVL/usr/lib/steamos/pbos-proton" "$R/usr/lib/steamos/pbos-proton" 0755
 install_file "$OVL/usr/lib/steamos/pbos-proton-launcher" "$R/usr/lib/steamos/pbos-proton-launcher" 0644
 # Per-game profiles (PB-OS Tools' Games tab): the launch wrapper the tab puts
-# in a game's launch options, and its FEX and environment-variable presets.
+# in a game's launch options, its FEX and environment-variable presets, and
+# the ProtonDB Community Fix data (tools/protondb-hints.py, ODbL, see CREDITS.md).
 install_file "$OVL/usr/bin/pbos-game-launch" "$R/usr/bin/pbos-game-launch" 0755
-for f in fex-presets.json env-presets.json; do
+for f in fex-presets.json env-presets.json protondb-hints.json; do
   install_file "$OVL/usr/share/pb-os/game-launch/$f" "$R/usr/share/pb-os/game-launch/$f" 0644
 done
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
