@@ -23,6 +23,12 @@ instead of showing 0 °C. The memory clock row is hidden on every Qualcomm GPU:
 upstream shows a fixed 4200 MHz for any SM8650 (a Frame constant, not a
 reading), and the Pocket FIT has no readable DDR clock.
 
+**Patch** `0003-msm-walk-gpu-mem-trace-once-per-update.patch`: the Qualcomm
+GPU thread samples every 25 ms, and each sample walked the `gpu_mem` trace
+buffers (open + map every CPU's buffer). That kept ~10% of a core busy even
+with the overlay off. The walk now runs once per 500 ms update period and
+reuses the last total in between.
+
 **Build:** `scripts/apply-overlays.sh` calls
 `scripts/build-mangoapp-in-rootfs.sh`, which builds inside a throwaway overlay
 of the Frame rootfs (glibc 2.39) and reuses the result while `REF`, the
