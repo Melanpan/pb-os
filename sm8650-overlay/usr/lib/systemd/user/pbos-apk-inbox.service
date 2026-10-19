@@ -3,4 +3,4 @@ Description=Install Android apps from ~/Android/Inbox
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/konkr-apk inbox
+ExecStart=/usr/bin/pbos-apk inbox

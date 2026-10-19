@@ -1,9 +1,9 @@
-# konkr-android
+# pbos-android
 
 Files layered over Lepton's Android image (Valve's Android layer, Steam app
-3029110) for `konkr-apk` apps. Installed to `~/.local/share/konkr-android`
+3029110) for `pbos-apk` apps. Installed to `~/.local/share/konkr-android`
 (home, not the root partition: ~210 MiB); update packages carry it like the
-bundled Decky plugins, deltas only when it changed. `konkr-apk` hands the
+bundled Decky plugins, deltas only when it changed. `pbos-apk` hands the
 dirs to Lepton, which bind-mounts every file over the Android rootfs. Steam's
 own Android games keep Valve's image.
 
@@ -29,16 +29,16 @@ against the old jar must be rebuilt too, or zygote re-dexopts system_server
 before installd is up and dies: `framework/compile-odex.sh` does that inside
 Android with its own dex2oat.
 
-This is tied to one Lepton Android image (`images/version.txt`); `konkr-apk`
+This is tied to one Lepton Android image (`images/version.txt`); `pbos-apk`
 only uses the dir matching the installed one. After Valve updates it, run
 `framework/build-framework.sh` with the device on the network and Android
 running, then rebuild the image.
 
-## What konkr-apk does at run time
+## What pbos-apk does at run time
 
-Not files, but part of the same fixes (see `sm8650-overlay/usr/bin/konkr-apk`):
+Not files, but part of the same fixes (see `sm8650-overlay/usr/bin/pbos-apk`):
 
-- one shared Android (`konkr-android.service`) with its data kept, every
+- one shared Android (`pbos-android.service`) with its data kept, every
   installed app a Steam title with its icon
 - binder in the kernel (`kernel-sm8650/steamos.config`)
 - unlimited stack rlimit for the container: legacy mmap layout below 2^47,

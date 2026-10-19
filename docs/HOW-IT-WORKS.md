@@ -67,9 +67,9 @@ same model as the ARM Proton builds here. The gap was the **platform**:
 Per-game FEX presets (Steam → Properties → Launch Options):
 
 ```
-konkr-game fast %command%      # x87 reduced precision + ntsync — safe for most
-konkr-game fastest %command%   # also TSO off — biggest CPU win, may crash MT games
-konkr-game compat %command%    # strict TSO / split locks for crashing games
+pbos-game fast %command%       # x87 reduced precision + ntsync — safe for most
+pbos-game fastest %command%    # also TSO off — biggest CPU win, may crash MT games
+pbos-game compat %command%     # strict TSO / split locks for crashing games
 ```
 
 The same presets, without typing, on every device: PB-OS Tools → **Games**
@@ -111,7 +111,7 @@ ported from Armada's per-game compatibility settings. Pick a game (the one
 running comes first), then set any of:
 
 - **x86 Emulation**: a FEX preset (Default = FEX's own settings; Fast,
-  Fastest and Compatible match `konkr-game`'s fast / fastest / compat) or
+  Fastest and Compatible match `pbos-game`'s fast / fastest / compat) or
   Custom, with the FEX switches one by one.
 - **CPU**: the cores the game runs on (all, big + prime, big, little, or a
   list like `4-7`), read from the device's cpufreq clusters, and whether
@@ -259,7 +259,7 @@ Output: `/work/steamos-sm8650.img`.
   session frozen, about 1 W), which the Pocket S2 still uses.
 - Some ARM64 Proton games hung on their splash screen because wined3d's GL
   path goes through zink. `WINE_D3D_CONFIG=renderer=vulkan` fixes it.
-- `konkr-focusfix` gives the game focus back after Quick Access closes,
+- `pbos-focusfix` gives the game focus back after Quick Access closes,
   otherwise some games ignore the controller until you tap the screen.
 - Frame generation is lsfg-vk 1.x, not 2.0: on Adreno (Turnip) lsfg-vk 2.0.0
   and its newer master draw garbage blocks in frame-generated games, and 1.x

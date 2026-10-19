@@ -1,11 +1,11 @@
 [Unit]
 Description=Add the Google Play Store to the Steam library
-# konkr-apk setup exits at once when Steam already has the shortcut; on a
+# pbos-apk setup exits at once when Steam already has the shortcut; on a
 # fresh install it waits for the Steam sign-in, then adds and verifies it.
 
 [Service]
 Type=exec
-ExecStart=/usr/bin/konkr-apk setup
+ExecStart=/usr/bin/pbos-apk setup
 
 [Install]
 WantedBy=default.target

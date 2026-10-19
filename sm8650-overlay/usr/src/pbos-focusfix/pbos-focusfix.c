@@ -1,5 +1,5 @@
 /*
- * konkr-focusfix — give games their controls back after the Steam overlay.
+ * pbos-focusfix — give games their controls back after the Steam overlay.
  *
  * Opening Quick Access / the Steam menu moves X focus to Steam's window;
  * closing it moves focus back to the game, but Proton's winex11 never
@@ -9,8 +9,8 @@
  * to the window gamescope has focused (a game, not Steam), repeats what a
  * window manager would do for a WM_TAKE_FOCUS client: send it WM_TAKE_FOCUS.
  *
- *   konkr-focusfix [:0]
- * Build: cc -O2 -o konkr-focusfix konkr-focusfix.c -lX11
+ *   pbos-focusfix [:0]
+ * Build: cc -O2 -o pbos-focusfix pbos-focusfix.c -lX11
  */
 #include <X11/Xlib.h>
 #include <stdio.h>
@@ -67,7 +67,7 @@ int main(int argc, char **argv)
 			e.xclient.data.l[1] = CurrentTime;
 			XSendEvent(d, game, False, NoEventMask, &e);
 			XFlush(d);
-			fprintf(stderr, "konkr-focusfix: re-activated 0x%lx (app %lu)\n", game, app);
+			fprintf(stderr, "pbos-focusfix: re-activated 0x%lx (app %lu)\n", game, app);
 		}
 		last = focus;
 	}

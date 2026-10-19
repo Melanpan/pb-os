@@ -74,8 +74,8 @@ install_tarball() {
   [[ -x "${R}/usr/bin/inputplumber" ]] || die "inputplumber binary missing after extract"
   # Local 0.81.0 fix prevents the output-only AYANEO rumble source spinning.
   if [[ "$IP_VER" == 0.81.0 ]]; then
-    local fixed="$CACHE/inputplumber-0.81.0-konkr"
-    [[ -f "$fixed" && -f "$fixed.sha256" ]] || die "missing verified AYANEO polling fix; run build-inputplumber-konkr.sh"
+    local fixed="$CACHE/inputplumber-0.81.0-pbos"
+    [[ -f "$fixed" && -f "$fixed.sha256" ]] || die "missing verified AYANEO polling fix; run build-inputplumber-pbos.sh"
     (cd "$CACHE" && sha256sum -c "$(basename "$fixed").sha256") || die "patched InputPlumber checksum mismatch"
     install -m0755 "$fixed" "$R/usr/bin/inputplumber"
   fi

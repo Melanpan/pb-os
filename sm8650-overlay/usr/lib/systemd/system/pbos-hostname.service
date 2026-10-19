@@ -8,7 +8,7 @@ ConditionPathExists=/proc/device-tree/compatible
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/konkr/pbos-hostname
+ExecStart=/usr/lib/pbos/pbos-hostname
 
 [Install]
 WantedBy=sysinit.target

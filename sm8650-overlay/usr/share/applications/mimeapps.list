@@ -1,5 +1,5 @@
 [Default Applications]
-application/vnd.android.package-archive=konkr-apk.desktop
-application/x-apkm=konkr-apk.desktop
-application/x-xapk=konkr-apk.desktop
-application/x-apks=konkr-apk.desktop
+application/vnd.android.package-archive=pbos-apk.desktop
+application/x-apkm=pbos-apk.desktop
+application/x-xapk=pbos-apk.desktop
+application/x-apks=pbos-apk.desktop

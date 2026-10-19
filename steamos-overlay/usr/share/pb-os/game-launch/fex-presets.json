@@ -1,5 +1,5 @@
 {
-  "_source": "PB-OS. Presets match konkr-game's fast / fastest / compat; the Compatible preset also takes Armada's (https://github.com/armada-os/armada, fex-profiles.json, GPL-2.0-or-later) memory-ordering and Multiblock settings.",
+  "_source": "PB-OS. Presets match pbos-game's fast / fastest / compat; the Compatible preset also takes Armada's (https://github.com/armada-os/armada, fex-profiles.json, GPL-2.0-or-later) memory-ordering and Multiblock settings.",
   "options": [
     {"key": "TSOEnabled", "label": "x86 Memory Ordering (TSO)", "default": "1"},
     {"key": "HalfBarrierTSOEnabled", "label": "Half-Barrier TSO", "default": "1"},

@@ -5,7 +5,7 @@ Before=inputplumber.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/konkr/pocket-s2-controller
+ExecStart=/usr/lib/pbos/pocket-s2-controller
 RemainAfterExit=yes
 
 [Install]

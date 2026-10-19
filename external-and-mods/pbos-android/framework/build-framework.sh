@@ -2,7 +2,7 @@
 # build-framework.sh [ssh-target] — rebuild payload/lepton-<ver>/ for the
 # Lepton Android image installed on the device (run again after Valve
 # updates it). Needs Colima (Java + smali) and the device with Android up
-# (`konkr-apk store` once).
+# (`pbos-apk store` once).
 #
 # Lepton comments SystemServer services out of services.jar; normal apps and
 # Play services crash without some of them (restore-services.py lists which).
@@ -14,7 +14,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TARGET="${1:-root@frame.local}"
-SSH=(ssh -i ~/.ssh/konkr_steamos "$TARGET")
+SSH=(ssh -i ~/.ssh/pbos_steamos "$TARGET")
 LEPTON=/home/steamos/.local/share/Steam/steamapps/common/Lepton
 CTR=lepton-steamlaunch-konkr-android
 WORK=/work/lepton-framework
@@ -43,7 +43,7 @@ colima ssh -- sudo bash -c "set -e; cd $WORK
 colima ssh -- sudo cat "$WORK/services.jar" >"$tmp/services.jar"
 
 echo "== compiling against it inside Android"
-scp -q -i ~/.ssh/konkr_steamos "$tmp/services.jar" "$HERE/compile-odex.sh" "$TARGET:/tmp/"
+scp -q -i ~/.ssh/pbos_steamos "$tmp/services.jar" "$HERE/compile-odex.sh" "$TARGET:/tmp/"
 "${SSH[@]}" "export XDG_RUNTIME_DIR=/run/user/1000; cd /tmp; P='sudo -Eu steamos HOME=/home/steamos podman'
   \$P cp /tmp/services.jar $CTR:/data/local/tmp/services.jar
   \$P cp /tmp/compile-odex.sh $CTR:/data/local/tmp/compile-odex.sh

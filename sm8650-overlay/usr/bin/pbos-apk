@@ -1,17 +1,17 @@
 #!/bin/bash
-# konkr-apk — Android apps on SteamOS through Lepton (Valve's Android layer,
+# pbos-apk — Android apps on SteamOS through Lepton (Valve's Android layer,
 # Steam app 3029110; needs the binder kernel from steamos.config).
 #
-#   konkr-apk install FILE...  .apk / .apkm / .xapk / .apks (split bundles
+#   pbos-apk install FILE...  .apk / .apkm / .xapk / .apks (split bundles
 #                              too). Opening one in Dolphin does the same.
-#   konkr-apk run PACKAGE      open an app (what its Steam title calls)
-#   konkr-apk store            open the Play Store
-#   konkr-apk list             installed apps
-#   konkr-apk remove PACKAGE   uninstall (delete its Steam title by hand)
-#   konkr-apk inbox            install everything in ~/Android/Inbox
-#   konkr-apk stop             shut Android down
+#   pbos-apk run PACKAGE      open an app (what its Steam title calls)
+#   pbos-apk store            open the Play Store
+#   pbos-apk list             installed apps
+#   pbos-apk remove PACKAGE   uninstall (delete its Steam title by hand)
+#   pbos-apk inbox            install everything in ~/Android/Inbox
+#   pbos-apk stop             shut Android down
 #
-# All apps share one Android (konkr-android.service, started on demand and
+# All apps share one Android (pbos-android.service, started on demand and
 # stopped 10 minutes after the last app closes). Every app installed in it —
 # sideloaded or from the Play Store — gets its own Steam title with its name
 # and icon. Lepton is presented a Steam launch without an APK
@@ -28,7 +28,7 @@ CTR=lepton-steamlaunch-konkr-android
 RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 READY="${RUNDIR}/konkr-android.ready"
 DESKTOP_DIR="${HOME}/.local/share/applications"
-APK_INFO=/usr/lib/konkr/apk-info
+APK_INFO=/usr/lib/pbos/apk-info
 # Lepton overlays (Play Store, framework fixes): in home, not on the root
 # partition; the updater installs them there.
 OVERLAY_ROOT="${HOME}/.local/share/konkr-android"
@@ -38,7 +38,7 @@ SYSTEM_TITLES=(com.android.vending)
 IME=rkr.simplekeyboard.inputmethod/.latin.LatinIME
 
 say() {
-  echo "konkr-apk: $*" >&2
+  echo "pbos-apk: $*" >&2
   notify-send -a "Android apps" -i android-package-archive "Android apps" "$*" 2>/dev/null || true
 }
 die() { say "$*"; exit 1; }
@@ -67,7 +67,7 @@ def patch(name, old, new):
     if new in s:
         return
     if old not in s:
-        print(f"konkr-apk: WARN {name} changed upstream, patch skipped", file=sys.stderr)
+        print(f"pbos-apk: WARN {name} changed upstream, patch skipped", file=sys.stderr)
         return
     f.write_text(s.replace(old, new, 1))
 
@@ -94,7 +94,7 @@ patch("liblepton/mounting.sh",
       '    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" && -n "$(get_app_id)" ]]; then\n'
       '        PERSISTENT_DATA_PATH=')
 
-# Gamepads: the host's live /dev/input, which konkr-apk links pads from
+# Gamepads: the host's live /dev/input, which pbos-apk links pads from
 # (Waydroid only forwards touch/keyboard/mouse from Wayland). Steam
 # recreates its virtual pads, so per-node mounts would go stale.
 patch("liblepton/mounting.sh",
@@ -202,7 +202,7 @@ steam_launch_appid() {
 # Shell command inside Android. Stdin is passed through (APK streaming).
 asx() { podman exec -i "$CTR" /system/bin/sh -c "$1" 2>/dev/null; }
 
-android_up() { [[ -f "$READY" ]] && systemctl --user -q is-active konkr-android.service; }
+android_up() { [[ -f "$READY" ]] && systemctl --user -q is-active pbos-android.service; }
 
 # A compositor holds its socket's .lock while it runs; gamescope leaves the
 # socket itself behind when it exits.
@@ -221,19 +221,19 @@ ensure_android() {
     return 0
   fi
   # Switched between Game and Desktop Mode: the window lives on the old one.
-  systemctl --user stop konkr-android.service 2>/dev/null || true
+  systemctl --user stop pbos-android.service 2>/dev/null || true
   systemctl --user set-environment KONKR_ANDROID_DISPLAY="$want"
-  systemctl --user start konkr-android.service
+  systemctl --user start pbos-android.service
   say "Starting Android…"
   for ((i = 0; i < 120; i++)); do
     android_up && return 0
-    systemctl --user -q is-active konkr-android.service || break
+    systemctl --user -q is-active pbos-android.service || break
     sleep 2
   done
-  die "Android didn't start (journalctl --user -u konkr-android)."
+  die "Android didn't start (journalctl --user -u pbos-android)."
 }
 
-# Rootfs overlays for Lepton (see external-and-mods/konkr-android):
+# Rootfs overlays for Lepton (see external-and-mods/pbos-android):
 #  common/        Play Store + Play services, touch keyboard, Steam pad key
 #                 layout, no freeform windows
 #  lepton-<ver>/  services.jar with the SystemServer services Lepton strips
@@ -314,6 +314,9 @@ add_title() {
   [[ -f "$icon" ]] || icon=android-package-archive
   desktop="${DESKTOP_DIR}/konkr-android-${pkg}.desktop"
   mkdir -p "$DESKTOP_DIR"
+  # Exec keeps the old name (a permanent link to pbos-apk): Steam derives a
+  # shortcut's app id from its exe and name, so titles keep the same id as
+  # the ones added before the rename.
   cat >"$desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -332,8 +335,8 @@ EOF
 }
 
 # Is there a Steam shortcut for this package? Steam stores a .desktop add
-# as exe "/usr/bin/konkr-apk", LaunchOptions '"run" "<pkg>"' and the
-# .desktop as ShortcutPath.
+# as exe "/usr/bin/konkr-apk" (what add_title writes, see there),
+# LaunchOptions '"run" "<pkg>"' and the .desktop as ShortcutPath.
 steam_has() {
   grep -qaF -e "\"run\" \"$1\"" -e "konkr-android-$1.desktop" \
     "${HOME}"/.local/share/Steam/userdata/*/config/shortcuts.vdf 2>/dev/null
@@ -395,7 +398,7 @@ sync_pads() {
 
 # --- commands ---------------------------------------------------------------
 
-# konkr-android.service body.
+# pbos-android.service body.
 cmd_daemon() {
   ensure_lepton
   patch_lepton
@@ -532,9 +535,9 @@ set_window_appid() {
 }
 
 schedule_idle_stop() {
-  systemctl --user stop konkr-android-idle.timer 2>/dev/null || true
-  systemd-run --user --quiet --collect --unit=konkr-android-idle --on-active=600 \
-    /usr/bin/konkr-apk idle-stop >/dev/null 2>&1 || true
+  systemctl --user stop pbos-android-idle.timer 2>/dev/null || true
+  systemd-run --user --quiet --collect --unit=pbos-android-idle --on-active=600 \
+    /usr/bin/pbos-apk idle-stop >/dev/null 2>&1 || true
 }
 
 cmd_run() {
@@ -584,6 +587,7 @@ cmd_setup() {
   mkdir -p "${SYS}/icons" "$DESKTOP_DIR"
   python3 "$APK_INFO" "${OVERLAY_ROOT}/common/system/product/priv-app/Phonesky/Phonesky.apk" "$icon" >/dev/null 2>&1 || true
   [[ -f "$icon" ]] || icon=android-package-archive
+  # Exec keeps the old name, as in add_title.
   cat >"$desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -607,8 +611,9 @@ EOF
 }
 
 cmd_idle_stop() {
-  pgrep -f "konkr-apk run " >/dev/null && return 0
-  systemctl --user stop konkr-android.service
+  # Titles run it as konkr-apk (see add_title); either name counts.
+  pgrep -f "(konkr|pbos)-apk run " >/dev/null && return 0
+  systemctl --user stop pbos-android.service
 }
 
 cmd_list() {
@@ -645,13 +650,13 @@ cmd_inbox() {
 }
 
 case "${1:-}" in
-  install) shift; (($#)) || die "usage: konkr-apk install FILE..."; for f; do cmd_install "$f"; done ;;
-  run) [[ -n "${2:-}" ]] || die "usage: konkr-apk run PACKAGE"; cmd_run "$2" ;;
+  install) shift; (($#)) || die "usage: pbos-apk install FILE..."; for f; do cmd_install "$f"; done ;;
+  run) [[ -n "${2:-}" ]] || die "usage: pbos-apk run PACKAGE"; cmd_run "$2" ;;
   store) cmd_run com.android.vending ;;
   list) cmd_list ;;
-  remove) [[ -n "${2:-}" ]] || die "usage: konkr-apk remove PACKAGE"; cmd_remove "$2" ;;
+  remove) [[ -n "${2:-}" ]] || die "usage: pbos-apk remove PACKAGE"; cmd_remove "$2" ;;
   inbox) cmd_inbox ;;
-  stop) systemctl --user stop konkr-android.service ;;
+  stop) systemctl --user stop pbos-android.service ;;
   daemon) cmd_daemon ;;
   idle-stop) cmd_idle_stop ;;
   setup) cmd_setup ;;

@@ -573,6 +573,46 @@ rm -f "$R/usr/lib/konkr/konkrd" "$R/usr/lib/systemd/system/konkrd.service" \
   "$R/var/lib/overlays/etc/upper/konkrd.conf" \
   "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/konkrd.service"
 ln -sfn pbosctl "$R/usr/bin/konkrctl"
+# Drop-ins renamed konkr → pbos. The build rootfs is reused, so remove the old
+# names, or both copies would load (update packages delete them on devices).
+rm -f "$R/etc/ssh/sshd_config.d/10-konkr.conf" \
+  "$R/etc/systemd/coredump.conf.d/10-konkr-sd.conf" \
+  "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/10-konkr-sd.conf" \
+  "$R/etc/pipewire/pipewire.conf.d/99-konkr-quantum.conf" \
+  "$R/etc/wireplumber/wireplumber.conf.d/99-konkr-no-mic-tracker.conf" \
+  "$R/usr/lib/sysctl.d/21-konkr-sched-rt.conf" "$R/usr/lib/sysctl.d/60-konkr-io.conf" \
+  "$R/usr/lib/udev/rules.d/60-konkr-performance.rules" \
+  "$R/usr/lib/udev/rules.d/75-konkr-tsens-nowake.rules" \
+  "$R/usr/lib/environment.d/61-konkr-wined3d.conf" \
+  "$R/usr/lib/NetworkManager/dispatcher.d/60-konkr-timesync" \
+  "$R/usr/lib/systemd/user/plasma-kwin_wayland.service.d/50-konkr-portal.conf"
+# Helpers moved from /usr/lib/konkr to /usr/lib/pbos (the sleep scripts stay
+# there for now).
+rm -f "$R/usr/lib/konkr/apk-info" "$R/usr/lib/konkr/pbos-hostname" \
+  "$R/usr/lib/konkr/pocket-s2-controller" "$R/usr/lib/konkr/konkr-focusfix"
+rm -rf "$R/usr/src/konkr-focusfix"
+# Python daemons and helpers now in pbos-platformd (C++), from a reused rootfs.
+rm -f "$R/usr/lib/konkr/pbosd" "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-standby" \
+  "$R/usr/lib/steamos-sm8550/sm8550-fand" "$R/usr/lib/steamos-sm8550/sm8550-powerbuttond" \
+  "$R/usr/lib/steamos-sm8550/sm8550-volume-keeper"
+# Units, commands and the APK handler renamed konkr → pbos. Steam shortcuts
+# (Android titles) and users' launch options call the old commands, so those
+# stay as links.
+rm -f "$R/usr/lib/systemd/user/konkr-focusfix.service" \
+  "$R/usr/lib/systemd/user/gamescope-session.target.wants/konkr-focusfix.service" \
+  "$R/usr/lib/systemd/system/konkr-flatpak-appstream.service" \
+  "$R/usr/lib/systemd/system/konkr-flatpak-appstream.timer" \
+  "$R/usr/lib/systemd/system/timers.target.wants/konkr-flatpak-appstream.timer" \
+  "$R/usr/lib/systemd/user/konkr-android.service" \
+  "$R/usr/lib/systemd/user/konkr-android-setup.service" \
+  "$R/usr/lib/systemd/user/default.target.wants/konkr-android-setup.service" \
+  "$R/usr/lib/systemd/user/konkr-apk-inbox.path" \
+  "$R/usr/lib/systemd/user/konkr-apk-inbox.service" \
+  "$R/usr/lib/systemd/user/default.target.wants/konkr-apk-inbox.path" \
+  "$R/usr/share/applications/konkr-apk.desktop" \
+  "$R/usr/share/mime/packages/konkr-apk.xml"
+ln -sfn pbos-apk "$R/usr/bin/konkr-apk"
+ln -sfn pbos-game "$R/usr/bin/konkr-game"
 if [[ "$SOC" == sm8550 ]]; then
   # SM8550 keeps the Odin 2 audio policy (sm8550-audio-pipewire: pro-audio +
   # MI2S speaker routes). 53 forces the SM8650-APS2 UCM profile and software
@@ -581,7 +621,7 @@ if [[ "$SOC" == sm8550 ]]; then
   rm -f "$R/etc/wireplumber/wireplumber.conf.d/53-konkr-audio.conf" \
     "$R/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 fi
-chmod 0755 "$R/usr/lib/konkr/pocket-s2-controller"
+chmod 0755 "$R/usr/lib/pbos/pocket-s2-controller"
 chmod 0644 "$R/usr/lib/liblsfg-vk-arm64.so" "$R/usr/lib/liblsfg-vk-arm64.so.README"
 # Audio: the Frame (also SM8650) hides the raw speaker node from every client
 # so its VR speaker filter chain owns it; that chain is disabled here, which
@@ -602,24 +642,24 @@ rm -f "$R/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml" \
 chown -R root:root "$R/usr/share/alsa/ucm2/Qualcomm/sm8650" "$R/usr/share/alsa/ucm2/conf.d/sm8650" \
   "$R/etc/inputplumber" 2>/dev/null || true
 chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" \
-  "$R/usr/bin/pbosctl" "$R/usr/bin/konkr-game" \
+  "$R/usr/bin/pbosctl" "$R/usr/bin/pbos-game" \
   "$R/usr/lib/konkr/konkr-sleep" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-sleep-mode" \
-  "$R/usr/lib/konkr/konkr-focusfix" \
-  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" "$R/usr/lib/konkr/pbos-hostname" \
-  "$R/usr/lib/NetworkManager/dispatcher.d/60-konkr-timesync"
+  "$R/usr/lib/pbos/pbos-focusfix" \
+  "$R/usr/bin/pbos-apk" "$R/usr/lib/pbos/apk-info" "$R/usr/lib/pbos/pbos-hostname" \
+  "$R/usr/lib/NetworkManager/dispatcher.d/60-pbos-timesync"
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
-ln -sfn ../konkr-focusfix.service \
-  "$R/usr/lib/systemd/user/gamescope-session.target.wants/konkr-focusfix.service"
-# Android apps (konkr-apk + Lepton): .apk/.apkm/.xapk/.apks open in it, and
+ln -sfn ../pbos-focusfix.service \
+  "$R/usr/lib/systemd/user/gamescope-session.target.wants/pbos-focusfix.service"
+# Android apps (pbos-apk + Lepton): .apk/.apkm/.xapk/.apks open in it, and
 # ~/Android/Inbox auto-installs. /etc links vanish under the /etc overlay.
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
-ln -sfn ../konkr-apk-inbox.path \
-  "$R/usr/lib/systemd/user/default.target.wants/konkr-apk-inbox.path"
+ln -sfn ../pbos-apk-inbox.path \
+  "$R/usr/lib/systemd/user/default.target.wants/pbos-apk-inbox.path"
 # First login adds a Google Play Store title.
-ln -sfn ../konkr-android-setup.service \
-  "$R/usr/lib/systemd/user/default.target.wants/konkr-android-setup.service"
+ln -sfn ../pbos-android-setup.service \
+  "$R/usr/lib/systemd/user/default.target.wants/pbos-android-setup.service"
 # Lepton overlays (Play Store etc.) go to home: see "Android apps payload" below.
 chroot "$R" update-mime-database /usr/share/mime
 chroot "$R" update-desktop-database -q /usr/share/applications
@@ -628,7 +668,7 @@ chroot "$R" update-desktop-database -q /usr/share/applications
 mkdir -p "$R/usr/lib/systemd/system/sleep.target.wants"
 ln -sfn ../konkr-sleep.service "$R/usr/lib/systemd/system/sleep.target.wants/konkr-sleep.service"
 # SSH stays off, like on the Steam Deck: a public image should not listen on
-# every user's network. /etc/ssh/sshd_config.d/10-konkr.conf (password login
+# every user's network. /etc/ssh/sshd_config.d/10-pbos.conf (password login
 # for steamos, root off) applies once a user runs `passwd` and
 # `sudo systemctl enable --now sshd`. The build rootfs is reused, so drop a
 # link left by earlier builds.
@@ -637,8 +677,8 @@ rm -f "$R/usr/lib/systemd/system/multi-user.target.wants/sshd.service" \
   "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/sshd.service"
 # Discover: fetch the Flathub catalog (never downloaded on a fresh image).
 mkdir -p "$R/usr/lib/systemd/system/timers.target.wants"
-ln -sfn ../konkr-flatpak-appstream.timer \
-  "$R/usr/lib/systemd/system/timers.target.wants/konkr-flatpak-appstream.timer"
+ln -sfn ../pbos-flatpak-appstream.timer \
+  "$R/usr/lib/systemd/system/timers.target.wants/pbos-flatpak-appstream.timer"
 # Speaker volume curve (user session). Vendor wants dir: /etc links written at
 # runtime are not seen at boot on SteamOS (overlay mounted late).
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
@@ -664,7 +704,7 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
   mkdir -p "$R/var/lib/overlays/etc/upper/xdg"
   cp -f "$SM8650_OVL/etc/xdg/powerdevilrc" "$R/var/lib/overlays/etc/upper/xdg/powerdevilrc"
   mkdir -p "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d"
-  cp -f "$SM8650_OVL/etc/systemd/coredump.conf.d/10-konkr-sd.conf" \
+  cp -f "$SM8650_OVL/etc/systemd/coredump.conf.d/10-pbos-sd.conf" \
     "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/"
   cp -r "$SM8650_OVL/etc/inputplumber/." "$R/var/lib/overlays/etc/upper/inputplumber/" 2>/dev/null \
     || { mkdir -p "$R/var/lib/overlays/etc/upper/inputplumber"; cp -r "$SM8650_OVL/etc/inputplumber/." "$R/var/lib/overlays/etc/upper/inputplumber/"; }
@@ -672,7 +712,7 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
   # files (systemd warns about an executable coredump.conf) and 0700 dirs.
   chmod 0644 "$R/var/lib/overlays/etc/upper/pbosd.conf" \
     "$R/var/lib/overlays/etc/upper/xdg/powerdevilrc" \
-    "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/10-konkr-sd.conf"
+    "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/10-pbos-sd.conf"
   find "$R/var/lib/overlays/etc/upper/inputplumber" \
     \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
 fi
@@ -1122,23 +1162,23 @@ else
 fi
 mkdir -p "$HOME_DST"
 # Android apps payload: Lepton overlays (Play Store, keyboard, pad layout,
-# framework fixes; external-and-mods/konkr-android, binaries fetched/built,
-# not in git). ~210 MiB, kept off the root partition; konkr-apk reads it here
+# framework fixes; external-and-mods/pbos-android, binaries fetched/built,
+# not in git). ~210 MiB, kept off the root partition; pbos-apk reads it here
 # and the updater installs it like the bundled Decky plugins.
 # Release builds export the commit, which has only the payload's text files:
 # then the binaries come from this rootfs, the root copy earlier builds made
 # (moved here) or the home copy of the last build (kept).
-KAPAY="${ROOT}/external-and-mods/konkr-android/payload"
+KAPAY="${ROOT}/external-and-mods/pbos-android/payload"
 KADST="$HOME_DST/.local/share/konkr-android"
 KAOLD="$R/usr/share/konkr-android"
 PHONESKY=common/system/product/priv-app/Phonesky/Phonesky.apk
 if [[ -f "$KAPAY/$PHONESKY" ]]; then
   rm -rf "$KADST"
 elif [[ -f "$KAOLD/$PHONESKY" ]]; then
-  log "konkr-android payload: moved from /usr/share/konkr-android"
+  log "Android apps payload: moved from /usr/share/konkr-android"
   rm -rf "$KADST"; mkdir -p "${KADST%/*}"; cp -a "$KAOLD" "$KADST"
 elif [[ -f "$KADST/$PHONESKY" ]]; then
-  log "konkr-android payload: kept from the last build"
+  log "Android apps payload: kept from the last build"
 fi
 rm -rf "$KAOLD"
 if [[ -f "$KAPAY/$PHONESKY" || -f "$KADST/$PHONESKY" ]]; then
@@ -1150,7 +1190,7 @@ if [[ -f "$KAPAY/$PHONESKY" || -f "$KADST/$PHONESKY" ]]; then
   # Valve's prebaked dalvik-cache files are 0755; keep ours the same.
   find "$KADST" -path '*/data/dalvik-cache/*' -type f -exec chmod 0755 {} +
 else
-  log "WARN: no konkr-android payload (external-and-mods/konkr-android/build-payload.sh); Android apps will lack the Play Store and fixes"
+  log "WARN: no Android apps payload (external-and-mods/pbos-android/build-payload.sh); Android apps will lack the Play Store and fixes"
 fi
 # Copy plugin tree (resolve lsfg .so symlink into a real file if needed)
 # .local/lib/liblsfg-vk.so is a link to the SM8550 builder's host library;
@@ -1456,7 +1496,7 @@ log "== source permissions"
 # exFAT HDD has 0700 dirs and 0600 files. gamescope runs as steamos: with an
 # unreadable /usr/share/gamescope/scripts it never defines debug(), the
 # KONKR display script aborts it and Game Mode is a black screen.
-for d in usr/share usr/local/share usr/lib/konkr usr/lib/steamos etc/gamescope etc/inputplumber; do
+for d in usr/share usr/local/share usr/lib/konkr usr/lib/pbos usr/lib/steamos etc/gamescope etc/inputplumber; do
   [[ -d "$R/$d" ]] || continue
   find "$R/$d" -xdev \( -path '*/guestos' -o -path '*/factory/root' \) -prune -o \
     -type d \( ! -perm -o=rx -o ! -perm -u=x \) -exec chmod u+rwx,go+rx {} + -o \
@@ -1484,7 +1524,7 @@ log "== summary"
   echo "Odin 2 Portal pad maps: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_odin2portal.yaml" 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
   echo "Odin 2 Mini pad map: $(grep capability_map_id "$R/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml" 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
   echo "Retroid pad maps: $(grep -h capability_map_id "$R"/usr/share/inputplumber/devices/50-retroid_pocket{6,_nova}.yaml 2>/dev/null | sort -u | tr -s ' \n' ' ' || echo missing)"
-  echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing), $(stat -c %a "$R/usr/lib/konkr/pbos-hostname" 2>/dev/null || echo missing)"
+  echo "pbos-hostname: $(readlink "$R/usr/lib/systemd/system/sysinit.target.wants/pbos-hostname.service" 2>/dev/null || echo missing), $(stat -c %a "$R/usr/lib/pbos/pbos-hostname" 2>/dev/null || echo missing)"
   echo "home:      $(find "$HOME_DST" -maxdepth 3 -printf '%p\n' | head -40)"
 } | tee -a "$LOG"
 

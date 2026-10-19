@@ -3,7 +3,7 @@
 # /data/local/tmp/services.jar. Rebuilds everything that embeds the
 # services.jar checksum: services.{odex,vdex,art}, ethernet-service.{odex,vdex}
 # and the system_server apex jars Valve prebakes into /data/dalvik-cache.
-# Output: /data/local/tmp/out/ laid out like the konkr overlay.
+# Output: /data/local/tmp/out/ laid out like the pbos-android payload.
 set -e
 export ANDROID_ROOT=/system ANDROID_ART_ROOT=/apex/com.android.art ANDROID_I18N_ROOT=/apex/com.android.i18n \
        ANDROID_TZDATA_ROOT=/apex/com.android.tzdata ANDROID_DATA=/data

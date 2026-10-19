@@ -16,6 +16,6 @@ git -C "$SRC" apply "$CACHE/0004-touchscreen-as-trackpad.patch"
 git -C "$SRC" apply "$CACHE/0005-stable-unit-serial.patch"
 git -C "$SRC" apply "$CACHE/0006-evdev-motion-sensors.patch"
 (cd "$SRC" && cargo +1.93.1 build --release --locked -j"${BUILD_JOBS:-4}")
-install -m755 "$SRC/target/release/inputplumber" "$CACHE/inputplumber-0.81.0-konkr"
-(cd "$CACHE" && sha256sum inputplumber-0.81.0-konkr > inputplumber-0.81.0-konkr.sha256)
+install -m755 "$SRC/target/release/inputplumber" "$CACHE/inputplumber-0.81.0-pbos"
+(cd "$CACHE" && sha256sum inputplumber-0.81.0-pbos > inputplumber-0.81.0-pbos.sha256)
 echo 'Verify this binary against the target rootfs before release.'

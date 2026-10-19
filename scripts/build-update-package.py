@@ -142,7 +142,7 @@ def tree_state(base, hashes=None):
     return entries
 
 
-# Android apps payload (Lepton overlays for konkr-apk): in home, not on the root
+# Android apps payload (Lepton overlays for pbos-apk): in home, not on the root
 # partition. Packages carry it like the bundled plugins; deltas only when it changed.
 ANDROID = 'home/steamos/.local/share/konkr-android'
 
@@ -262,7 +262,7 @@ if a.base_state:
     cumulative = [feature] + patches
 elif release_base != version:
     raise SystemExit(f'the rootfs is a patch of {release_base}: give --base-state (and --patch-state)')
-with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as temp:
+with tempfile.TemporaryDirectory(prefix='pbos-package-', dir=output.parent) as temp:
     stage = Path(temp) / 'full'
     def copy(src, dst):
         dst.mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${HERE}/payload/common"
-CACHE="${KONKR_ANDROID_CACHE:-${HERE}/.cache}"
+CACHE="${PBOS_ANDROID_CACHE:-${HERE}/.cache}"
 MTG11="https://github.com/MindTheGapps/11.0.0-arm64/releases/download/MindTheGapps-11.0.0-arm64-20230922_081122/MindTheGapps-11.0.0-arm64-20230922_081122.zip"
 MTG14="https://github.com/MindTheGapps/14.0.0-arm64/releases/download/MindTheGapps-14.0.0-arm64-20250203_200051/MindTheGapps-14.0.0-arm64-20250203_200051.zip"
 KBD_VERSION=148

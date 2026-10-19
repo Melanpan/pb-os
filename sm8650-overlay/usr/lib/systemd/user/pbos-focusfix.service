@@ -5,7 +5,7 @@ After=gamescope-session.service
 ConditionUser=!root
 
 [Service]
-ExecStart=/usr/lib/konkr/konkr-focusfix :0
+ExecStart=/usr/lib/pbos/pbos-focusfix :0
 Restart=always
 RestartSec=2
 

@@ -1,0 +1,8 @@
+[Unit]
+Description=Android (Lepton) for pbos-apk apps
+
+[Service]
+ExecStart=/usr/bin/pbos-apk daemon
+# SIGTERM only to pbos-apk, which has Lepton kill its container cleanly.
+KillMode=mixed
+TimeoutStopSec=30
