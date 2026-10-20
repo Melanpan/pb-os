@@ -24,14 +24,14 @@ After installation or a failed attempt:
 
 - **Android may not boot** until you perform a **factory data reset** from recovery (expected after userdata wipe).
 - **Linux may not boot** from microSD or from internal UFS if the kernel, partitions, or cmdline are wrong (black screen, hang, etc.).
-- **Both systems can fail** at the same time, leaving the device unusable without recovery steps (recovery mode, SD boot, ABL “UNINSTALL CFW”, EDL flash, etc.).
+- **Both systems can fail** at the same time, leaving the device unusable without recovery steps (recovery mode, SD boot, OpenABL “Uninstall CFW” (which also erases Android user data), EDL flash, etc.).
 
 ## Requirements (your responsibility)
 
-- **ROCKNIX ABL** already installed and working (1.1.8 or compatible).
+- **OpenABL** already installed and working (`openabl/README` on the SD card).
 - Boot **SteamOS from microSD** (not from UFS) when running the installer.
 - A **`/boot/KERNEL`** from this project's SD image whose initramfs understands `root=PARTLABEL=` (the installer checks this).
-- Correct **ABL device profile** (“Set the Device” → your exact model).
+- Correct OpenABL **Device model** (your exact model).
 
 ## No warranty
 
@@ -59,7 +59,7 @@ If you do not agree, **do not run the installer**.
 
 ## Other UFS layouts
 
-These scripts target the **SteamOS three-partition layout** (`ROCKNIX` + `STORAGE` + `HOME`). They will **refuse** an old two-partition `ROCKNIX` + `STORAGE` install. Use ABL **UNINSTALL CFW** (and remove a leftover `HOME` if needed) before a fresh install.
+These scripts target the **SteamOS three-partition layout** (`ROCKNIX` + `STORAGE` + `HOME`). They will **refuse** an old two-partition `ROCKNIX` + `STORAGE` install. Use OpenABL **Uninstall CFW** (and remove a leftover `HOME` if needed) before a fresh install; it also erases Android's user data.
 
 ## License
 

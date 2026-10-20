@@ -136,13 +136,13 @@ class MainWindow(Gtk.Window):
             "STORAGE OF YOUR DEVICE</b></span>\n\n"
             + GLib.markup_escape_text(
                 "This tool repartitions internal UFS and installs SteamOS alongside Android "
-                "(ROCKNIX ABL: ROCKNIX boot + STORAGE root + HOME).\n\n"
+                "(ROCKNIX boot + STORAGE root + HOME, started by OpenABL).\n\n"
                 "• Android userdata will be ERASED (factory-reset style).\n"
                 "• The old partition table is saved to the SD card first (/boot/ufs-backup), "
                 "so the space can be given back to Android later.\n"
                 "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
                 "• Run this from microSD Linux, not from an already-installed UFS root.\n"
-                "• Keep ROCKNIX ABL installed and a working /boot/KERNEL on the SD.\n\n"
+                "• Keep OpenABL installed and a working /boot/KERNEL on the SD.\n\n"
                 "STEAMOS PASSWORD: official SteamOS ships with no user password. "
                 "Create one later (passwd in Konsole, or Users in System Settings). "
                 "This installer asks for that password (pkexec/sudo). "
@@ -304,7 +304,7 @@ class MainWindow(Gtk.Window):
                     self._append("Running from internal storage: boot the SD card to install.")
                 elif info.get("MODE") == "occupied":
                     self._append(f"Other partitions follow userdata ({info.get('OCCUPIED')}). "
-                                 "Remove them in the ABL menu (UNINSTALL CFW) first.")
+                                 "Remove them in the OpenABL menu (Uninstall CFW, which also erases Android's user data) first.")
                 mn = int(info["MIN_ANDROID_GIB"])
                 mx = int(info["MAX_ANDROID_GIB"])
                 rec = int(info["RECOMMENDED_ANDROID_GIB"])
@@ -316,7 +316,7 @@ class MainWindow(Gtk.Window):
                 if existing:
                     extra = " (SteamOS already installed — use SteamOS Update; reinstall erases internal games and saves)"
                 elif old_two:
-                    extra = " (old 2-partition ROCKNIX+STORAGE — UNINSTALL CFW before a fresh SteamOS install)"
+                    extra = " (old 2-partition ROCKNIX+STORAGE — OpenABL Uninstall CFW before a fresh SteamOS install)"
                 self.status.set_text(
                     f"UFS {info.get('DEVICE')} · total ~{info.get('DISK_TOTAL_GIB')} GB · "
                     f"userdata now ~{info.get('ORIG_ANDROID_GIB')} GB · "
@@ -451,15 +451,17 @@ class MainWindow(Gtk.Window):
                     self.progress.set_fraction(1.0)
                     self.progress.set_text("Done")
                     self.step_label.set_markup("<b>Installation complete.</b>")
-                    self.status.set_text("Install finished. Power off, remove the SD card, then in the ABL menu set Boot source to Internal and boot Linux.")
+                    self.status.set_text("Install finished. Power off, remove the SD card, then in the OpenABL menu set Boot source to Internal (or Auto) and Start.")
                     self._message(
                         Gtk.MessageType.INFO, "SteamOS is installed on internal storage",
                         "Next:\n"
                         "1. Power off the device and remove the microSD card.\n"
-                        "2. Hold Volume Down while powering on to open the ABL menu.\n"
-                        "3. Set Boot source to Internal, then boot Linux.\n\n"
-                        "Android is still in the same menu; it sets itself up again "
+                        "2. Hold Volume Down while powering on to open the OpenABL menu.\n"
+                        "3. Set Boot source to Internal (or Auto), Boot mode to Linux, then Start.\n\n"
+                        "Android: hold Volume Up while powering on. It sets itself up again "
                         "because its user data was erased.\n\n"
+                        "Never pick Uninstall CFW in the OpenABL menu: it erases this install "
+                        "and Android's user data.\n\n"
                         f"The full log is saved as {log_path}.")
                     return
                 # Put a copy where it's easy to find and attach to a report.
@@ -482,7 +484,8 @@ class MainWindow(Gtk.Window):
                        if state["step"] < 2 else
                        "Internal storage was already being changed, so it may be "
                        "partly installed. Android may not boot until this is fixed; "
-                       "the ABL menu's UNINSTALL CFW removes the Linux partitions, "
+                       "the OpenABL menu's Uninstall CFW removes the Linux partitions "
+                       "(and Android's user data), "
                        "and the old partition table is saved on the SD card in "
                        "/boot/ufs-backup.")
                     + (f"\n\nThe full log is saved on the desktop as {saved.name}."

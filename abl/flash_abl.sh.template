@@ -1,6 +1,36 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# From ROCKNIX (https://github.com/ROCKNIX/abl), (c) ROCKNIX contributors.
+# Writes OpenABL (abl_signed-%DEVICE%.elf) to both ABL slots, the inactive
+# slot first, and reads each slot back before going on. Refuses to start
+# without both backups from backup_abl.sh or when the file's hash is wrong.
+# After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
+# projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
 
-dd if="/sdcard/rocknix_abl/%DEVICE%/abl_signed-%DEVICE%.elf" of=/dev/block/by-name/abl_a bs=1M
-dd if="/sdcard/rocknix_abl/%DEVICE%/abl_signed-%DEVICE%.elf" of=/dev/block/by-name/abl_b bs=1M
+dir="/sdcard/openabl/%DEVICE%"
+elf="$dir/abl_signed-%DEVICE%.elf"
+
+for s in a b; do
+  if [ ! -s "$dir/abl_$s.img" ]; then
+    echo "No abl_$s.img in $dir: run backup_abl.sh first. Nothing written." >&2
+    exit 1
+  fi
+done
+want="$(cut -d' ' -f1 "$elf.sha256")"
+size="$(wc -c <"$elf" | tr -d ' ')"
+if [ -z "$want" ] || [ "$(sha256sum "$elf" | cut -d' ' -f1)" != "$want" ]; then
+  echo "abl_signed-%DEVICE%.elf does not match its .sha256: copy the folder again. Nothing written." >&2
+  exit 1
+fi
+
+case "$(getprop ro.boot.slot_suffix 2>/dev/null)" in
+  _b) order="a b" ;;
+  *) order="b a" ;;
+esac
+for s in $order; do
+  dd if="$elf" of="/dev/block/by-name/abl_$s" bs=1M || exit 1
+  if [ "$(head -c "$size" "/dev/block/by-name/abl_$s" | sha256sum | cut -d' ' -f1)" != "$want" ]; then
+    echo "abl_$s read back wrong. Do not reboot: run restore_backup_abl.sh." >&2
+    exit 1
+  fi
+  echo "abl_$s: OpenABL written and read back."
+done

@@ -2,8 +2,9 @@
 
 Moves the SteamOS you're running from the microSD card onto the internal
 storage, next to Android. For the KONKR Pocket FIT (and the AYANEO Pocket S2,
-untested) with ROCKNIX ABL 1.1.8 or newer, and the Snapdragon 8 Gen 2
-handhelds (Retroid Pocket 6; AYN Thor untested) with ROCKNIX ABL. The Retroid
+untested) and the Snapdragon 8 Gen 2 handhelds (Retroid Pocket 6; AYN Thor
+untested) with [OpenABL](https://github.com/OpenHandheldCollective/OpenABL)
+(`openabl/README` on the SD card). The Retroid
 Pocket 6 and the KONKR Pocket FIT have been running from internal storage for
 several days.
 
@@ -32,10 +33,16 @@ or on failure the error and whether internal storage was already changed. The
 log is saved as `~/easy-ufs-install-<date>.log`; after a failure a copy goes
 on the desktop.
 
-When it's done: power off and take the SD card out. In the ABL menu (hold
-Volume Down at power-on) set **Boot source** to **Internal**, then boot Linux.
-With Boot source left on SD, the ABL stops at "no volumes match boot source".
-Android is still in the same menu.
+When it's done: power off and take the SD card out. In the OpenABL menu
+(hold Volume Down at power-on) set **Boot source** to **Internal** (or
+**Auto**, which starts internal storage first) and **Boot mode** to **Linux**,
+then **Start**. With Boot source left on **SD card** and no card in, nothing
+boots and the menu opens to show why. Android: hold Volume Up at power-on, or
+set **Boot mode** to **Android**.
+
+> **Never pick Uninstall CFW** in the OpenABL menu unless you want PB-OS
+> gone: it erases the internal install (`ROCKNIX`, `STORAGE`, `HOME`) **and
+> Android's user data**.
 
 You pick how much of the SD's `/home` comes along:
 
@@ -62,7 +69,8 @@ sudo copy-to-sd.sh --home essentials
 
 It unmounts the card the way SteamOS's own Format does, holding the
 auto-mounter's locks so nothing remounts mid-copy, and stops if a game still
-uses the card. Then set **Boot source** to **SD** in the ABL menu.
+uses the card. Then set **Boot source** to **SD card** in the OpenABL menu
+(with **Auto**, internal storage starts first).
 
 ## Reinstall versus update
 
@@ -77,7 +85,7 @@ after:   ... | userdata (you pick) | ROCKNIX 2G | STORAGE 20G | HOME |
 
 - Nothing before `userdata` is touched. `userdata` keeps its start, type, GUID
   and attributes; only its end moves.
-- `ROCKNIX` (FAT32) holds the `KERNEL` the ABL boots, `STORAGE` is `/`,
+- `ROCKNIX` (FAT32) holds the `KERNEL` OpenABL boots, `STORAGE` is `/`,
   `HOME` is `/home`. Everything is mounted by partition name, so the internal
   install doesn't depend on the SD card.
 
@@ -87,7 +95,8 @@ after:   ... | userdata (you pick) | ROCKNIX 2G | STORAGE 20G | HOME |
   and only if the partition table still matches what was shown to you.
 - It refuses to run from internal storage, if anything on `userdata` is in
   use, or if anything other than its own partitions follows `userdata`
-  (remove those with **UNINSTALL CFW** in the ABL menu first).
+  (remove those with **Uninstall CFW** in the OpenABL menu first; it also
+  erases Android's user data).
 - The whole new table is written in one go and checked against the plan,
   both on disk and in the kernel's view, before anything is formatted.
 - The KERNEL is the SD card's own, with only `root=` changed and its header
@@ -104,7 +113,8 @@ sudo ufs-partition.py restore --backup /boot/ufs-backup/ufs-gpt-<date>.sfdisk
 ```
 
 `userdata` gets its full size back and Android sets itself up again on its
-next boot. **UNINSTALL CFW** in the ABL menu also removes the Linux partitions.
+next boot. **Uninstall CFW** in the OpenABL menu also removes the Linux
+partitions, and erases Android's user data as well.
 
 ## If internal Linux doesn't boot
 

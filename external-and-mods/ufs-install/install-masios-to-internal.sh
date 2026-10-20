@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Install the SteamOS running from the microSD card to internal UFS.
 # SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6,
-# AYN Thor) with ROCKNIX ABL.
+# AYN Thor) with OpenABL.
 #
 #   ... | userdata (Android, you pick) | ROCKNIX 2G | STORAGE 20G | HOME (rest) |
 #
@@ -68,7 +68,7 @@ for t in sfdisk mkfs.vfat mkfs.ext4 rsync findmnt lsblk python3 md5sum blockdev;
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 
-# Both SoCs use the same ROCKNIX ABL layout (userdata, then ROCKNIX + STORAGE).
+# Both SoCs use the same layout (userdata, then ROCKNIX + STORAGE + HOME).
 tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)' \
   || die "this installer is for SM8650 (KONKR Pocket FIT, AYANEO Pocket S2) and SM8550 (Retroid Pocket 6 and Nova, AYN Thor) devices"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
@@ -106,7 +106,7 @@ case "$P_MODE" in
   installed)
     (( RESUME )) || die "SteamOS partitions already exist. Use SteamOS Update to preserve games and saves. --resume reformats system and HOME, erasing internal user data. For a fresh install, remove them first in the ABL menu (UNINSTALL CFW)." ;;
   occupied)
-    die "unknown partitions after userdata (${P_OCCUPIED}). Remove them with the ABL menu (UNINSTALL CFW) first; nothing was changed." ;;
+    die "unknown partitions after userdata (${P_OCCUPIED}). Remove them with the OpenABL menu (Uninstall CFW, which also erases Android user data) first; nothing was changed." ;;
   toosmall)
     die "not enough room after userdata for SteamOS" ;;
   *) die "unexpected disk state ${P_MODE}" ;;
@@ -256,10 +256,10 @@ cmp -s <(printf '%s' "$FSTAB") "$WORK/root/etc/fstab" || die "fstab not written"
 cleanup
 echo
 log "done. SteamOS is on internal storage."
-echo "  - Power off and take out the SD card. In the ABL menu (hold Volume Down at power-on),"
-echo "    set Boot source to Internal, then boot Linux. With Boot source on SD it stops at"
-echo "    \"no volumes match boot source\"."
-echo "  - Android: pick it in the ABL menu; it sets itself up again (userdata was erased)."
+echo "  - Power off and take out the SD card. In the OpenABL menu (hold Volume Down at power-on),"
+echo "    set Boot source to Internal (or Auto), Boot mode to Linux, then Start."
+echo "  - Android: hold Volume Up at power-on; it sets itself up again (userdata was erased)."
+echo "  - Never pick Uninstall CFW in the OpenABL menu: it erases this install AND Android's data."
 if (( ! RESUME )); then
   echo "  - Old partition table: $BACKUP_DIR on the SD card (a copy is in /home/.ufs-backup)."
   echo "    To give the space back to Android, boot the SD card and run:"

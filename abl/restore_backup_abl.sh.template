@@ -1,6 +1,22 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# From ROCKNIX (https://github.com/ROCKNIX/abl), (c) ROCKNIX contributors.
+# Puts the ABL saved by backup_abl.sh (abl_a.img, abl_b.img) back on both
+# slots and reads each slot back.
+# After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
+# projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
 
-dd if="/sdcard/rocknix_abl/%DEVICE%/abl_a.img" of=/dev/block/by-name/abl_a bs=1M
-dd if="/sdcard/rocknix_abl/%DEVICE%/abl_b.img" of=/dev/block/by-name/abl_b bs=1M
+dir="/sdcard/openabl/%DEVICE%"
+for s in a b; do
+  if [ ! -s "$dir/abl_$s.img" ]; then
+    echo "No abl_$s.img in $dir. Nothing written." >&2
+    exit 1
+  fi
+done
+for s in a b; do
+  dd if="$dir/abl_$s.img" of="/dev/block/by-name/abl_$s" bs=1M || exit 1
+  if ! cmp "$dir/abl_$s.img" "/dev/block/by-name/abl_$s"; then
+    echo "abl_$s read back wrong: run restore_backup_abl.sh again before rebooting." >&2
+    exit 1
+  fi
+  echo "abl_$s restored and read back."
+done

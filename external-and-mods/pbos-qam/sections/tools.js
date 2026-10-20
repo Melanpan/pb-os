@@ -375,10 +375,11 @@ function MoveProgress({ st, onBack }) {
     if (ok) {
         items.push(row(jsx("div", { style: { fontWeight: "bold" }, children: toSd ? "SteamOS is on the microSD card." : "SteamOS is on internal storage." })));
         items.push(toSd
-            ? note("Power off and keep the card in. Hold Volume Down at power-on for the ABL menu, set Boot source to SD, "
-                + "then boot Linux. Boot source Internal still starts the internal install, which is unchanged.")
-            : note("Power off and take out the microSD card. Hold Volume Down at power-on for the ABL menu, set Boot source "
-                + "to Internal, then boot Linux. Android is in the same menu; it sets itself up again."));
+            ? note("Power off and keep the card in. Hold Volume Down at power-on for the OpenABL menu, set Boot source to SD card, "
+                + "then Start. Boot source Auto or Internal still starts the internal install, which is unchanged.")
+            : note("Power off and take out the microSD card. Hold Volume Down at power-on for the OpenABL menu, set Boot source "
+                + "to Internal (or Auto), Boot mode to Linux, then Start. Android: hold Volume Up at power-on; it sets itself up again. "
+                + "Never pick Uninstall CFW there: it erases this install and Android's user data."));
         items.push(row(jsx(DFL.ButtonItem, {
             layout: "below",
             onClick: () => DFL.showModal(jsx(DFL.ConfirmModal, {
@@ -398,8 +399,8 @@ function MoveProgress({ st, onBack }) {
                 : "Nothing was written: the card and internal storage are as they were."));
         } else {
             items.push(note(job.step >= 2
-                ? "Internal storage was already being changed, so Android may not boot until this is fixed. The ABL "
-                    + "menu's UNINSTALL CFW removes the Linux partitions; the old partition table is on the card in /boot/ufs-backup."
+                ? "Internal storage was already being changed, so Android may not boot until this is fixed. The OpenABL "
+                    + "menu's Uninstall CFW removes the Linux partitions (and Android's user data); the old partition table is on the card in /boot/ufs-backup."
                 : "The installer stopped before changing internal storage."));
         }
     }
@@ -486,7 +487,7 @@ function InstallTab() {
             items.push(note("SteamOS is already on internal storage. Updates there keep games and saves; reinstalling "
                 + "would erase them, so it isn't offered here."));
         } else if (p.MODE === "occupied") {
-            items.push(warn(`Other partitions follow Android's (${p.OCCUPIED}). Remove them first with UNINSTALL CFW in the ABL menu.`), again);
+            items.push(warn(`Other partitions follow Android's (${p.OCCUPIED}). Remove them first with Uninstall CFW in the OpenABL menu (it also erases Android's user data).`), again);
         } else if (p.MODE === "toosmall") {
             items.push(failure("Internal storage has too little room after Android for SteamOS."));
         } else if (p.MODE === "fresh") {

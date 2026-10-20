@@ -1,6 +1,16 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# From ROCKNIX (https://github.com/ROCKNIX/abl), (c) ROCKNIX contributors.
+# Saves both ABL slots (abl_a, abl_b) as abl_a.img and abl_b.img next to this
+# script, then reads each slot again and compares it with its copy.
+# After ROCKNIX's OpenABL scripts (https://github.com/ROCKNIX/distribution,
+# projects/ROCKNIX/packages/tools/openabl), (c) ROCKNIX contributors.
 
-dd if=/dev/block/by-name/abl_a of="/sdcard/rocknix_abl/%DEVICE%/abl_a.img" bs=1M
-dd if=/dev/block/by-name/abl_b of="/sdcard/rocknix_abl/%DEVICE%/abl_b.img" bs=1M
+dir="/sdcard/openabl/%DEVICE%"
+for s in a b; do
+  dd if="/dev/block/by-name/abl_$s" of="$dir/abl_$s.img" bs=1M || exit 1
+  if ! cmp "$dir/abl_$s.img" "/dev/block/by-name/abl_$s"; then
+    echo "abl_$s.img does not match abl_$s: run backup_abl.sh again" >&2
+    exit 1
+  fi
+done
+echo "Backed up abl_a and abl_b to $dir. Copy abl_a.img and abl_b.img to your PC."

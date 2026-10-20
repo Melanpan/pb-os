@@ -17,9 +17,9 @@
 #
 # Output: output/<release>/{boot/KERNEL, modules/<release>, firmware/}
 #
-# KERNEL is a ROCKNIX-ABL bootimg (header v0): gzip(Image) + appended DTBs
-# + a busybox initramfs (initramfs/init). ABL v1.1.8+ reads `model` from each
-# DTB and boots the one matching "Set device model" (e.g. "KONKR Pocket FIT").
+# KERNEL is an Android boot image (header v0): gzip(Image) + appended DTBs
+# + a busybox initramfs (initramfs/init). OpenABL reads `model` from each
+# DTB and boots the one matching its "Device model" (e.g. "KONKR Pocket FIT").
 # The image builder patches the real root=PARTUUID= into the cmdline.
 #
 # Must run on aarch64 Linux (native build). Tested host: Ubuntu 24.04 in Colima.
@@ -50,7 +50,7 @@ TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 # Port patches, DTS appends and the extra config fragment are per SoC: the
 # SM8650 ones are Pocket FIT drivers (KONKR MCU, AR14 panel modes).
 DTBS_SM8650="sm8650-ayaneo-ps2 sm8650-konkr-pf"
-# ABL boots the DTB whose model matches "Set device model": "AYN Odin 2",
+# OpenABL boots the DTB whose model matches "Device model": "AYN Odin 2",
 # "AYN Odin 2 Mini", "AYN Odin 2 Portal", "AYN Thor", "Retroid Pocket 6",
 # "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova" (ROCKNIX's Nova DTS is
 # the RP6 one with its own panel, touch and sticks).

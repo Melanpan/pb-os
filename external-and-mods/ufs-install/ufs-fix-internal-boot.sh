@@ -138,12 +138,13 @@ main() {
   case "$LAYOUT" in
     old-2part)
       die "Old two-partition layout (ROCKNIX + STORAGE, no HOME).
-Reinstall with the SteamOS 3-partition installer after ABL 'UNINSTALL CFW'."
+Reinstall with the SteamOS 3-partition installer after OpenABL 'Uninstall CFW'
+(it also erases Android user data)."
       ;;
     incompatible-or-partial)
       die "Incompatible or partial UFS layout. Expected ROCKNIX + STORAGE + HOME.
 Re-run: sudo ./install-masios-to-internal.sh --deploy-only
-Or use ABL 'UNINSTALL CFW' before a fresh install."
+Or use OpenABL 'Uninstall CFW' (also erases Android user data) before a fresh install."
       ;;
     none)
       die "No SteamOS / ROCKNIX internal partitions found."

@@ -72,7 +72,7 @@ echo
 echo "--- Detected layout: ${LAYOUT} ---"
 case "$LAYOUT" in
   steamos-3part)
-    echo "  SteamOS / ROCKNIX ABL (3 Linux partitions):"
+    echo "  SteamOS / OpenABL (3 Linux partitions):"
     echo "    ROCKNIX  = boot / KERNEL  (${RK})"
     echo "    STORAGE  = SteamOS root   (${ST})"
     echo "    HOME     = /home          (${HM})"
@@ -81,7 +81,7 @@ case "$LAYOUT" in
     echo "  Older ROCKNIX-style (2 Linux partitions, no HOME):"
     echo "    ROCKNIX  = boot / KERNEL  (${RK})"
     echo "    STORAGE  = Linux rootfs  (${ST})"
-    echo "  This SteamOS installer will not reuse that layout. UNINSTALL CFW first."
+    echo "  This SteamOS installer will not reuse that layout. OpenABL 'Uninstall CFW' first."
     ;;
   incompatible-or-partial)
     echo "  ROCKNIX present but STORAGE/HOME missing, or layout is incomplete."
@@ -178,12 +178,12 @@ case "$LAYOUT" in
   old-2part)
     echo "  Expected layout:    ROCKNIX + STORAGE + HOME"
     echo "  This device has:    ROCKNIX + STORAGE only"
-    echo "  Action:             ABL 'UNINSTALL CFW', then fresh SteamOS UFS install"
+    echo "  Action:             OpenABL 'Uninstall CFW', then fresh SteamOS UFS install"
     ;;
   incompatible-or-partial|mixed-or-unknown)
     echo "  Expected layout:    ROCKNIX + STORAGE + HOME"
     echo "  Partial install:    sudo ./install-masios-to-internal.sh --deploy-only"
-    echo "  Other layouts:      ABL 'UNINSTALL CFW' (remove leftover HOME if needed)"
+    echo "  Other layouts:      OpenABL 'Uninstall CFW' (also erases Android user data)"
     echo "  Boot/cmdline fix:   only if ROCKNIX + STORAGE + HOME already exist"
     ;;
   android-only)
@@ -193,6 +193,6 @@ esac
 echo
 echo "  Restore full Android userdata size (expand partition):"
 echo "    NOT done by ufs-fix-internal-boot.sh"
-echo "    Use ABL 'UNINSTALL CFW' OR EDL flash"
-echo "    ABL Uninstall may leave HOME; delete that partition if it remains."
+echo "    Use OpenABL 'Uninstall CFW' (also erases Android user data) OR EDL flash"
+echo "    OpenABL removes every partition after userdata and grows userdata back."
 echo "================================================================"

@@ -6,7 +6,7 @@
 #
 #   | BOOT 512M (FAT, KERNEL) | root (ext4) | home (ext4, rest of the card) |
 #
-# and boots with Boot source set to SD in the ABL menu. Internal storage is
+# and boots with Boot source set to SD card in the OpenABL menu. Internal storage is
 # only read; the card is erased.
 #
 # Usage (from SteamOS on internal storage, as root):
@@ -75,7 +75,7 @@ for t in sfdisk wipefs mkfs.vfat mkfs.ext4 rsync findmnt lsblk python3 md5sum bl
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qxE 'qcom,sm(8650|8550)' \
-  || die "this tool is for SM8650 and SM8550 devices with ROCKNIX ABL"
+  || die "this tool is for SM8650 and SM8550 devices with OpenABL"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 ROOT_SRC="$(findmnt -no SOURCE /)"
@@ -273,7 +273,7 @@ esac
 copy_home "$HOME_MODE" "$WORK/home"
 
 log "installing KERNEL (root=PARTUUID=${DISK_ID}-02)"
-# Whatever else is on the ROCKNIX partition (rocknix_abl, README) comes along.
+# Whatever else is on the ROCKNIX partition (openabl or older rocknix_abl, README) comes along.
 rsync -r --exclude=/KERNEL --exclude=/KERNEL.md5 /boot/ "$WORK/boot/"
 "${BOOTIMG[@]}" retarget /boot/KERNEL "$WORK/boot/KERNEL" --root "PARTUUID=${DISK_ID}-02" >/dev/null
 (cd "$WORK/boot" && md5sum KERNEL >KERNEL.md5)
@@ -299,6 +299,6 @@ cmp -s <(printf '%s' "$FSTAB") "$WORK/root/etc/fstab" || die "fstab not written"
 cleanup
 echo
 log "done. SteamOS is on the microSD card."
-echo "  - Power off and keep the card in. In the ABL menu (hold Volume Down at power-on),"
-echo "    set Boot source to SD, then boot Linux. Boot source Internal still starts the"
-echo "    internal install, which is unchanged."
+echo "  - Power off and keep the card in. In the OpenABL menu (hold Volume Down at power-on),"
+echo "    set Boot source to SD card, then Start. Boot source Auto or Internal still starts"
+echo "    the internal install, which is unchanged."

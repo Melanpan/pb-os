@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal Android boot image (header v0) writer for ROCKNIX ABL.
+"""Minimal Android boot image (header v0) writer for OpenABL (ROCKNIX ABL before it).
 
 Same layout ROCKNIX produces with AOSP mkbootimg.py:
   --kernel_offset 0 --ramdisk_offset 0 --tags_offset 0 --header_version 0

@@ -99,10 +99,11 @@ def userdata(t: dict) -> dict:
 
 
 def leftovers(t: dict) -> list[dict]:
-    """Entries the ABL's UNINSTALL CFW leaves behind: it grows userdata back
+    """Entries ROCKNIX ABL's UNINSTALL CFW left behind: it grows userdata back
     over our partitions but keeps their GPT slots, nameless and inside
     userdata, with an all-zero type (GPT's "unused entry"). Nothing can use
-    them, so they are dropped."""
+    them, so they are dropped. OpenABL's Uninstall CFW zeroes those entries
+    instead, so after it there are none."""
     ud = userdata(t)
     end = ud["start"] + ud["size"]
     return [p for p in t["partitions"]

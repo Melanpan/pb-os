@@ -92,7 +92,9 @@ The full list, with what came from where, is in [CREDITS.md](CREDITS.md).
 - **[MaSi](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550)**: the image
   builder and SteamOS ARM overlay the project grew from.
 - **[ROCKNIX](https://github.com/ROCKNIX/distribution)**: kernel recipes,
-  device trees, drivers, firmware and [ROCKNIX ABL](https://github.com/ROCKNIX/abl).
+  device trees, drivers and firmware.
+- **[OpenABL](https://github.com/OpenHandheldCollective/OpenABL)** (Open
+  Handheld Collective): the boot menu PB-OS starts from.
 - **[Armada](https://github.com/armada-os/armada)**: SM8550 sleep and GPU
   patches, fan curves, device-tree fixes and gamescope lease patches
   (virtudude).
