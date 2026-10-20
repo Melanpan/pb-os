@@ -124,6 +124,22 @@ patch("liblepton/mounting.sh",
        '        podman_cmdline --ulimit stack=-1:-1\n'
        '    fi\n'))
 
+# gamescope gives the Android window a Steam app id only when the window
+# pid's cgroup names konkr-android.service (see get_container_appid in the
+# fork). Lepton only sets --cgroup-parent for Android >= 12; on 11 it takes
+# --cgroupns=private, and podman's own libpod-<hash>.scope carries no name to
+# match, so the window stays app id 0 and Steam waits forever on a launch.
+# Only for our shared Android: Steam's own Android games must keep theirs.
+patch("liblepton/mounting.sh",
+      ('    else\n        podman_cmdline --cgroupns=private\n    fi\n',
+       '    else\n'
+       '        podman_cmdline --cgroupns=private\n'
+       '        # konkr-apk: a cgroup gamescope can recognise\n'
+       '        if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+       '            podman_cmdline --cgroup-parent=konkr-android.service.slice\n'
+       '        fi\n'
+       '    fi\n'))
+
 # Extra rootfs overlay (restored framework services, Play Store); Steam's
 # own Android games keep Valve's image. Lepton v3.0.3 quotes the two paths.
 patch("liblepton/mounting.sh",
