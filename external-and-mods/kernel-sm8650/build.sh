@@ -29,15 +29,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 
 SOC="${SOC:-sm8650}"
-# ROCKNIX's released 7.2 recipe (tag 20260901) on the newest 7.2 stable
-# release, for both SoCs. Their 7.2 development branch black-screened the
-# Pocket FIT before the console on 2026-09-23; a GCC 13 build of 7.2 fails
-# the same way on the RP6, so 7.2 is built with GCC 15 (see below).
-# The previous SM8650 kernel: KVER=7.1.2 ROCKNIX_REF=20260801.
-_kver=7.2.8 _rocknix_ref=20260901
+# Linux 7.3 with Retroid Pocket's own mainline series first (retroid/, see its
+# README), then ROCKNIX's released 7.2 recipe (tag 20260901; ROCKNIX has no
+# 7.3 recipe yet) and our patches. 7.x is built with GCC 15 (see below).
+# The previous kernel: KVER=7.2.8 (no Retroid series), and before that
+# KVER=7.1.2 ROCKNIX_REF=20260801 for SM8650.
+_kver=7.3 _rocknix_ref=20260901
 KVER="${KVER:-$_kver}"
-# ROCKNIX's version patch dir is named after the series (patches/7.2).
-KSERIES="${KVER%.*}"
+# Kernel series (7.3 for both 7.3 and 7.3.y).
+KSERIES="$(echo "$KVER" | cut -d. -f1-2)"
+# ROCKNIX's version patch dir (patches/7.2) is named after the series it
+# targets, which can trail ours.
+ROCKNIX_SERIES="${ROCKNIX_SERIES:-7.2}"
+# Retroid Pocket's series for this kernel series (retroid/patches, retroid/skip).
+RETROID_DIR="${HERE}/retroid"
 if [[ "$SOC" == all ]]; then _localversion=-steamos; else _localversion="-${SOC}-steamos"; fi
 LOCALVERSION="${LOCALVERSION:-$_localversion}"
 ROCKNIX_REF="${ROCKNIX_REF:-$_rocknix_ref}"
@@ -189,6 +194,7 @@ prepare_source() {
       [[ -e "$x" ]] && digest_src+=("$x")
     done
   done
+  digest_src+=("${RETROID_DIR}")
   ((${#SOCS[@]} > 1)) && digest_src+=("${HERE}/all")
   # The DTB list is part of it: DTBs are registered in the Makefile only while
   # the source is (re)patched below.
@@ -215,8 +221,25 @@ prepare_source() {
     done <"${pd}/rocknix-skip"
   done
   local d p s
+  # Retroid Pocket's series goes first: the rest is rebased onto it.
+  local -A rp_skip=()
+  if [[ -f "${RETROID_DIR}/skip" ]]; then
+    while IFS= read -r line; do
+      line="${line%%#*}"; line="${line//[[:space:]]/}"
+      [[ -n "$line" ]] && rp_skip["$line"]=1
+    done <"${RETROID_DIR}/skip"
+  fi
+  for p in "${RETROID_DIR}/patches"/*.patch; do
+    [[ -e "$p" ]] || continue
+    if [[ -n "${rp_skip[$(basename "$p")]:-}" ]]; then
+      log "skip retroid/$(basename "$p") (retroid/skip)"; continue
+    fi
+    log "patch retroid/$(basename "$p")"
+    patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
+      || die "patch failed: $p"
+  done
   local -a dirs=(
-    "projects/ROCKNIX/packages/linux/patches/${KSERIES}"
+    "projects/ROCKNIX/packages/linux/patches/${ROCKNIX_SERIES}"
     "projects/ROCKNIX/packages/linux/patches/mainline"
     "@devices"
     "packages/linux/patches/default"
