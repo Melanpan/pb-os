@@ -1,0 +1,268 @@
+#!/usr/bin/python3 -I
+"""rpduo-firmware: copy the Retroid Pocket Duo's signed firmware from its
+own Android partitions (read-only) to /var/lib/pbos-firmware, which the Duo's
+kernel searches (firmware_class.path, kernel-sm8650/cmdline.sh).
+
+The DSP, Wi-Fi and GPU zap images are signed for the device and are not
+redistributable, so pb-os ships none of them for the Duo. Qualcomm's Android
+keeps them split (name.mdt + name.bNN); the kernel loads one merged .mbn,
+so they are squashed here as pil-squasher does. Sources, by Qualcomm's usual
+layout, first found wins: the vendor partition inside super (dynamic
+partitions, read through its LP metadata), whose /firmware holds the OEM's
+own builds (on the Retroid Pocket Nova its ADSP, which the charge controls
+need, is there and not in modem), then the modem partition (FAT, image/).
+
+Untested: no Duo in hand. Every file found on those partitions is listed in
+/var/lib/pbos-firmware/rpduo-sources.txt for a later look.
+
+  rpduo-firmware          copy what is missing, start offline remoteprocs
+  rpduo-firmware --force  copy everything again
+"""
+import os
+import re
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DEST = Path("/var/lib/pbos-firmware/qcom/eliza/retroidpocket/rpduo")
+LIST = Path("/var/lib/pbos-firmware/rpduo-sources.txt")
+# The Duo DTS's firmware-name values (retroid/patches/0071) and the source
+# names to look for, first found wins.
+WANTED = {
+    "adsp.mbn": ["adsp.mbn", "adsp.mdt"],
+    "adsp_dtb.mbn": ["adsp_dtb.mbn", "adsp_dtb.mdt"],
+    "cdsp.mbn": ["cdsp.mbn", "cdsp.mdt"],
+    "cdsp_dtb.mbn": ["cdsp_dtb.mbn", "cdsp_dtb.mdt"],
+    "wpss.mbn": ["wpss.mbn", "wpss.mdt"],
+    "gen71700_zap.mbn": ["gen71700_zap.mbn", "gen71700_zap.mdt",
+                         "a722_zap.mbn", "a722_zap.mdt"],
+    "aw883xx_acf.bin": ["aw883xx_acf.bin"],
+}
+
+
+def log(msg):
+    print(f"rpduo-firmware: {msg}", flush=True)
+
+
+def run(*cmd, check=True):
+    return subprocess.run(cmd, check=check, capture_output=True, text=True)
+
+
+def partitions():
+    """GPT partition name -> /dev node."""
+    parts = {}
+    for ue in Path("/sys/class/block").glob("*/uevent"):
+        name = None
+        for line in ue.read_text().splitlines():
+            if line.startswith("PARTNAME="):
+                name = line.split("=", 1)[1]
+        if name:
+            parts[name] = f"/dev/{ue.parent.name}"
+    return parts
+
+
+def slot_suffixes():
+    """Active slot first (the stock ABL passes androidboot.slot_suffix)."""
+    m = re.search(r"androidboot\.slot_suffix=(_[ab])", Path("/proc/cmdline").read_text())
+    first = m.group(1) if m else "_a"
+    return [first, "_b" if first == "_a" else "_a", ""]
+
+
+def squash(mdt: Path, out: Path):
+    """name.mdt + name.bNN -> one ELF image (as pil-squasher)."""
+    data = mdt.read_bytes()
+    if data[:4] != b"\x7fELF":
+        raise ValueError(f"{mdt} is not an ELF")
+    is64 = data[4] == 2
+    if is64:
+        phoff, = struct.unpack_from("<Q", data, 0x20)
+        phentsize, phnum = struct.unpack_from("<HH", data, 0x36)
+    else:
+        phoff, = struct.unpack_from("<I", data, 0x1C)
+        phentsize, phnum = struct.unpack_from("<HH", data, 0x2A)
+    # The whole .mdt at 0 (headers, and a copy of the hash in the gap after
+    # them, as pil-squasher leaves it), then every segment from its .bNN.
+    image = bytearray(data)
+    for i in range(phnum):
+        off = phoff + i * phentsize
+        if is64:
+            _, _, p_offset, _, _, p_filesz = struct.unpack_from("<IIQQQQ", data, off)
+        else:
+            _, p_offset, _, _, p_filesz = struct.unpack_from("<IIIII", data, off)
+        if p_filesz == 0:
+            continue
+        seg = mdt.with_name(f"{mdt.stem}.b{i:02d}")
+        if seg.exists():
+            blob = seg.read_bytes()[:p_filesz]
+        elif p_offset + p_filesz <= len(data):
+            blob = data[p_offset:p_offset + p_filesz]  # an .mdt that is a prefix
+        else:
+            raise ValueError(f"{seg.name} missing")
+        end = p_offset + len(blob)
+        if len(image) < end:
+            image.extend(b"\0" * (end - len(image)))
+        image[p_offset:end] = blob
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_bytes(image)
+    tmp.replace(out)
+
+
+def super_extents(dev, name):
+    """(byte offset, byte length) list of logical partition `name` in super,
+    from the primary LP metadata (AOSP liblp: geometry at 4096, metadata slot
+    0 after the geometry and its backup)."""
+    with open(dev, "rb") as f:
+        f.seek(4096)
+        geo = f.read(52)
+        magic, _, = struct.unpack_from("<II", geo, 0)
+        if magic != 0x616C4467:
+            return None
+        md_max, = struct.unpack_from("<I", geo, 40)
+        f.seek(4096 + 2 * 4096)
+        hdr = f.read(256)
+        if struct.unpack_from("<I", hdr, 0)[0] != 0x414C5030:
+            return None
+        header_size, = struct.unpack_from("<I", hdr, 8)
+        tables_size, = struct.unpack_from("<I", hdr, 44)
+        # partitions, extents, groups, block devices: (offset, count, size)
+        descs = [struct.unpack_from("<III", hdr, 80 + 12 * i) for i in range(4)]
+        f.seek(4096 + 2 * 4096 + header_size)
+        tables = f.read(min(tables_size, md_max))
+    (p_off, p_num, p_size), (e_off, _, e_size) = descs[0], descs[1]
+    for i in range(p_num):
+        ent = tables[p_off + i * p_size:p_off + (i + 1) * p_size]
+        pname = ent[:36].split(b"\0", 1)[0].decode()
+        if pname != name:
+            continue
+        _, first, count, _ = struct.unpack_from("<IIII", ent, 36)
+        out = []
+        for j in range(first, first + count):
+            num_sectors, ttype, tdata, source = struct.unpack_from(
+                "<QIQI", tables, e_off + j * e_size)
+            if ttype != 0 or source != 0:  # LINEAR, on super itself
+                return None
+            out.append((tdata * 512, num_sectors * 512))
+        return out
+    return None
+
+
+class Mounted:
+    """Read-only mount of a block device range; cleans up after itself."""
+
+    def __init__(self, dev, offset=0, size=0):
+        self.dev, self.offset, self.size = dev, offset, size
+        self.loop = self.dir = None
+
+    def __enter__(self):
+        args = ["losetup", "-r", "-f", "--show"]
+        if self.offset or self.size:
+            args += ["-o", str(self.offset), "--sizelimit", str(self.size)]
+        r = run(*args, self.dev, check=False)
+        if r.returncode != 0:
+            return None
+        self.loop = r.stdout.strip()
+        self.dir = tempfile.mkdtemp(prefix="rpduo-fw.")
+        for fstype in ("erofs", "ext4", "vfat"):
+            if run("mount", "-r", "-t", fstype, self.loop, self.dir, check=False).returncode == 0:
+                return Path(self.dir)
+        self.__exit__()
+        return None
+
+    def __exit__(self, *exc):
+        if self.dir:
+            run("umount", self.dir, check=False)
+            os.rmdir(self.dir)
+        if self.loop:
+            run("losetup", "-d", self.loop, check=False)
+
+
+def sources(parts):
+    """Yield (label, mount ctx) for the partitions that hold firmware, vendor
+    first."""
+    run("modprobe", "erofs", check=False)
+    sup = parts.get("super")
+    for sfx in slot_suffixes():
+        name = f"vendor{sfx}"
+        if name in parts:
+            yield name, Mounted(parts[name])
+            break
+        ext = super_extents(sup, name) if sup else None
+        if ext and len(ext) == 1:
+            yield f"super/{name}", Mounted(sup, *ext[0])
+            break
+        if ext:
+            # No device-mapper in the kernel to join the extents.
+            log(f"{name} has {len(ext)} extents in super; not supported yet")
+    for sfx in slot_suffixes():
+        if f"modem{sfx}" in parts:
+            yield f"modem{sfx}", Mounted(parts[f"modem{sfx}"])
+            break
+
+
+def collect(force):
+    DEST.mkdir(parents=True, exist_ok=True)
+    missing = {k: v for k, v in WANTED.items() if force or not (DEST / k).exists()}
+    if not missing:
+        return []
+    parts = partitions()
+    listing, copied = [], []
+    for label, ctx in sources(parts):
+        with ctx as root:
+            if root is None:
+                log(f"{label}: could not mount")
+                continue
+            files = {}
+            for p in root.rglob("*"):
+                if p.is_file():
+                    listing.append(f"{label}\t{p.relative_to(root)}\t{p.stat().st_size}")
+                    files.setdefault(p.name.lower(), p)
+            for want, names in list(missing.items()):
+                for n in names:
+                    src = files.get(n)
+                    if not src:
+                        continue
+                    try:
+                        if src.suffix == ".mdt":
+                            squash(src, DEST / want)
+                        else:
+                            tmp = DEST / (want + ".tmp")
+                            tmp.write_bytes(src.read_bytes())
+                            tmp.replace(DEST / want)
+                    except (OSError, ValueError) as e:
+                        log(f"{want}: {label}/{src.name}: {e}")
+                        continue
+                    log(f"{want} <- {label}/{src.relative_to(root)}")
+                    copied.append(want)
+                    del missing[want]
+                    break
+    LIST.parent.mkdir(parents=True, exist_ok=True)
+    LIST.write_text("\n".join(sorted(listing)) + "\n")
+    for want in missing:
+        log(f"{want}: not found (see {LIST})")
+    return copied
+
+
+def start_remoteprocs():
+    """Remoteprocs that failed at boot for want of firmware sit offline."""
+    for rp in Path("/sys/class/remoteproc").glob("remoteproc*"):
+        try:
+            if (rp / "state").read_text().strip() == "offline":
+                (rp / "state").write_text("start")
+                log(f"started {rp.name} ({(rp / 'firmware').read_text().strip()})")
+        except OSError as e:
+            log(f"{rp.name}: {e}")
+
+
+def main():
+    if b"retroidpocket,rpduo" not in Path("/proc/device-tree/compatible").read_bytes():
+        return 0
+    copied = collect("--force" in sys.argv[1:])
+    if copied:
+        start_remoteprocs()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

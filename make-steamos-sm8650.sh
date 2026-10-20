@@ -282,7 +282,8 @@ prepare_runtime() {
 }
 
 repack_kernel_partuuid() {
-  local src="$1" dest="$2" partuuid="$3"
+  # $4: CMDLINE_DEVICE for a device's own boot image (cmdline.sh), e.g. rpduo.
+  local src="$1" dest="$2" partuuid="$3" device="${4:-}"
   local cmdline
   # shellcheck source=external-and-mods/kernel-sm8650/cmdline.sh
   source "${MOD}/kernel-sm8650/cmdline.sh"
@@ -296,7 +297,7 @@ repack_kernel_partuuid() {
       *) soc=all ;;
     esac
   fi
-  cmdline="$(SOC="$soc" build_cmdline "${partuuid}")"
+  cmdline="$(SOC="$soc" CMDLINE_DEVICE="$device" build_cmdline "${partuuid}")"
   # Patch the ANDROID! header cmdline in place; kernel + DTB chain untouched.
   python3 - "${src}" "${dest}" "${cmdline}" <<'PY'
 import sys
@@ -577,6 +578,12 @@ EOF
   # vfat cannot store Unix owner/mode — cp -a fails with EPERM
   sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL > KERNEL.md5"
+  # Retroid Pocket Duo: no OpenABL for its SoC, so it boots its own image
+  # through the stock ABL (`fastboot boot KERNEL-rpduo`, see README.txt).
+  if [[ -f "${KOUT}/boot/KERNEL-rpduo" ]]; then
+    repack_kernel_partuuid "${KOUT}/boot/KERNEL-rpduo" "${ktmp}" "${disk_id}-02" rpduo
+    sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL-rpduo"
+  fi
   rm -f "${ktmp}"
   stage_openabl
 
@@ -600,6 +607,8 @@ OpenABL menu (hold Volume Down at power-on): Device model -> your exact
 model (e.g. "AYN Thor", "Retroid Pocket Nova", "KONKR Pocket FIT"),
 Boot mode -> Linux, Start.
 First time on this device? Flash OpenABL from Android: openabl/README.
+Retroid Pocket Duo (no OpenABL yet; untested): bootloader unlocked, card in,
+then from a computer in fastboot mode: fastboot boot KERNEL-rpduo
 EOF
 
   sync

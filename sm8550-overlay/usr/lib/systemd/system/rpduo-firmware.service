@@ -1,0 +1,14 @@
+[Unit]
+Description=Retroid Pocket Duo: copy its firmware from its Android partitions
+ConditionFirmware=device-tree-compatible(retroidpocket,rpduo)
+After=local-fs.target systemd-udevd.service
+# The GPU loads its zap shader when Game Mode first opens it.
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos-sm8550/rpduo-firmware
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

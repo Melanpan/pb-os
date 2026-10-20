@@ -789,6 +789,12 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/usr/lib/steamos-sm8550/sm8550-stickcal" 0755
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-stickcal.service" \
     "$R/usr/lib/systemd/system/sm8550-stickcal.service" 0644
+  # Retroid Pocket Duo: its signed firmware, copied from its own Android
+  # partitions at boot (the unit only runs on the Duo).
+  install_file "$SM8550_OVL/usr/lib/steamos-sm8550/rpduo-firmware" \
+    "$R/usr/lib/steamos-sm8550/rpduo-firmware" 0755
+  install_file "$SM8550_OVL/usr/lib/systemd/system/rpduo-firmware.service" \
+    "$R/usr/lib/systemd/system/rpduo-firmware.service" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-powerbuttond.service" \
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" 0644
   install_file "$SM8550_OVL/usr/lib/steamos-sm8550/sm8550-touch-inhibit" \
@@ -937,7 +943,7 @@ if [[ "$SOC" != sm8650 ]]; then
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
   for u in sm8550-fand.service sm8550-powerbuttond.service \
            sm8550-boostd.service sm8550-charge-control.service \
-           sm8550-stickcal.service; do
+           sm8550-stickcal.service rpduo-firmware.service; do
     ln -sfn ../$u "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
   done
   # Motion sensors (gyro) through the ADSP's sensor hub, for Steam.
@@ -950,6 +956,8 @@ else
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
     "$R/usr/share/steamos-manager/devices/retroid-pocket-nova.toml" \
     "$R/usr/share/steamos-manager/devices/retroid-pocket-duo.toml" \
+    "$R/usr/lib/systemd/system/rpduo-firmware.service" \
+    "$R/usr/lib/systemd/system/multi-user.target.wants/rpduo-firmware.service" \
     "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" \
