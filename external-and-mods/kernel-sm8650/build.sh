@@ -60,14 +60,23 @@ DTBS_SM8650="sm8650-ayaneo-ps2 sm8650-konkr-pf"
 # "Retroid Pocket 6 TOP-DPAD" and "Retroid Pocket Nova" (ROCKNIX's Nova DTS is
 # the RP6 one with its own panel, touch and sticks).
 DTBS_SM8550="qcs8550-ayn-odin2 qcs8550-ayn-odin2mini qcs8550-ayn-odin2portal qcs8550-ayn-thor qcs8550-retroidpocket-rp6 qcs8550-retroidpocket-rp6-top-dpad qcs8550-retroidpocket-rpnova"
+# Retroid Pocket Duo (SM7750 "Eliza", Retroid's DTS from retroid/patches
+# 0070/0071), SOC=all only (DUO=0 leaves it out). Built into dtbs/ but not
+# appended to KERNEL: there is no OpenABL for SM7750, so the Duo needs a boot
+# image of its own (stock ABL). Untested: no Duo in hand.
+DTBS_SM7750="eliza-retroidpocket-rpduo"
 case "$SOC" in
   sm8650) SOCS=(SM8650); PORT_DIRS=("${HERE}"); DTBS="${DTBS:-$DTBS_SM8650}" ;;
   sm8550) SOCS=(SM8550); PORT_DIRS=("${HERE}/sm8550"); DTBS="${DTBS:-$DTBS_SM8550}" ;;
   # The model names differ, so each SoC's ABL still finds its own DTB in the
   # one list (alphabetical: qcs8550-* before sm8650-*).
-  all) SOCS=(SM8550 SM8650); PORT_DIRS=("${HERE}/sm8550" "${HERE}"); DTBS="${DTBS:-$DTBS_SM8550 $DTBS_SM8650}" ;;
+  all) SOCS=(SM8550 SM8650); PORT_DIRS=("${HERE}/sm8550" "${HERE}"); DTBS="${DTBS:-$DTBS_SM8550 $DTBS_SM8650}"; DUO="${DUO:-1}" ;;
   *) echo "unsupported SOC=${SOC} (sm8650, sm8550, all)" >&2; exit 1 ;;
 esac
+DUO="${DUO:-0}"
+# DTBs built and shipped in dtbs/ but not appended to KERNEL.
+DTBS_SEPARATE=""
+((DUO)) && DTBS_SEPARATE="$DTBS_SM7750"
 # ROCKNIX patches with the same name in both SoCs' dirs are identical except
 # these, where SOC=all takes the SM8650 copy. 0060 (SY7758 backlight): two
 # different drivers for one file; the SM8550 one only serves AYANEO Pockets,
@@ -198,7 +207,7 @@ prepare_source() {
   ((${#SOCS[@]} > 1)) && digest_src+=("${HERE}/all")
   # The DTB list is part of it: DTBs are registered in the Makefile only while
   # the source is (re)patched below.
-  patch_digest="$({ find "${digest_src[@]}" -type f -print0 | sort -z | xargs -0 -r sha256sum; echo "DTBS=$DTBS"; } | sha256sum | cut -d" " -f1)"
+  patch_digest="$({ find "${digest_src[@]}" -type f -print0 | sort -z | xargs -0 -r sha256sum; echo "DTBS=$DTBS $DTBS_SEPARATE"; } | sha256sum | cut -d" " -f1)"
   if [[ -f "${SRC}/.${SOC}-patched" && "$(cat "${SRC}/.${SOC}-patched")" == "$patch_digest" ]]; then
     log "source already patched: ${SRC}"
     return 0
@@ -315,10 +324,24 @@ prepare_source() {
     done
   done
   local mk="${SRC}/arch/arm64/boot/dts/qcom/Makefile" dtb
-  for dtb in $DTBS; do
+  for dtb in $DTBS $DTBS_SEPARATE; do
     grep -q "${dtb}.dtb" "$mk" || echo "dtb-\$(CONFIG_ARCH_QCOM) += ${dtb}.dtb" >>"$mk"
   done
   printf "%s\n" "$patch_digest" > "${SRC}/.${SOC}-patched"
+}
+
+# stage_linux_fw <dir> <path>=<sha256>...: linux-firmware files at
+# LINUX_FW_REF, checked against their pinned sums, into <dir>/<path>.
+stage_linux_fw() {
+  local ext="$1" lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" e f sum
+  shift
+  for e in "$@"; do
+    f="${e%%=*}"
+    fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
+    sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
+    [[ "$sum" == "${e#*=}" ]] || die "${f}: sha256 ${sum} != pinned ${e#*=}"
+    install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
+  done
 }
 
 stage_builtin_firmware() {
@@ -346,21 +369,21 @@ stage_builtin_firmware() {
         cp -L "${EXTRA_FW_SRC}/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn" "${ext}/qcom/sm8650/ayaneo/ps2/"
         ;;
       SM8550)
-        local lfw="${CACHE}/linux-firmware-${LINUX_FW_REF}" f sum
-        local -A want=(
-          [qcom/a740_sqe.fw]=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473
-          [qcom/gmu_gen70200.bin]=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98
-          [qcom/sm8550/a740_zap.mbn]=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
-        )
-        for f in "${!want[@]}"; do
-          fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${f}" "${lfw}/${f}"
-          sum="$(sha256sum "${lfw}/${f}" | cut -d" " -f1)"
-          [[ "$sum" == "${want[$f]}" ]] || die "${f}: sha256 ${sum} != pinned ${want[$f]}"
-          install -D -m0644 "${lfw}/${f}" "${ext}/${f}"
-        done
+        stage_linux_fw "$ext" \
+          qcom/a740_sqe.fw=96fee336424b139100fc60b5b45a907360e4b3936d7e1d00406b9bd80ca48473 \
+          qcom/gmu_gen70200.bin=1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98 \
+          qcom/sm8550/a740_zap.mbn=386bbdc25ae94a9398e33e7580eecfdcef6c472682a1e3123e1374bcffe7cde3
         ;;
     esac
   done
+  # Retroid Pocket Duo: Adreno 722 microcode. Its zap shader is signed for
+  # the device (qcom/eliza/retroidpocket/rpduo/gen71700_zap.mbn in the DTS)
+  # and has to come from the Duo itself.
+  if ((DUO)); then
+    stage_linux_fw "$ext" \
+      qcom/gen71700_sqe.fw=9e2bfb1aa7e0465faea5c70b65d124c70db2e532eb02a5584bc561cf765c53df \
+      qcom/gen71700_gmu.bin=75b2c1757ef5709924d068a25e8e6ae485d6342af30ba14090fa53dafe76a61a
+  fi
   cp -L "${regdb}/regulatory.db" "${regdb}/regulatory.db.p7s" "$ext/"
   (cd "$ext" && find . -type f | sed 's|^\./||' | sort | xargs) >"${WORK}/extra-firmware.list"
 }
@@ -406,6 +429,7 @@ configure() {
   for s in "${SOCS[@]}"; do
     [[ -f "${HERE}/steamos-${s,,}.config" ]] && cat "${HERE}/steamos-${s,,}.config" >>"$frag"
   done
+  ((DUO)) && cat "${HERE}/steamos-sm7750.config" >>"$frag"
   local line opt val
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -520,7 +544,7 @@ install_output() {
   done
 
   local dtb
-  for dtb in $DTBS; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
+  for dtb in $DTBS $DTBS_SEPARATE; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
   cp "${SRC}/.config" "$o/config-${KREL}"
   cp "${SRC}/System.map" "$o/System.map-${KREL}"
   pack_kernel_img "$o/boot/KERNEL"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # pbos-hostname: name the device after its model (rp6, rpnova, thor, odin2,
-# odin2mini, odin2portal, kpf, pockets2) instead of the Steam Frame image's "frame". One image covers
+# odin2mini, odin2portal, rpduo, kpf, pockets2) instead of the Steam Frame image's "frame". One image covers
 # several models, so this runs at boot and reads the device tree. It only
 # renames while the name is still the image's: a name set in Steam
 # (Settings > System) or with hostnamectl is kept. /etc is an overlay on
@@ -17,6 +17,7 @@ for c in $(tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null); do
   case "$c" in
     retroidpocket,rp6*) name=rp6 ;;
     retroidpocket,rpnova) name=rpnova ;;
+    retroidpocket,rpduo) name=rpduo ;;
     ayn,thor) name=thor ;;
     ayn,odin2) name=odin2 ;;
     ayn,odin2mini) name=odin2mini ;;

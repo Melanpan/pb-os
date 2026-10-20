@@ -169,6 +169,10 @@ install_odin_composite() {
   [[ -f "${dev}/50-ayn_odin2_mini.yaml" ]] || die "InputPlumber ${IP_VER} has no 50-ayn_odin2_mini.yaml"
   install -m0644 "${OVL}/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml" \
     "${dev}/50-ayn_odin2_mini.yaml"
+  # Retroid Pocket Duo (SM7750): InputPlumber has none; ours uses the RP6 /
+  # Nova Nintendo map and the Deck target. Untested on a Duo.
+  install -m0644 "${OVL}/usr/share/inputplumber/devices/50-retroid_pocket_duo.yaml" \
+    "${dev}/50-retroid_pocket_duo.yaml"
   # Retroid Pocket 6 and Nova: InputPlumber's own profiles with the Nintendo
   # face-button map (the printed A is Steam's A).
   for f in 50-retroid_pocket6.yaml 50-retroid_pocket_nova.yaml; do

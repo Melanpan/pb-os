@@ -36,6 +36,14 @@ patches/  port patches for the combined tree only, queued with the port
   0506-mailbox-qcom-ipcc-every-soc-counts-its-doorbell-wakes.patch: on top
           of SM8550 0504/0505, gives SM8650 the "ipcc-wake" count (SM8650's
           0019 is written against the unmasked driver).
+  0561-input-rsinput-retroid-pocket-duo-compatible.patch: ROCKNIX's
+          rsinput (with rumble and our sleep patches) also matches
+          "retroidpocket,rsinput", the Retroid Pocket Duo's gamepad.
+  0660-drm-panel-il97680a-cmd-retroid-pocket-duo-bottom.patch: Retroid's
+          command-mode IL97680A driver (retroid/patches/0008) as
+          panel-ilitek-il97680a-cmd (DRM_PANEL_ILITEK_IL97680A_CMD), matching
+          only the Duo's bottom panel; ROCKNIX's video-mode driver keeps the
+          Nova.
 
 port-skip SM8650 port patches the combined tree leaves out (each replaced by
           an SM8550 twin or a patch in patches/). Port patches whose code is

@@ -1,0 +1,12 @@
+[[device]]
+dt.compatible = "retroidpocket,rpduo"
+device = "retroid_pocket_duo"
+variant = "RPDUO"
+friendly_name = "Retroid Pocket Duo"
+
+[inputplumber]
+# Retroid's Duo DTS (RetroidPocket/linux retroidpocket/v7.3) puts only volume
+# up on gpio-keys (the lid switch is its own gpio-keys node), so, as on the
+# AYN Thor, InputPlumber does not grab it and no keyboard target is needed.
+# UNTESTED: no Duo in hand yet.
+target_devices = ["deck-uhid"]

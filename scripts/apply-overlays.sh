@@ -340,15 +340,14 @@ if [[ -d "$OVL/usr/share/alsa/ucm2" ]]; then
   mkdir -p "$R/usr/share/alsa/ucm2"
   cp -r --no-preserve=mode,ownership "$OVL/usr/share/alsa/ucm2/." "$R/usr/share/alsa/ucm2/"
   # root alsaucm cannot read 600 steam:steam UCM (speakers stay silent).
-  chown -R root:root "$R/usr/share/alsa/ucm2/AYN" \
-    "$R/usr/share/alsa/ucm2/codecs" "$R/usr/share/alsa/ucm2/lib" \
-    "$R/usr/share/alsa/ucm2/conf.d/sm8550" 2>/dev/null || true
-  find "$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/codecs" \
-    "$R/usr/share/alsa/ucm2/lib" "$R/usr/share/alsa/ucm2/conf.d/sm8550" \
-    -type d -exec chmod 0755 {} + 2>/dev/null || true
-  find "$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/codecs" \
-    "$R/usr/share/alsa/ucm2/lib" "$R/usr/share/alsa/ucm2/conf.d/sm8550" \
-    -type f -exec chmod 0644 {} + 2>/dev/null || true
+  # RetroidPocket/ELIZA + conf.d/eliza: the Retroid Pocket Duo (SM7750),
+  # Retroid's own UCM (RetroidPocket/alsa-ucm-conf, retroidpocket/v1.2.16).
+  ucm_dirs=("$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/RetroidPocket"
+    "$R/usr/share/alsa/ucm2/codecs" "$R/usr/share/alsa/ucm2/lib"
+    "$R/usr/share/alsa/ucm2/conf.d/sm8550" "$R/usr/share/alsa/ucm2/conf.d/eliza")
+  chown -R root:root "${ucm_dirs[@]}" 2>/dev/null || true
+  find "${ucm_dirs[@]}" -type d -exec chmod 0755 {} + 2>/dev/null || true
+  find "${ucm_dirs[@]}" -type f -exec chmod 0644 {} + 2>/dev/null || true
 fi
 # Frame steamclient reads VARIANT_ID=vr and Gamepad UI then throws.
 for _osr in "$R/etc/os-release" "$R/usr/lib/os-release" \
@@ -778,7 +777,7 @@ if [[ "$SOC" != sm8650 ]]; then
     "$R/usr/share/sm8550-fand/fan.conf" 0644
   install_file "$SM8550_OVL/usr/lib/systemd/system/sm8550-fand.service" \
     "$R/usr/lib/systemd/system/sm8550-fand.service" 0644
-  for t in retroid-pocket6.toml retroid-pocket-nova.toml ayn-thor.toml; do
+  for t in retroid-pocket6.toml retroid-pocket-nova.toml retroid-pocket-duo.toml ayn-thor.toml; do
     install_file "$SM8550_OVL/usr/share/steamos-manager/devices/$t" \
       "$R/usr/share/steamos-manager/devices/$t" 0644
   done
@@ -950,6 +949,7 @@ else
     "$R/usr/lib/barry_launcher" "$R/usr/share/barry_launcher"
   rm -f "$R/usr/share/steamos-manager/devices/retroid-pocket6.toml" \
     "$R/usr/share/steamos-manager/devices/retroid-pocket-nova.toml" \
+    "$R/usr/share/steamos-manager/devices/retroid-pocket-duo.toml" \
     "$R/usr/share/steamos-manager/devices/ayn-thor.toml" \
     "$R/usr/lib/udev/rules.d/72-sm8550-touch-inhibit.rules" \
     "$R/usr/lib/systemd/system/sm8550-powerbuttond.service" \
