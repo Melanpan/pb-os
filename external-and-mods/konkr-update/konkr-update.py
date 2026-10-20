@@ -1713,6 +1713,9 @@ def recover(args):
 
 def recover_steps(root, boot, home, work, manifest, pending, current, screen):
     screen.start('Installing update')
+    # A stage cut short (restart before it finished) leaves the old boot image:
+    # this boot runs the old kernel, so restart into the new one when done.
+    restart_after = digest(boot / 'KERNEL') != digest(work / 'next-KERNEL')
     plan = load_plan(work)
     if plan is None and current == 'staged':
         # Staged by an updater from before plans: the whole payload is
@@ -1740,9 +1743,9 @@ def recover_steps(root, boot, home, work, manifest, pending, current, screen):
             state(work, 'applying')
             apply(root, boot, home, work, manifest, plan, progress)
             state(work, 'committed')
-            screen.label('Update installed')
+            screen.label('Update installed: restarting' if restart_after else 'Update installed')
             screen.progress(1)
-            pending.unlink(); os.sync(); return 0
+            pending.unlink(); os.sync(); return 10 if restart_after else 0
         except Exception as e:
             print('RECOVERY ERROR:', e, flush=True)
             (work / 'failure.txt').write_text(str(e) + '\n')

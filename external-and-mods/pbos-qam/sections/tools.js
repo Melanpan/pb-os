@@ -231,7 +231,9 @@ function UpdateTab() {
         children: `Installed: ${st.installed}${dev ? ` · Dev updates on${rel.tester ? ` (${rel.tester})` : ""}` : ""}`,
     }))];
 
-    if (st.pending) {
+    // Staging writes the pending marker before the boot image, so the update
+    // is only ready once the job has finished.
+    if (st.pending && !st.running) {
         items.push(
             row(jsx("div", { children: "The update is ready. It installs while the device restarts." })),
             row(jsx(DFL.ButtonItem, {

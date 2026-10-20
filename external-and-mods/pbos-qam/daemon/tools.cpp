@@ -1365,7 +1365,9 @@ private:
     }
 
     Value restart() {
-        if (!exists(PENDING)) return false;
+        // Staging writes the pending marker before the boot image: never
+        // restart before it finishes.
+        if (!exists(PENDING) || unit_active(UNIT)) return false;
         spawn({"systemctl", "reboot"});
         return true;
     }
